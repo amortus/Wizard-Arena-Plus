@@ -1217,7 +1217,7 @@ export class ArenaScene extends Phaser.Scene {
       this.socket.readyState === 1 &&
       (dx !== this.lastSentInput.dx ||
         dy !== this.lastSentInput.dy ||
-        now - this.lastSentInput.t > 80)
+        now - this.lastSentInput.t > 50)
     ) {
       const m: ClientToServer = { type: 'input', dx, dy };
       this.socket.send(JSON.stringify(m));
