@@ -1,0 +1,1814 @@
+import * as Phaser from 'phaser';
+import PartySocket from 'partysocket';
+import {
+  ARENA_HEIGHT,
+  ARENA_WIDTH,
+  CHARACTERS,
+  ELEMENT_VISUAL,
+  MONSTERS,
+  PLAYER_RADIUS,
+  PLAYER_SPEED,
+  WEAPON_ELEMENT,
+  type CharacterKind,
+} from '../shared/constants';
+import type { ClientToServer, PlayerState, ServerToClient, Snapshot } from '../shared/types';
+
+type SceneInit = {
+  name: string;
+  character: CharacterKind;
+  color: number;
+  hue: number;
+  room: string;
+  country?: string;
+};
+
+function countryFlag(code?: string): string {
+  if (!code || code.length !== 2) return '';
+  const cps = code.toUpperCase().split('').map((c) => 127397 + c.charCodeAt(0));
+  return String.fromCodePoint(...cps);
+}
+
+// Convert a hue (radians) to a tint color. hue=0 gives white (no shift).
+// Uses HSL with high lightness so the existing colors come through but get a strong wash.
+function hueToTint(hueRad: number): number {
+  if (!hueRad) return 0xffffff;
+  const h = (((hueRad * 180) / Math.PI) % 360 + 360) % 360;
+  // Saturation 0.85, lightness 0.65 — vivid wash that's visible on top of the texture
+  const s = 0.85, l = 0.65;
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = l - c / 2;
+  let r = 0, g = 0, b = 0;
+  if (h < 60)        { r = c; g = x; b = 0; }
+  else if (h < 120)  { r = x; g = c; b = 0; }
+  else if (h < 180)  { r = 0; g = c; b = x; }
+  else if (h < 240)  { r = 0; g = x; b = c; }
+  else if (h < 300)  { r = x; g = 0; b = c; }
+  else               { r = c; g = 0; b = x; }
+  const R = Math.round((r + m) * 255) & 0xff;
+  const G = Math.round((g + m) * 255) & 0xff;
+  const B = Math.round((b + m) * 255) & 0xff;
+  return (R << 16) | (G << 8) | B;
+}
+
+// PartyKit always runs on :1999 in dev. In production set NEXT_PUBLIC_PARTYKIT_HOST.
+const PARTY_HOST = (() => {
+  if (typeof window === 'undefined') return 'localhost:1999';
+  const env = process.env.NEXT_PUBLIC_PARTYKIT_HOST;
+  if (env) return env;
+  // Local dev only — production must set NEXT_PUBLIC_PARTYKIT_HOST.
+  const host = window.location.hostname;
+  if (host === 'localhost' || host === '127.0.0.1') return 'localhost:1999';
+  console.error('[party] NEXT_PUBLIC_PARTYKIT_HOST is not set — multiplayer will not work.');
+  return 'localhost:1999';
+})();
+
+const ALL_KINDS: readonly string[] = [...CHARACTERS, ...MONSTERS];
+const DIRS = ['south', 'north', 'east', 'west'] as const;
+const WALK_FRAMES = 8; // max frames we'll try to load per direction; missing ones are skipped
+
+// Per-character render scale — default 1.0. All 12 wizards at 56×56.
+const PLAYER_SPRITE_SCALE: Record<string, number> = {};
+
+// Per-NPC render scale — overrides the default SHRINK for specific monsters.
+// Used to make rats tiny (small swarm) and zombie bears huge (boss tank).
+const NPC_SPRITE_SCALE: Record<string, number> = {
+  rat: 0.55,
+  zombie_bear: 1.28, // 20% smaller than the original 1.6
+};
+
+// Global multiplier applied to every gameplay sprite (players, NPCs, projectiles, gems).
+// Bump down to make the world feel less cluttered without regenerating assets.
+const SPRITE_SHRINK = 0.72; // 0.8 × 0.9 — additional 10% on top of original 20% shrink
+
+type Facing = 'south' | 'north' | 'east' | 'west';
+
+export class ArenaScene extends Phaser.Scene {
+  // Public bus for React to listen on. Available immediately after construction
+  // (Phaser's own `this.events` is only created during the scene lifecycle).
+  bus: Phaser.Events.EventEmitter = new Phaser.Events.EventEmitter();
+
+  init_: SceneInit;
+  socket?: PartySocket;
+  selfId = '';
+  latestSnapshot?: Snapshot;
+  prevSnapshot?: Snapshot;
+  snapshotTime = 0;
+  prevSnapshotTime = 0;
+
+  // entity caches keyed by id
+  playerSprites = new Map<string, Phaser.GameObjects.Container>();
+  npcSprites = new Map<string, Phaser.GameObjects.Sprite>();
+  gemSprites = new Map<string, Phaser.GameObjects.Sprite>();
+  projSprites = new Map<string, Phaser.GameObjects.Sprite>();
+  wolfSprites = new Map<string, Phaser.GameObjects.Container>();
+  // Per-player breadcrumb visuals for Trail of Fire (client-only).
+  trailVisuals = new Map<string, { x: number; y: number; bornAt: number; sprite: Phaser.GameObjects.Graphics }[]>();
+  prevPlayerPos = new Map<string, { x: number; y: number; t: number }>();
+  // hit-flash tracking: playerId -> { lastHp, flashUntilMs }
+  playerHpTrack = new Map<string, { lastHp: number; flashUntilMs: number }>();
+  npcHpTrack = new Map<string, { lastHp: number; flashUntilMs: number }>();
+
+  cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
+  keyW!: Phaser.Input.Keyboard.Key;
+  keyA!: Phaser.Input.Keyboard.Key;
+  keyS!: Phaser.Input.Keyboard.Key;
+  keyD!: Phaser.Input.Keyboard.Key;
+  keyM!: Phaser.Input.Keyboard.Key;
+  // Mouse control: hold left button to move toward cursor; right-click toggles always-on
+  mouseDown = false;
+  mouseAlwaysOn = false;
+  bgm?: Phaser.Sound.BaseSound;
+  musicMuted = false;
+  // SFX synth
+  audioCtx?: AudioContext;
+  // Track previous values to detect events for SFX
+  prevSelfXp = -1;
+  prevSelfLevel = -1;
+  prevSelfHp = -1;
+  prevSelfAlive = true;
+
+  inputDx = 0;
+  inputDy = 0;
+  lastSentInput = { dx: 0, dy: 0, t: 0 };
+
+  // client-side prediction for self
+  predictedSelf?: { x: number; y: number };
+
+  constructor(init: SceneInit) {
+    super('arena');
+    this.init_ = init;
+  }
+
+  preload() {
+    for (const c of ALL_KINDS) {
+      for (const dir of DIRS) {
+        this.load.image(`${c}_${dir}`, `/sprites/${c}_${dir}.png`);
+        for (let i = 0; i < WALK_FRAMES; i++) {
+          this.load.image(`${c}_walk_${dir}_${i}`, `/sprites/${c}_walk_${dir}_${i}.png`);
+        }
+      }
+    }
+    // PixelLab projectile sprites (10 of 10 ready) — overrides procedural fallbacks
+    for (const elem of ['arcane', 'fire', 'lightning', 'earth', 'forest', 'shadow']) {
+      this.load.image(`proj_${elem}`, `/sprites/proj_${elem}.png?v=2`);
+    }
+    // PixelLab gem sprites by tier (green is amethyst purple — contrasts with grass)
+    for (const tier of ['blue', 'green', 'gold', 'epic']) {
+      this.load.image(`gem_${tier}`, `/sprites/gem_${tier}.png?v=3`);
+    }
+    // Custom floor tiles (cache-bust)
+    this.load.image('floor_green', '/sprites/floor_green.png?v=1');
+    this.load.image('floor_dirt', '/sprites/floor_dirt.png?v=1');
+    this.load.image('floor_rocks', '/sprites/floor_rocks.png?v=1');
+    // Spirit Wolf head sprite — drawn over the procedural orb glow
+    this.load.image('icon_wolf', '/sprites/icon_wolf.png');
+    this.load.audio('bgm', '/audio/bgm.mp3');
+
+    this.load.on('loaderror', (file: Phaser.Loader.File) => {
+      void file;
+    });
+  }
+
+  create() {
+    this.makeFallbackTextures();
+    this.makeArenaBackground();
+    this.registerAnimations();
+
+    if (this.input.keyboard) {
+      this.cursors = this.input.keyboard.createCursorKeys();
+      this.keyW = this.input.keyboard.addKey('W');
+      this.keyA = this.input.keyboard.addKey('A');
+      this.keyS = this.input.keyboard.addKey('S');
+      this.keyD = this.input.keyboard.addKey('D');
+      this.keyM = this.input.keyboard.addKey('M');
+      this.keyM.on('down', () => this.toggleMusic());
+    }
+
+    // Mouse: hold LEFT to move toward cursor; right-click toggles always-on follow.
+    this.input.mouse?.disableContextMenu();
+    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      if (pointer.rightButtonDown()) {
+        this.mouseAlwaysOn = !this.mouseAlwaysOn;
+      } else if (pointer.leftButtonDown()) {
+        this.mouseDown = true;
+      }
+    });
+    this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
+      if (!pointer.leftButtonDown()) this.mouseDown = false;
+    });
+
+    // Background music — start on first user interaction (browsers block autoplay)
+    if (this.cache.audio.exists('bgm')) {
+      this.bgm = this.sound.add('bgm', { loop: true, volume: 0.16 });
+    }
+    const startAudio = () => {
+      if (!this.audioCtx) {
+        try {
+          const Ctx = (window as any).AudioContext || (window as any).webkitAudioContext;
+          if (Ctx) this.audioCtx = new Ctx();
+        } catch (e) { void e; }
+      }
+      if (this.bgm && !this.bgm.isPlaying && !this.musicMuted) this.bgm.play();
+    };
+    this.input.once('pointerdown', startAudio);
+    this.input.keyboard?.once('keydown', startAudio);
+
+    this.cameras.main.setBounds(0, 0, ARENA_WIDTH, ARENA_HEIGHT);
+    this.cameras.main.setZoom(1.2); // matches the "browser at 80%" feel — more visible arena
+    this.cameras.main.setBackgroundColor('#1a1a2e');
+    this.cameras.main.setRoundPixels(false); // sub-pixel positioning = smoother camera
+
+    this.connect();
+  }
+
+  makeFallbackTextures() {
+    const g = this.add.graphics();
+    const ensure = (key: string, draw: (g: Phaser.GameObjects.Graphics) => void, w = 32, h = 32) => {
+      if (this.textures.exists(key)) return;
+      g.clear();
+      draw(g);
+      g.generateTexture(key, w, h);
+    };
+
+    // Procedural fallbacks for any kind whose real sprite hasn't loaded yet.
+    const fallbackColors: Record<string, number> = {
+      blue_wizard: 0x6a8eff,
+      fire_wizard: 0xff6a4a,
+      salamander_wizard: 0xffaa55,
+      lightning_wizard: 0xffff66,
+      earth_wizard: 0xa07a4a,
+      forest_wizard: 0x66cc66,
+      shadow_wizard: 0x8a55aa,
+      mouse_apprentice: 0xddccaa,
+      frog_wizard: 0x66cc66,
+      old_man_wizard: 0x6688dd,
+      owl_wizard: 0x886688,
+      cat_wizard: 0x99bb55,
+      skeleton: 0xeeeeee,
+      skeleton_knight: 0xccccee,
+      stalker_skeleton: 0xddeedd,
+      crawling_skeleton: 0xddddcc,
+      zombie_v2: 0x6aaa6a,
+      zombie_b: 0x77aa66,
+      bloated_zombie: 0x88bb44,
+      ghoul: 0xaa9988,
+      goblin: 0x88aa44,
+      goblin_brute: 0x66884a,
+      goblin_scratcher: 0x99bb55,
+      feral_goblin: 0xaacc44,
+      fat_goblin: 0x778833,
+      treant: 0x4a6633,
+      slime: 0x66ccaa,
+      spider: 0x222222,
+      wraith: 0x9988aa,
+      werewolf: 0x665544,
+      rat: 0x6a4a3a,
+      zombie_bear: 0x3a2a1a,
+    };
+    for (const [c, col] of Object.entries(fallbackColors)) {
+      for (const dir of DIRS) {
+        ensure(`${c}_${dir}`, (gg) => {
+          gg.fillStyle(col, 1);
+          gg.fillCircle(16, 18, 11);
+          gg.lineStyle(1, 0x000000, 1);
+          gg.strokeCircle(16, 18, 11);
+        });
+      }
+    }
+    // Gems by tier — distinct colors and shapes
+    const drawGem = (
+      gg: Phaser.GameObjects.Graphics,
+      fill: number,
+      core: number,
+      glow: number,
+      outline: number,
+    ) => {
+      // soft glow halo
+      gg.fillStyle(glow, 0.30); gg.fillCircle(16, 16, 12);
+      gg.fillStyle(glow, 0.55); gg.fillCircle(16, 16, 9);
+      // diamond body
+      gg.fillStyle(fill, 1);
+      gg.beginPath();
+      gg.moveTo(16, 5); gg.lineTo(26, 16); gg.lineTo(16, 27); gg.lineTo(6, 16);
+      gg.closePath(); gg.fillPath();
+      // bright core highlight
+      gg.fillStyle(core, 1);
+      gg.beginPath();
+      gg.moveTo(16, 8); gg.lineTo(20, 14); gg.lineTo(16, 18); gg.lineTo(12, 14);
+      gg.closePath(); gg.fillPath();
+      // outline
+      gg.lineStyle(1, outline, 1);
+      gg.beginPath();
+      gg.moveTo(16, 5); gg.lineTo(26, 16); gg.lineTo(16, 27); gg.lineTo(6, 16);
+      gg.closePath(); gg.strokePath();
+    };
+    ensure('gem_blue',  (gg) => drawGem(gg, 0x44aaff, 0xddeeff, 0x88ccff, 0x224466), 32, 32);
+    ensure('gem_green', (gg) => drawGem(gg, 0x44dd77, 0xddffdd, 0x88ee99, 0x226633), 32, 32);
+    ensure('gem_gold',  (gg) => drawGem(gg, 0xffcc44, 0xffffaa, 0xffe066, 0x665522), 32, 32);
+    // Epic gem: star-burst shape
+    ensure('gem_epic', (gg) => {
+      gg.fillStyle(0xff44aa, 0.30); gg.fillCircle(20, 20, 16);
+      gg.fillStyle(0xff44aa, 0.55); gg.fillCircle(20, 20, 12);
+      // 8-pointed star (two squares rotated 45deg)
+      gg.fillStyle(0xff77cc, 1);
+      gg.beginPath();
+      gg.moveTo(20, 4); gg.lineTo(28, 12); gg.lineTo(36, 20); gg.lineTo(28, 28);
+      gg.lineTo(20, 36); gg.lineTo(12, 28); gg.lineTo(4, 20); gg.lineTo(12, 12);
+      gg.closePath(); gg.fillPath();
+      gg.fillStyle(0xffaaee, 1);
+      gg.beginPath();
+      gg.moveTo(20, 11); gg.lineTo(25, 16); gg.lineTo(29, 20); gg.lineTo(25, 24);
+      gg.lineTo(20, 29); gg.lineTo(15, 24); gg.lineTo(11, 20); gg.lineTo(15, 16);
+      gg.closePath(); gg.fillPath();
+      gg.fillStyle(0xffffff, 1); gg.fillCircle(20, 20, 3);
+    }, 40, 40);
+    // ---- Per-element projectile textures ----
+
+    // Arcane: classic glowing blue orb
+    ensure('proj_arcane', (gg) => {
+      gg.fillStyle(0x4488ff, 0.20); gg.fillCircle(16, 16, 14);
+      gg.fillStyle(0x66aaff, 0.45); gg.fillCircle(16, 16, 10);
+      gg.fillStyle(0xaaccff, 0.75); gg.fillCircle(16, 16, 7);
+      gg.fillStyle(0xffffff, 1);    gg.fillCircle(16, 16, 4);
+    }, 32, 32);
+
+    // Fire: flame teardrop with hot core + flickering tail
+    ensure('proj_fire', (gg) => {
+      // outer red glow
+      gg.fillStyle(0xff2200, 0.30); gg.fillCircle(16, 18, 12);
+      // mid orange body
+      gg.fillStyle(0xff7733, 0.85); gg.fillCircle(16, 18, 9);
+      // teardrop top
+      gg.fillStyle(0xff5511, 1);
+      gg.beginPath();
+      gg.moveTo(13, 14); gg.lineTo(16, 3); gg.lineTo(19, 14);
+      gg.closePath(); gg.fillPath();
+      // inner yellow
+      gg.fillStyle(0xffdd44, 1); gg.fillCircle(16, 18, 6);
+      // white-hot core
+      gg.fillStyle(0xffffff, 1); gg.fillCircle(16, 18, 3);
+    }, 32, 32);
+
+    // Lightning: jagged zigzag bolt
+    ensure('proj_lightning', (gg) => {
+      // halo
+      gg.fillStyle(0xffff66, 0.25); gg.fillCircle(16, 16, 12);
+      // outer bolt (yellow, thicker)
+      gg.lineStyle(5, 0xffee44, 1);
+      gg.beginPath();
+      gg.moveTo(6, 4); gg.lineTo(13, 11); gg.lineTo(9, 14); gg.lineTo(20, 21); gg.lineTo(15, 24); gg.lineTo(24, 30);
+      gg.strokePath();
+      // inner bolt (white core)
+      gg.lineStyle(2, 0xffffff, 1);
+      gg.beginPath();
+      gg.moveTo(6, 4); gg.lineTo(13, 11); gg.lineTo(9, 14); gg.lineTo(20, 21); gg.lineTo(15, 24); gg.lineTo(24, 30);
+      gg.strokePath();
+    }, 32, 32);
+
+    // Earth: chunky rocky polygon
+    ensure('proj_earth', (gg) => {
+      // shadow
+      gg.fillStyle(0x000000, 0.35); gg.fillEllipse(16, 24, 18, 5);
+      // rock body
+      gg.fillStyle(0x886644, 1);
+      gg.beginPath();
+      gg.moveTo(7, 14); gg.lineTo(11, 7); gg.lineTo(19, 6);
+      gg.lineTo(25, 12); gg.lineTo(24, 20); gg.lineTo(16, 25);
+      gg.lineTo(8, 21); gg.closePath(); gg.fillPath();
+      // top highlight
+      gg.fillStyle(0xbb9966, 1);
+      gg.beginPath();
+      gg.moveTo(11, 7); gg.lineTo(19, 6); gg.lineTo(20, 12); gg.lineTo(13, 13);
+      gg.closePath(); gg.fillPath();
+      // dark crack
+      gg.lineStyle(1, 0x442211, 0.8);
+      gg.beginPath(); gg.moveTo(13, 16); gg.lineTo(20, 15); gg.strokePath();
+      gg.beginPath(); gg.moveTo(15, 12); gg.lineTo(17, 18); gg.strokePath();
+      // outline
+      gg.lineStyle(1, 0x331100, 1);
+      gg.beginPath();
+      gg.moveTo(7, 14); gg.lineTo(11, 7); gg.lineTo(19, 6);
+      gg.lineTo(25, 12); gg.lineTo(24, 20); gg.lineTo(16, 25);
+      gg.lineTo(8, 21); gg.closePath(); gg.strokePath();
+    }, 32, 32);
+
+    // Forest: leaf with darker veins
+    ensure('proj_forest', (gg) => {
+      // soft glow
+      gg.fillStyle(0x66cc66, 0.22); gg.fillCircle(16, 16, 12);
+      // leaf body
+      gg.fillStyle(0x44aa44, 1); gg.fillEllipse(16, 16, 22, 11);
+      // bright highlight
+      gg.fillStyle(0x88dd66, 1); gg.fillEllipse(13, 14, 9, 5);
+      // central vein
+      gg.lineStyle(1, 0x226622, 1);
+      gg.beginPath(); gg.moveTo(6, 16); gg.lineTo(26, 16); gg.strokePath();
+      // side veins
+      gg.lineStyle(1, 0x336633, 0.7);
+      gg.beginPath(); gg.moveTo(11, 13); gg.lineTo(13, 18); gg.strokePath();
+      gg.beginPath(); gg.moveTo(17, 13); gg.lineTo(15, 18); gg.strokePath();
+      gg.beginPath(); gg.moveTo(21, 13); gg.lineTo(19, 18); gg.strokePath();
+      // tip point
+      gg.fillStyle(0x336633, 1); gg.fillTriangle(26, 16, 30, 14, 30, 18);
+    }, 32, 32);
+
+    // Shadow: dark blob with purple aura
+    ensure('proj_shadow', (gg) => {
+      gg.fillStyle(0xaa44dd, 0.30); gg.fillCircle(16, 16, 13);
+      gg.fillStyle(0x661199, 0.75); gg.fillCircle(16, 16, 10);
+      gg.fillStyle(0x220033, 1);    gg.fillCircle(16, 16, 7);
+      gg.fillStyle(0xeeaaff, 1);    gg.fillCircle(16, 16, 3);
+      // orbiting dark wisps
+      gg.fillStyle(0x441166, 0.8);
+      gg.fillCircle(11, 11, 1.5); gg.fillCircle(22, 12, 1.5);
+      gg.fillCircle(12, 22, 1.5); gg.fillCircle(22, 21, 1.5);
+    }, 32, 32);
+
+    // Shield bubble (cyan magical aura around player on invuln)
+    ensure('shield', (gg) => {
+      // outer bright ring
+      gg.lineStyle(3, 0x88eeff, 1); gg.strokeCircle(40, 40, 36);
+      // inner ring
+      gg.lineStyle(1, 0xffffff, 0.85); gg.strokeCircle(40, 40, 32);
+      // soft inner fill
+      gg.fillStyle(0x88eeff, 0.10); gg.fillCircle(40, 40, 34);
+      // 4 cardinal "rune" marks
+      gg.fillStyle(0xffffff, 1);
+      gg.fillRect(38, 2, 4, 6);   gg.fillRect(38, 72, 4, 6);
+      gg.fillRect(2, 38, 6, 4);   gg.fillRect(72, 38, 6, 4);
+      // diagonal accents
+      gg.fillStyle(0x88eeff, 0.9);
+      gg.fillRect(13, 13, 3, 3); gg.fillRect(64, 13, 3, 3);
+      gg.fillRect(13, 64, 3, 3); gg.fillRect(64, 64, 3, 3);
+    }, 80, 80);
+
+    // Seamless 128×128 procedural floor — dark base + tonal noise, no edges/grid lines
+    if (!this.textures.exists('floor')) {
+      g.clear();
+      g.fillStyle(0x14142a, 1);
+      g.fillRect(0, 0, 128, 128);
+      // tonal noise: many small subtle dots
+      const seed = (i: number) => ((i * 9301 + 49297) % 233280) / 233280;
+      for (let i = 0; i < 220; i++) {
+        const x = Math.floor(seed(i * 2) * 128);
+        const y = Math.floor(seed(i * 2 + 1) * 128);
+        const v = seed(i + 999);
+        if (v > 0.5) {
+          g.fillStyle(0x1a1a3a, 0.6);
+        } else {
+          g.fillStyle(0x0a0a18, 0.6);
+        }
+        g.fillRect(x, y, 1 + Math.floor(v * 2), 1 + Math.floor(v * 2));
+      }
+      // a few highlight pixels for visual interest
+      for (let i = 0; i < 30; i++) {
+        const x = Math.floor(seed(i * 7 + 33) * 128);
+        const y = Math.floor(seed(i * 7 + 47) * 128);
+        g.fillStyle(0x20204a, 0.4);
+        g.fillRect(x, y, 1, 1);
+      }
+      g.generateTexture('floor', 128, 128);
+    }
+
+    g.destroy();
+  }
+
+  registerAnimations() {
+    for (const c of ALL_KINDS) {
+      for (const dir of DIRS) {
+        const key = `${c}_walk_${dir}`;
+        // Skip if anim already exists or no frames loaded
+        if (this.anims.exists(key)) continue;
+        const frames: { key: string }[] = [];
+        for (let i = 0; i < WALK_FRAMES; i++) {
+          const fk = `${c}_walk_${dir}_${i}`;
+          if (this.textures.exists(fk)) frames.push({ key: fk });
+        }
+        if (frames.length >= 2) {
+          this.anims.create({
+            key,
+            frames,
+            frameRate: 8,
+            repeat: -1,
+          });
+        }
+      }
+    }
+  }
+
+  makeArenaBackground() {
+    // Main green tile across the whole arena
+    const baseTexture = this.textures.exists('floor_green') ? 'floor_green' : 'floor';
+    const ts = this.add.tileSprite(
+      ARENA_WIDTH / 2,
+      ARENA_HEIGHT / 2,
+      ARENA_WIDTH,
+      ARENA_HEIGHT,
+      baseTexture,
+    );
+    ts.setDepth(-100);
+
+    // Sparse decoration patches (deterministic so they don't reshuffle each frame)
+    const seed = (i: number) => ((i * 9301 + 49297) % 233280) / 233280;
+    const placePatches = (key: string, count: number, seedOffset: number, scaleMin: number, scaleMax: number) => {
+      if (!this.textures.exists(key)) return;
+      for (let i = 0; i < count; i++) {
+        const x = seed((i + seedOffset) * 2) * ARENA_WIDTH;
+        const y = seed((i + seedOffset) * 2 + 1) * ARENA_HEIGHT;
+        const scale = scaleMin + seed((i + seedOffset) * 3 + 7) * (scaleMax - scaleMin);
+        const rot = seed((i + seedOffset) * 5 + 11) * Math.PI * 2;
+        this.add
+          .image(x, y, key)
+          .setScale(scale)
+          .setRotation(rot)
+          .setDepth(-99)
+          .setAlpha(0.85);
+      }
+    };
+    // Dirt patches: ~40 across the arena, varying scale 1-2x, gives subtle path/stain feel
+    placePatches('floor_dirt', 40, 0, 1.0, 2.2);
+    // Rocks (rarer, larger): ~12 if the asset exists
+    placePatches('floor_rocks', 12, 1000, 0.8, 1.5);
+
+    // Border
+    const border = this.add.graphics();
+    border.lineStyle(4, 0x553388, 1);
+    border.strokeRect(0, 0, ARENA_WIDTH, ARENA_HEIGHT);
+    border.setDepth(-50);
+  }
+
+  connect() {
+    const { name, character, color, room } = this.init_;
+    const socket = new PartySocket({
+      host: PARTY_HOST,
+      room: room || 'main',
+      party: 'main',
+    });
+    this.socket = socket;
+
+    // Re-send join on every open (initial + reconnects after server HMR/restart)
+    socket.addEventListener('open', () => {
+      const join: ClientToServer = {
+        type: 'join',
+        name, character, color,
+        hue: this.init_.hue,
+        country: this.init_.country,
+      };
+      socket.send(JSON.stringify(join));
+    });
+    socket.addEventListener('message', (e) => {
+      try {
+        const msg: ServerToClient = JSON.parse(e.data);
+        this.handleServerMessage(msg);
+      } catch (err) {
+        console.warn('[party] bad message', err);
+      }
+    });
+    socket.addEventListener('close', () => {
+      console.warn('[party] disconnected — partysocket will auto-reconnect');
+    });
+    socket.addEventListener('error', (e) => {
+      console.error('[party] error', e);
+    });
+  }
+
+  handleServerMessage(msg: ServerToClient) {
+    if (msg.type === 'welcome') {
+      this.selfId = msg.selfId;
+    } else if (msg.type === 'snapshot') {
+      this.prevSnapshot = this.latestSnapshot;
+      this.prevSnapshotTime = this.snapshotTime;
+      this.latestSnapshot = msg;
+      this.snapshotTime = performance.now();
+      // reconcile predicted self toward server position
+      if (this.selfId) {
+        const self = msg.players.find((p) => p.id === this.selfId);
+        if (self) {
+          if (!this.predictedSelf) {
+            this.predictedSelf = { x: self.x, y: self.y };
+          } else {
+            const dx = self.x - this.predictedSelf.x;
+            const dy = self.y - this.predictedSelf.y;
+            const drift = Math.hypot(dx, dy);
+            if (drift > 80) {
+              // hard snap on big drift (knockback, respawn, teleport)
+              this.predictedSelf.x = self.x;
+              this.predictedSelf.y = self.y;
+            } else {
+              // soft correct ~20% per snapshot
+              this.predictedSelf.x += dx * 0.2;
+              this.predictedSelf.y += dy * 0.2;
+            }
+          }
+        }
+      }
+    } else if (msg.type === 'levelUp') {
+      if (msg.playerId === this.selfId) {
+        // ascending fanfare — louder, longer
+        this.sfxArpeggio([523, 659, 784, 1047, 1319], 0.07, 0.18);
+        this.bus.emit('levelUp', { level: msg.level, choices: msg.choices });
+      }
+    } else if (msg.type === 'died') {
+      if (msg.playerId === this.selfId) {
+        this.sfxArpeggio([330, 247, 196, 147], 0.09, 0.18);
+        this.bus.emit('died');
+      }
+    } else if (msg.type === 'leaderboard') {
+      this.bus.emit('leaderboard', msg.entries);
+    } else if (msg.type === 'effect') {
+      if (msg.effect === 'lightning') {
+        this.spawnLightningEffect(msg.x, msg.y);
+      } else if (msg.effect === 'meteor') {
+        this.spawnMeteorEffect(msg.x, msg.y);
+      } else if (msg.effect === 'frostNova') {
+        this.spawnFrostNovaEffect(msg.x, msg.y, msg.radius);
+      } else if (msg.effect === 'holySmite') {
+        this.spawnHolySmiteEffect(msg.x, msg.y);
+      } else if (msg.effect === 'blackHole') {
+        this.spawnBlackHoleEffect(msg.x, msg.y, msg.durationMs);
+      } else if (msg.effect === 'chainExplosion') {
+        this.spawnChainExplosionEffect(msg.x, msg.y);
+      } else if (msg.effect === 'phoenixRevive') {
+        this.spawnPhoenixReviveEffect(msg.x, msg.y);
+      } else if (msg.effect === 'earthquake') {
+        this.spawnEarthquakeEffect(msg.x, msg.y, msg.radius);
+      } else if (msg.effect === 'timeStop') {
+        this.spawnTimeStopEffect(msg.x, msg.y, msg.radius);
+      }
+    }
+  }
+
+  // Vertical lightning bolt + ground splash + camera flash. Plays whenever the
+  // server fires a Lightning Strike powerup AOE on a random nearby foe.
+  spawnLightningEffect(x: number, y: number) {
+    const g = this.add.graphics();
+    g.setDepth(60);
+    // jagged bolt from above the screen down to the impact point
+    const jag = (x0: number, y0: number, x1: number, y1: number) => {
+      const segs = 7;
+      g.beginPath();
+      g.moveTo(x0, y0);
+      for (let i = 1; i < segs; i++) {
+        const t = i / segs;
+        const ix = x0 + (x1 - x0) * t + (Math.random() - 0.5) * 18;
+        const iy = y0 + (y1 - y0) * t;
+        g.lineTo(ix, iy);
+      }
+      g.lineTo(x1, y1);
+      g.strokePath();
+    };
+    g.lineStyle(8, 0xffee44, 0.7);
+    jag(x, y - 280, x, y);
+    g.lineStyle(3, 0xffffff, 1);
+    jag(x, y - 280, x, y);
+    // ground splash ring
+    g.lineStyle(4, 0xffee44, 0.9);
+    g.strokeCircle(x, y, 18);
+    g.lineStyle(2, 0xffffff, 0.95);
+    g.strokeCircle(x, y, 8);
+    // camera shake + tween fade
+    this.cameras.main.shake(120, 0.005);
+    if (this.audioCtx && !this.musicMuted) {
+      this.sfx(180, 0.25, 0.10, 'sawtooth');
+      this.sfx(2400, 0.06, 0.07, 'square');
+    }
+    this.tweens.add({
+      targets: g,
+      alpha: { from: 1, to: 0 },
+      duration: 280,
+      ease: 'Quad.easeOut',
+      onComplete: () => g.destroy(),
+    });
+  }
+
+  // Meteor: red/orange streak from upper-left to impact point + crater scorch + shake.
+  spawnMeteorEffect(x: number, y: number) {
+    const g = this.add.graphics();
+    g.setDepth(60);
+    // streaking trail (diagonal from above-left)
+    const startX = x - 200;
+    const startY = y - 280;
+    g.lineStyle(10, 0xff5511, 0.55);
+    g.beginPath(); g.moveTo(startX, startY); g.lineTo(x, y); g.strokePath();
+    g.lineStyle(5, 0xffaa44, 0.9);
+    g.beginPath(); g.moveTo(startX, startY); g.lineTo(x, y); g.strokePath();
+    g.lineStyle(2, 0xffffaa, 1);
+    g.beginPath(); g.moveTo(startX, startY); g.lineTo(x, y); g.strokePath();
+    // crater rings
+    g.fillStyle(0xff7733, 0.5); g.fillCircle(x, y, 40);
+    g.fillStyle(0xffaa44, 0.7); g.fillCircle(x, y, 28);
+    g.fillStyle(0xffeecc, 0.95); g.fillCircle(x, y, 14);
+    g.lineStyle(3, 0xff5511, 1); g.strokeCircle(x, y, 36);
+    this.cameras.main.shake(60, 0.0025);
+    if (this.audioCtx && !this.musicMuted) {
+      this.sfx(80, 0.32, 0.12, 'sawtooth');
+      this.sfx(160, 0.18, 0.08, 'square');
+    }
+    this.tweens.add({
+      targets: g,
+      alpha: { from: 1, to: 0 },
+      duration: 420,
+      ease: 'Quad.easeOut',
+      onComplete: () => g.destroy(),
+    });
+  }
+
+  // Frost Nova: expanding white-blue ring from origin, with cold flash.
+  spawnFrostNovaEffect(x: number, y: number, radius: number) {
+    const g = this.add.graphics();
+    g.setDepth(60);
+    g.setBlendMode(Phaser.BlendModes.ADD);
+    // animate radius from small to full via tween on a holder object
+    const state = { r: 0 };
+    const draw = () => {
+      g.clear();
+      const r = state.r;
+      // outer faint
+      g.lineStyle(8, 0x99ddff, 0.35);
+      g.strokeCircle(x, y, r);
+      // bright ring
+      g.lineStyle(4, 0xccffff, 0.9);
+      g.strokeCircle(x, y, r);
+      // crystal sparkles
+      const ticks = 12;
+      for (let i = 0; i < ticks; i++) {
+        const a = (i / ticks) * Math.PI * 2;
+        const sx = x + Math.cos(a) * r;
+        const sy = y + Math.sin(a) * r;
+        g.fillStyle(0xffffff, 0.95);
+        g.fillCircle(sx, sy, 2.5);
+      }
+    };
+    if (this.audioCtx && !this.musicMuted) {
+      this.sfx(900, 0.18, 0.07, 'triangle');
+      this.sfx(1600, 0.12, 0.06, 'sine');
+    }
+    this.tweens.add({
+      targets: state,
+      r: radius,
+      duration: 360,
+      ease: 'Quad.easeOut',
+      onUpdate: draw,
+      onComplete: () => {
+        this.tweens.add({
+          targets: g,
+          alpha: { from: 1, to: 0 },
+          duration: 220,
+          ease: 'Quad.easeOut',
+          onComplete: () => g.destroy(),
+        });
+      },
+    });
+    draw();
+  }
+
+  // Holy Smite: golden pillar of light from above with halo.
+  spawnHolySmiteEffect(x: number, y: number) {
+    const g = this.add.graphics();
+    g.setDepth(60);
+    g.setBlendMode(Phaser.BlendModes.ADD);
+    // wide soft pillar
+    g.fillStyle(0xfff0a0, 0.18);
+    g.fillRect(x - 28, y - 320, 56, 320);
+    g.fillStyle(0xfff8d0, 0.35);
+    g.fillRect(x - 14, y - 320, 28, 320);
+    g.fillStyle(0xffffff, 0.85);
+    g.fillRect(x - 5, y - 320, 10, 320);
+    // ground halo (concentric)
+    g.fillStyle(0xfff0a0, 0.4); g.fillCircle(x, y, 36);
+    g.fillStyle(0xffffaa, 0.7); g.fillCircle(x, y, 22);
+    g.fillStyle(0xffffff, 1);   g.fillCircle(x, y, 10);
+    g.lineStyle(2, 0xffd96a, 1); g.strokeCircle(x, y, 30);
+    // descending sparkles
+    for (let i = 0; i < 6; i++) {
+      g.fillStyle(0xffffaa, 0.9);
+      g.fillCircle(x + (Math.random() - 0.5) * 28, y - Math.random() * 280, 2 + Math.random() * 2);
+    }
+    if (this.audioCtx && !this.musicMuted) {
+      this.sfxArpeggio([784, 988, 1175, 1568], 0.045, 0.13);
+    }
+    this.cameras.main.shake(80, 0.003);
+    this.tweens.add({
+      targets: g,
+      alpha: { from: 1, to: 0 },
+      duration: 520,
+      ease: 'Quad.easeOut',
+      onComplete: () => g.destroy(),
+    });
+  }
+
+  // Black Hole: spinning purple vortex that lasts for the full server duration.
+  spawnBlackHoleEffect(x: number, y: number, durationMs: number) {
+    const g = this.add.graphics();
+    g.setDepth(60);
+    let t = 0;
+    const startTime = performance.now();
+    const draw = () => {
+      const now = performance.now();
+      t = (now - startTime) / 1000;
+      const lifeFrac = Math.min(1, (now - startTime) / durationMs);
+      // grow then shrink at end
+      const sizeCurve = lifeFrac < 0.85 ? 1 : 1 - (lifeFrac - 0.85) / 0.15;
+      const baseR = 60 * sizeCurve;
+      g.clear();
+      // outer purple glow
+      g.fillStyle(0x441166, 0.45); g.fillCircle(x, y, baseR + 30);
+      g.fillStyle(0x6622aa, 0.55); g.fillCircle(x, y, baseR + 16);
+      g.fillStyle(0x8833cc, 0.7);  g.fillCircle(x, y, baseR);
+      // black core
+      g.fillStyle(0x000000, 0.9);  g.fillCircle(x, y, baseR * 0.55);
+      // spiral arms (3 arcs)
+      g.lineStyle(3, 0xddaaff, 0.85);
+      const arms = 3;
+      for (let a = 0; a < arms; a++) {
+        const baseAngle = t * 5 + (a / arms) * Math.PI * 2;
+        g.beginPath();
+        for (let s = 0; s <= 28; s++) {
+          const frac = s / 28;
+          const r = baseR * (0.55 + frac * 0.55);
+          const ang = baseAngle + frac * 2.6;
+          const sx = x + Math.cos(ang) * r;
+          const sy = y + Math.sin(ang) * r;
+          if (s === 0) g.moveTo(sx, sy);
+          else g.lineTo(sx, sy);
+        }
+        g.strokePath();
+      }
+    };
+    const ticker = this.time.addEvent({
+      delay: 16,
+      loop: true,
+      callback: draw,
+    });
+    if (this.audioCtx && !this.musicMuted) {
+      this.sfx(110, 0.6, 0.08, 'sawtooth');
+      this.sfx(55, 1.2, 0.05, 'sine');
+    }
+    this.time.delayedCall(durationMs, () => {
+      ticker.remove();
+      this.tweens.add({
+        targets: g,
+        alpha: { from: 1, to: 0 },
+        duration: 200,
+        ease: 'Quad.easeOut',
+        onComplete: () => g.destroy(),
+      });
+    });
+    draw();
+  }
+
+  // Chain Reaction explosion: small fiery burst at the corpse.
+  spawnChainExplosionEffect(x: number, y: number) {
+    const g = this.add.graphics();
+    g.setDepth(60);
+    g.setBlendMode(Phaser.BlendModes.ADD);
+    g.fillStyle(0xff5511, 0.55); g.fillCircle(x, y, 50);
+    g.fillStyle(0xff9933, 0.7);  g.fillCircle(x, y, 32);
+    g.fillStyle(0xffeecc, 1);    g.fillCircle(x, y, 14);
+    // 6 outward sparks
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      const r = 36 + Math.random() * 12;
+      g.fillStyle(0xffaa44, 0.95);
+      g.fillCircle(x + Math.cos(a) * r, y + Math.sin(a) * r, 3);
+    }
+    if (this.audioCtx && !this.musicMuted) this.sfx(180, 0.10, 0.06, 'square');
+    this.tweens.add({
+      targets: g,
+      alpha: { from: 1, to: 0 },
+      duration: 240,
+      ease: 'Quad.easeOut',
+      onComplete: () => g.destroy(),
+    });
+  }
+
+  // Phoenix Revive: huge fiery burst around the player on revive.
+  spawnPhoenixReviveEffect(x: number, y: number) {
+    const g = this.add.graphics();
+    g.setDepth(60);
+    g.setBlendMode(Phaser.BlendModes.ADD);
+    // expanding triple-layer fire ring
+    const state = { r: 0 };
+    const draw = () => {
+      g.clear();
+      const r = state.r;
+      g.fillStyle(0xff2200, 0.30); g.fillCircle(x, y, r);
+      g.fillStyle(0xff7733, 0.45); g.fillCircle(x, y, r * 0.78);
+      g.fillStyle(0xffcc66, 0.60); g.fillCircle(x, y, r * 0.55);
+      g.fillStyle(0xffeecc, 0.85); g.fillCircle(x, y, r * 0.30);
+      // flame tongues at the perimeter
+      const ticks = 12;
+      for (let i = 0; i < ticks; i++) {
+        const a = (i / ticks) * Math.PI * 2;
+        const sx = x + Math.cos(a) * r;
+        const sy = y + Math.sin(a) * r;
+        g.fillStyle(0xff5511, 0.9);
+        g.fillCircle(sx, sy, 6);
+      }
+    };
+    if (this.audioCtx && !this.musicMuted) {
+      this.sfxArpeggio([523, 659, 784, 1047], 0.05, 0.18);
+      this.sfx(80, 0.4, 0.10, 'sawtooth');
+    }
+    this.cameras.main.shake(120, 0.004);
+    this.tweens.add({
+      targets: state,
+      r: 250,
+      duration: 480,
+      ease: 'Quad.easeOut',
+      onUpdate: draw,
+      onComplete: () => {
+        this.tweens.add({
+          targets: g,
+          alpha: { from: 1, to: 0 },
+          duration: 360,
+          ease: 'Quad.easeOut',
+          onComplete: () => g.destroy(),
+        });
+      },
+    });
+    draw();
+  }
+
+  // Earthquake: brown/dust shockwave ring expanding from the player.
+  spawnEarthquakeEffect(x: number, y: number, radius: number) {
+    const g = this.add.graphics();
+    g.setDepth(60);
+    const state = { r: 0 };
+    const draw = () => {
+      g.clear();
+      const r = state.r;
+      // dusty fill ring
+      g.fillStyle(0x886644, 0.18); g.fillCircle(x, y, r);
+      g.fillStyle(0x553322, 0.10); g.fillCircle(x, y, r * 0.7);
+      // bright leading edge
+      g.lineStyle(6, 0xddaa66, 0.7);
+      g.strokeCircle(x, y, r);
+      g.lineStyle(2, 0xffeebb, 0.95);
+      g.strokeCircle(x, y, r);
+      // 8 rock chunks flying outward from perimeter
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        const rr = r * (0.92 + Math.random() * 0.1);
+        g.fillStyle(0x664422, 0.95);
+        g.fillCircle(x + Math.cos(a) * rr, y + Math.sin(a) * rr, 3);
+      }
+    };
+    if (this.audioCtx && !this.musicMuted) {
+      this.sfx(60, 0.3, 0.10, 'sawtooth');
+      this.sfx(140, 0.18, 0.07, 'square');
+    }
+    this.cameras.main.shake(140, 0.005);
+    this.tweens.add({
+      targets: state,
+      r: radius,
+      duration: 360,
+      ease: 'Quad.easeOut',
+      onUpdate: draw,
+      onComplete: () => {
+        this.tweens.add({
+          targets: g,
+          alpha: { from: 1, to: 0 },
+          duration: 240,
+          ease: 'Quad.easeOut',
+          onComplete: () => g.destroy(),
+        });
+      },
+    });
+    draw();
+  }
+
+  // Time Stop: bright cyan flash + slow concentric rings to telegraph the freeze.
+  spawnTimeStopEffect(x: number, y: number, radius: number) {
+    const g = this.add.graphics();
+    g.setDepth(60);
+    g.setBlendMode(Phaser.BlendModes.ADD);
+    const state = { r: 0 };
+    const draw = () => {
+      g.clear();
+      const r = state.r;
+      // soft tinted disc
+      g.fillStyle(0x88ccff, 0.10); g.fillCircle(x, y, r);
+      // bright sweeping ring
+      g.lineStyle(4, 0xaaeeff, 0.85); g.strokeCircle(x, y, r);
+      g.lineStyle(2, 0xffffff, 0.95); g.strokeCircle(x, y, r);
+      // 12 ticks evenly spaced — clock-face flavor
+      for (let i = 0; i < 12; i++) {
+        const a = (i / 12) * Math.PI * 2;
+        const sx = x + Math.cos(a) * r;
+        const sy = y + Math.sin(a) * r;
+        g.fillStyle(0xffffff, 0.9);
+        g.fillCircle(sx, sy, 3);
+      }
+    };
+    if (this.audioCtx && !this.musicMuted) {
+      this.sfx(440, 0.4, 0.10, 'sine');
+      this.sfx(880, 0.2, 0.07, 'triangle');
+    }
+    this.tweens.add({
+      targets: state,
+      r: radius,
+      duration: 540,
+      ease: 'Quad.easeOut',
+      onUpdate: draw,
+      onComplete: () => {
+        this.tweens.add({
+          targets: g,
+          alpha: { from: 1, to: 0 },
+          duration: 320,
+          ease: 'Quad.easeOut',
+          onComplete: () => g.destroy(),
+        });
+      },
+    });
+    draw();
+  }
+
+  // Tiny synthesized SFX — louder than the music (BGM is at 0.16, SFX peaks ~0.18).
+  sfx(freq: number, duration: number, gain = 0.14, type: OscillatorType = 'square') {
+    const ctx = this.audioCtx;
+    if (!ctx || this.musicMuted) return;
+    try {
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = type;
+      osc.frequency.value = freq;
+      osc.connect(g);
+      g.connect(ctx.destination);
+      const t = ctx.currentTime;
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(gain, t + 0.005);
+      g.gain.exponentialRampToValueAtTime(0.0008, t + duration);
+      osc.start(t);
+      osc.stop(t + duration + 0.02);
+    } catch (e) { void e; }
+  }
+
+  // Quick chord/arpeggio
+  sfxArpeggio(freqs: number[], step = 0.05, gain = 0.16) {
+    const ctx = this.audioCtx;
+    if (!ctx) return;
+    freqs.forEach((f, i) => setTimeout(() => this.sfx(f, 0.12, gain, 'triangle'), i * step * 1000));
+  }
+
+  // Subtle attack sounds per weapon — only for self-owned shots so it stays uncluttered.
+  sfxFire(weapon: string) {
+    const ctx = this.audioCtx;
+    if (!ctx || this.musicMuted) return;
+    const now = ctx.currentTime;
+    const blip = (freq: number, dur: number, gain: number, type: OscillatorType, slideTo?: number) => {
+      try {
+        const osc = ctx.createOscillator();
+        const g = ctx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, now);
+        if (slideTo !== undefined) osc.frequency.exponentialRampToValueAtTime(slideTo, now + dur);
+        osc.connect(g); g.connect(ctx.destination);
+        g.gain.setValueAtTime(0, now);
+        g.gain.linearRampToValueAtTime(gain, now + 0.005);
+        g.gain.exponentialRampToValueAtTime(0.0008, now + dur);
+        osc.start(now); osc.stop(now + dur + 0.02);
+      } catch (e) { void e; }
+    };
+    switch (weapon) {
+      case 'fireball':       blip(220, 0.18, 0.07, 'sawtooth', 110);   blip(440, 0.10, 0.04, 'square'); break;
+      case 'lightning_bolt': blip(2200, 0.05, 0.06, 'square', 800);    break;
+      case 'sword':          blip(140, 0.16, 0.08, 'sine', 70);        blip(280, 0.06, 0.04, 'sawtooth'); break;
+      case 'dagger':         blip(900, 0.06, 0.04, 'triangle', 1400);  break;
+      case 'orb':            blip(660, 0.10, 0.05, 'sine', 440);       break;
+      case 'shadow_bolt':    blip(180, 0.20, 0.06, 'sine', 110);       blip(360, 0.10, 0.03, 'triangle'); break;
+      case 'orbital_spark':  blip(1500, 0.10, 0.05, 'square', 750);    break;
+      case 'aura_shield':    blip(440, 0.08, 0.03, 'sine');            break;
+      default:               blip(500, 0.08, 0.04, 'square');          break;
+    }
+  }
+
+  // Coin-pickup style — rising pitch, two harmonized layers.
+  // Higher gem values get higher pitch + more sparkle.
+  sfxGem(value: number) {
+    const ctx = this.audioCtx;
+    if (!ctx || this.musicMuted) return;
+    try {
+      const baseFreq = value >= 10 ? 1318 : value >= 5 ? 1100 : value >= 3 ? 988 : 880;
+      const now = ctx.currentTime;
+      const playTone = (freq: number, t0: number, dur: number, gain: number, type: OscillatorType) => {
+        const osc = ctx.createOscillator();
+        const g = ctx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq * 0.65, now + t0);
+        osc.frequency.exponentialRampToValueAtTime(freq, now + t0 + 0.045);
+        osc.connect(g);
+        g.connect(ctx.destination);
+        g.gain.setValueAtTime(0, now + t0);
+        g.gain.linearRampToValueAtTime(gain, now + t0 + 0.005);
+        g.gain.exponentialRampToValueAtTime(0.0008, now + t0 + dur);
+        osc.start(now + t0);
+        osc.stop(now + t0 + dur + 0.02);
+      };
+      // Main "ting"
+      playTone(baseFreq, 0, 0.12, 0.16, 'square');
+      // Harmonic shimmer (perfect fifth) — slight delay for chimey feel
+      playTone(baseFreq * 1.5, 0.025, 0.12, 0.10, 'triangle');
+      // Octave sparkle for higher tier gems
+      if (value >= 3) playTone(baseFreq * 2, 0.05, 0.10, 0.07, 'sine');
+      if (value >= 10) playTone(baseFreq * 3, 0.07, 0.10, 0.06, 'sine');
+    } catch (e) { void e; }
+  }
+
+  // Floating damage text — rises and fades over ~700ms.
+  spawnDamageNumber(x: number, y: number, dmg: number) {
+    const isCrit = dmg >= 20; // heuristic — bigger hits look like crits
+    const color = isCrit ? '#ff3333' : '#ffe080';
+    const size = isCrit ? '14px' : '12px';
+    const txt = this.add.text(x, y, String(dmg), {
+      fontFamily: 'monospace',
+      fontSize: size,
+      color,
+      stroke: '#000000',
+      strokeThickness: 3,
+    });
+    txt.setOrigin(0.5, 0.5);
+    txt.setDepth(50);
+    // small horizontal drift so multiple stacked hits don't overlap
+    const dx = (Math.random() - 0.5) * 14;
+    this.tweens.add({
+      targets: txt,
+      y: y - 28,
+      x: x + dx,
+      alpha: { from: 1, to: 0 },
+      ease: 'Quad.easeOut',
+      duration: 700,
+      onComplete: () => txt.destroy(),
+    });
+  }
+
+  toggleMusic() {
+    this.musicMuted = !this.musicMuted;
+    if (this.bgm) {
+      if (this.musicMuted) this.bgm.pause();
+      else if (!this.bgm.isPlaying) this.bgm.play();
+      else this.bgm.resume();
+    }
+  }
+
+  pickPowerup(idx: number) {
+    const m: ClientToServer = { type: 'pickPowerup', choiceIdx: idx };
+    this.socket?.send(JSON.stringify(m));
+  }
+
+  respawn() {
+    const m: ClientToServer = { type: 'respawn' };
+    this.socket?.send(JSON.stringify(m));
+    this.bus.emit('respawned');
+  }
+
+  update(_time: number, delta: number) {
+    this.handleInput(delta);
+    this.renderSnapshot();
+  }
+
+  handleInput(deltaMs: number) {
+    let dx = 0, dy = 0;
+    if (this.keyA?.isDown || this.cursors?.left?.isDown) dx -= 1;
+    if (this.keyD?.isDown || this.cursors?.right?.isDown) dx += 1;
+    if (this.keyW?.isDown || this.cursors?.up?.isDown) dy -= 1;
+    if (this.keyS?.isDown || this.cursors?.down?.isDown) dy += 1;
+
+    // Mouse override: when held (or always-on), aim direction = vector from self to cursor.
+    // Only kicks in if no WASD is being pressed (so you can stop without releasing the mouse).
+    if ((this.mouseDown || this.mouseAlwaysOn) && dx === 0 && dy === 0 && this.predictedSelf) {
+      const ptr = this.input.activePointer;
+      const world = this.cameras.main.getWorldPoint(ptr.x, ptr.y);
+      const mdx = world.x - this.predictedSelf.x;
+      const mdy = world.y - this.predictedSelf.y;
+      const dist = Math.hypot(mdx, mdy);
+      // Don't twitch when cursor is essentially on the player
+      if (dist > 12) { dx = mdx / dist; dy = mdy / dist; }
+    }
+
+    const len = Math.hypot(dx, dy);
+    if (len > 0) { dx /= len; dy /= len; }
+    this.inputDx = dx;
+    this.inputDy = dy;
+
+    // Client-side prediction: move local self
+    if (this.predictedSelf && this.selfId) {
+      const self = this.latestSnapshot?.players.find((p) => p.id === this.selfId);
+      if (self && self.alive) {
+        const speed = PLAYER_SPEED * (self.speedMul || 1);
+        const dt = deltaMs / 1000;
+        this.predictedSelf.x = clamp(
+          this.predictedSelf.x + dx * speed * dt,
+          PLAYER_RADIUS,
+          ARENA_WIDTH - PLAYER_RADIUS,
+        );
+        this.predictedSelf.y = clamp(
+          this.predictedSelf.y + dy * speed * dt,
+          PLAYER_RADIUS,
+          ARENA_HEIGHT - PLAYER_RADIUS,
+        );
+      }
+    }
+
+    const now = performance.now();
+    if (
+      this.socket &&
+      this.socket.readyState === 1 &&
+      (dx !== this.lastSentInput.dx ||
+        dy !== this.lastSentInput.dy ||
+        now - this.lastSentInput.t > 80)
+    ) {
+      const m: ClientToServer = { type: 'input', dx, dy };
+      this.socket.send(JSON.stringify(m));
+      this.lastSentInput = { dx, dy, t: now };
+    }
+  }
+
+  renderSnapshot() {
+    if (!this.latestSnapshot) return;
+    const snap = this.latestSnapshot;
+    const prev = this.prevSnapshot;
+    const interp =
+      prev && this.snapshotTime > this.prevSnapshotTime
+        ? Math.min(
+            1,
+            (performance.now() - this.snapshotTime) /
+              Math.max(16, this.snapshotTime - this.prevSnapshotTime),
+          )
+        : 1;
+
+    // Find the "king of the arena" — top player by score (level*100 + waveNumber*50).
+    // Their nameplate gets a 👑 prefix. Ties broken by id for stability.
+    const topPlayerId = (() => {
+      let best: { id: string; score: number } | null = null;
+      for (const p of snap.players) {
+        if (!p.alive) continue;
+        const score = p.level * 100 + (p.waveNumber ?? 0) * 50;
+        if (!best || score > best.score) best = { id: p.id, score };
+      }
+      return best?.id ?? '';
+    })();
+
+    // players
+    const seenPlayers = new Set<string>();
+    for (const p of snap.players) {
+      seenPlayers.add(p.id);
+      let container = this.playerSprites.get(p.id);
+      if (!container) {
+        container = this.makePlayerContainer(p);
+        this.playerSprites.set(p.id, container);
+      }
+
+      // Position
+      let renderX: number;
+      let renderY: number;
+      if (p.id === this.selfId && this.predictedSelf) {
+        renderX = this.predictedSelf.x;
+        renderY = this.predictedSelf.y;
+      } else {
+        const interpPos = lerpEntity(prev?.players.find((x) => x.id === p.id), p, interp);
+        renderX = interpPos.x;
+        renderY = interpPos.y;
+      }
+      container.x = renderX;
+      container.y = renderY;
+      container.setVisible(p.alive);
+
+      // moving? for self, use input. for others, compare snapshot-to-snapshot.
+      let moving = false;
+      if (p.alive) {
+        if (p.id === this.selfId) {
+          moving = this.inputDx !== 0 || this.inputDy !== 0;
+        } else {
+          const prevP = prev?.players.find((x) => x.id === p.id);
+          if (prevP) {
+            moving = (Math.abs(p.x - prevP.x) + Math.abs(p.y - prevP.y)) > 0.5;
+          }
+        }
+      }
+
+      // sprite + tint + facing + nameplate + hp bar
+      const body = container.getByName('body') as Phaser.GameObjects.Sprite;
+      // keep scale consistent if character changed (e.g. on respawn)
+      const expectedScale = (PLAYER_SPRITE_SCALE[p.character] ?? 1.0) * SPRITE_SHRINK;
+      if (Math.abs(body.scaleX - expectedScale) > 0.01) body.setScale(expectedScale);
+      const animKey = `${p.character}_walk_${p.facing}`;
+      const idleKey = `${p.character}_${p.facing}`;
+      if (moving && this.anims.exists(animKey)) {
+        // play(key, ignoreIfPlaying) — ignoreIfPlaying=true means restart only if not already running
+        body.anims.play(animKey, true);
+      } else {
+        if (body.anims.isPlaying) body.anims.stop();
+        if (this.textures.exists(idleKey) && body.texture.key !== idleKey) body.setTexture(idleKey);
+      }
+
+      // hit-flash: detect HP drop, override tint to red briefly
+      const track = this.playerHpTrack.get(p.id) ?? { lastHp: p.hp, flashUntilMs: 0 };
+      const now = performance.now();
+      if (p.hp < track.lastHp - 0.01 && p.alive) {
+        track.flashUntilMs = now + 220;
+      }
+      track.lastHp = p.hp;
+      this.playerHpTrack.set(p.id, track);
+
+      // Damage flash + hue-based tint
+      const wallNow = Date.now();
+      const isInvuln = wallNow < p.invulnerableUntil;
+      if (now < track.flashUntilMs) {
+        body.setTint(0xff3333);
+      } else {
+        body.setTint(hueToTint(p.hue ?? 0));
+      }
+      body.setAlpha(1);
+
+      // Shield bubble — visible only while invulnerable, slowly rotates and pulses
+      const shield = container.getByName('shield') as Phaser.GameObjects.Sprite | null;
+      if (shield) {
+        shield.setVisible(isInvuln);
+        if (isInvuln) {
+          shield.setRotation((now / 800) % (Math.PI * 2));
+          const pulse = 1 + Math.sin(now * 0.008) * 0.06;
+          shield.setScale(1.05 * pulse);
+        }
+      }
+
+      // Time Shield ring — visible while damageImmuneUntil is in the future.
+      // Bright blue glowing aura — clearly readable as "shield is up right now".
+      const timeShield = container.getByName('timeShield') as Phaser.GameObjects.Graphics | null;
+      const tsActive = wallNow < (p.damageImmuneUntil ?? 0);
+      if (timeShield) {
+        if (tsActive) {
+          timeShield.setVisible(true);
+          timeShield.clear();
+          const pulse = 1 + Math.sin(now * 0.012) * 0.08;
+          const r = 30 * pulse;
+          // outer soft glow halo (multiple stacked translucent fills)
+          timeShield.fillStyle(0x55bbff, 0.10);
+          timeShield.fillCircle(0, 0, r + 14);
+          timeShield.fillStyle(0x88ddff, 0.16);
+          timeShield.fillCircle(0, 0, r + 8);
+          timeShield.fillStyle(0xaaeeff, 0.22);
+          timeShield.fillCircle(0, 0, r + 3);
+          // bright cyan ring
+          timeShield.lineStyle(3, 0x66ccff, 0.95);
+          timeShield.strokeCircle(0, 0, r);
+          // inner highlight ring
+          timeShield.lineStyle(1, 0xffffff, 0.9);
+          timeShield.strokeCircle(0, 0, r - 3);
+          // 4 spinning sparkles
+          const t = now / 250;
+          for (let i = 0; i < 4; i++) {
+            const a = t + (i / 4) * Math.PI * 2;
+            const sx = Math.cos(a) * r;
+            const sy = Math.sin(a) * r;
+            timeShield.fillStyle(0xffffff, 0.95);
+            timeShield.fillCircle(sx, sy, 2.5);
+            timeShield.fillStyle(0xaaeeff, 0.5);
+            timeShield.fillCircle(sx, sy, 4.5);
+          }
+        } else {
+          timeShield.setVisible(false);
+        }
+      }
+
+      // Frost Aura — subtle pale-blue ring at the actual damage radius. Stays
+      // muted (low alpha, non-ADD blend) so it doesn't compete with the bright
+      // Time Shield bubble.
+      const frostAura = container.getByName('frostAura') as Phaser.GameObjects.Graphics | null;
+      if (frostAura) {
+        if (p.frostAuraDmg > 0 && p.frostAuraRadius > 0) {
+          frostAura.setVisible(true);
+          frostAura.clear();
+          const r = p.frostAuraRadius;
+          // very faint inner mist
+          frostAura.fillStyle(0xaaccee, 0.05);
+          frostAura.fillCircle(0, 0, r);
+          // soft outline ring
+          frostAura.lineStyle(1, 0xccddee, 0.35);
+          frostAura.strokeCircle(0, 0, r);
+          // 6 slowly drifting tiny snowflakes around the perimeter
+          const t = now / 1400;
+          for (let i = 0; i < 6; i++) {
+            const a = t + (i / 6) * Math.PI * 2;
+            const wob = Math.sin(now * 0.002 + i) * 3;
+            const sx = Math.cos(a) * (r + wob);
+            const sy = Math.sin(a) * (r + wob);
+            frostAura.fillStyle(0xffffff, 0.45);
+            frostAura.fillCircle(sx, sy, 1.5);
+          }
+        } else {
+          frostAura.setVisible(false);
+        }
+      }
+
+      // Aura Shield weapon ring — visible when equipped, pulses gently
+      const aura = container.getByName('aura') as Phaser.GameObjects.Graphics | null;
+      const hasAura = p.weapons.includes('aura_shield');
+      if (aura) {
+        if (hasAura) {
+          aura.setVisible(true);
+          const radius = 70 * (p.auraShieldRangeMul ?? 1);
+          const pulse = 1 + Math.sin(now * 0.005) * 0.05;
+          const r = radius * pulse;
+          aura.clear();
+          // outer soft glow
+          aura.lineStyle(2, 0xffcc44, 0.35);
+          aura.strokeCircle(0, 0, r + 4);
+          // bright inner ring
+          aura.lineStyle(3, 0xffe080, 0.85);
+          aura.strokeCircle(0, 0, r);
+          // sparkle dots rotating around perimeter
+          const t = now / 400;
+          for (let i = 0; i < 6; i++) {
+            const a = t + (i / 6) * Math.PI * 2;
+            const sx = Math.cos(a) * r;
+            const sy = Math.sin(a) * r;
+            aura.fillStyle(0xfff0a0, 0.9);
+            aura.fillCircle(sx, sy, 2.5);
+          }
+        } else {
+          aura.setVisible(false);
+        }
+      }
+
+      const nameLabel = container.getByName('name') as Phaser.GameObjects.Text;
+      const flag = countryFlag(p.country);
+      const crown = p.id === topPlayerId ? '👑 ' : '';
+      nameLabel.setText(`${crown}${flag ? flag + ' ' : ''}${p.name} · L${p.level}`);
+      const hpBar = container.getByName('hp') as Phaser.GameObjects.Graphics;
+      drawHpBar(hpBar, p.hp / p.maxHp, p.id === this.selfId ? 0x66ff88 : 0xff6666, -38);
+    }
+    for (const [id, sprite] of this.playerSprites) {
+      if (!seenPlayers.has(id)) {
+        sprite.destroy();
+        this.playerSprites.delete(id);
+      }
+    }
+
+    // npcs
+    const seenNpcs = new Set<string>();
+    for (const n of snap.npcs) {
+      seenNpcs.add(n.id);
+      let s = this.npcSprites.get(n.id);
+      if (!s) {
+        const tex = `${n.kind}_south`;
+        const npcScale = (NPC_SPRITE_SCALE[n.kind] ?? 1) * SPRITE_SHRINK;
+        s = this.add.sprite(n.x, n.y, this.textures.exists(tex) ? tex : 'skeleton_south').setScale(npcScale);
+        s.setData('baseScale', npcScale);
+        this.npcSprites.set(n.id, s);
+      }
+      const prevN = prev?.npcs.find((x) => x.id === n.id);
+      const interpPos = lerpEntity(prevN, n, interp);
+      let facing: Facing = 'south';
+      if (prevN) {
+        const dx = n.x - prevN.x;
+        const dy = n.y - prevN.y;
+        if (Math.abs(dx) > Math.abs(dy)) facing = dx > 0 ? 'east' : 'west';
+        else if (dy !== 0) facing = dy > 0 ? 'south' : 'north';
+      }
+      const moving = prevN
+        ? (Math.abs(n.x - prevN.x) + Math.abs(n.y - prevN.y)) > 0.5
+        : false;
+      const animKey = `${n.kind}_walk_${facing}`;
+      const idleKey = `${n.kind}_${facing}`;
+      if (moving && this.anims.exists(animKey)) {
+        s.anims.play(animKey, true);
+      } else {
+        if (s.anims.isPlaying) s.anims.stop();
+        if (this.textures.exists(idleKey) && s.texture.key !== idleKey) s.setTexture(idleKey);
+      }
+
+      // hit flash for NPCs + floating damage number
+      const ntrack = this.npcHpTrack.get(n.id) ?? { lastHp: n.hp, flashUntilMs: 0 };
+      const now = performance.now();
+      if (n.hp < ntrack.lastHp - 0.01) {
+        ntrack.flashUntilMs = now + 150;
+        const dmg = Math.max(1, Math.round(ntrack.lastHp - n.hp));
+        this.spawnDamageNumber(n.x, n.y - 6, dmg);
+      }
+      ntrack.lastHp = n.hp;
+      this.npcHpTrack.set(n.id, ntrack);
+      s.setTint(now < ntrack.flashUntilMs ? 0xff5555 : 0xffffff);
+
+      s.x = interpPos.x;
+      s.y = interpPos.y;
+    }
+    for (const [id, s] of this.npcSprites) {
+      if (!seenNpcs.has(id)) {
+        s.destroy();
+        this.npcSprites.delete(id);
+      }
+    }
+
+    // gems — tier picked from value
+    const seenGems = new Set<string>();
+    const gemTNow = performance.now();
+    for (const g of snap.gems) {
+      seenGems.add(g.id);
+      let s = this.gemSprites.get(g.id);
+      const tex =
+        g.value >= 10 ? 'gem_epic' :
+        g.value >= 5  ? 'gem_gold' :
+        g.value >= 3  ? 'gem_green' :
+                        'gem_blue';
+      // Smaller — gems shouldn't dominate the screen
+      const baseScale = SPRITE_SHRINK * (
+        g.value >= 10 ? 0.75 :
+        g.value >= 5  ? 0.6 :
+        g.value >= 3  ? 0.5 :
+                        0.4
+      );
+      if (!s) {
+        s = this.add.sprite(g.x, g.y, tex);
+        s.setData('baseScale', baseScale);
+        s.setBlendMode(Phaser.BlendModes.NORMAL);
+        this.gemSprites.set(g.id, s);
+      } else if (s.texture.key !== tex) {
+        s.setTexture(tex);
+        s.setData('baseScale', baseScale);
+      }
+      s.x = g.x;
+      s.y = g.y;
+      // subtle bobbing + scale pulse so they catch the eye
+      const phase = (gemTNow * 0.004 + g.x * 0.01 + g.y * 0.013);
+      const bob = Math.sin(phase) * 1.5;
+      const pulse = 1 + Math.sin(phase * 2) * 0.06;
+      s.y = g.y + bob;
+      s.setScale(baseScale * pulse);
+      // epic gems rotate
+      if (g.value >= 10) s.setRotation((gemTNow / 600) % (Math.PI * 2));
+    }
+    for (const [id, s] of this.gemSprites) {
+      if (!seenGems.has(id)) { s.destroy(); this.gemSprites.delete(id); }
+    }
+
+    // projectiles — element comes from the WEAPON (so picking up Leaf Cutter on a fire wizard
+    // shoots leaves, not fireballs).
+    const seenProj = new Set<string>();
+    const tNow = performance.now();
+    for (const pr of snap.projectiles) {
+      seenProj.add(pr.id);
+      const elem = WEAPON_ELEMENT[pr.weapon] ?? 'arcane';
+      const tex = `proj_${elem}`;
+      let s = this.projSprites.get(pr.id);
+      if (!s) {
+        // New projectile — if it's mine, play the fire SFX
+        if (pr.ownerId === this.selfId) this.sfxFire(pr.weapon);
+        const GLOBAL_SCALE = 0.65 * SPRITE_SHRINK;
+        const weaponScale =
+          pr.weapon === 'sword' ? 1.15 :
+          pr.weapon === 'fireball' ? 1.05 :
+          pr.weapon === 'orb' ? 0.95 :
+          pr.weapon === 'shadow_bolt' ? 0.9 :
+          pr.weapon === 'lightning_bolt' ? 0.85 :
+          0.75;
+        const elementScale = elem === 'forest' ? 0.6 : elem === 'lightning' ? 1.1 : elem === 'earth' ? 1.0 : 0.95;
+        const baseScale = weaponScale * elementScale * GLOBAL_SCALE;
+        s = this.add.sprite(pr.x, pr.y, tex);
+        s.setData('baseScale', baseScale);
+        s.setBlendMode(elem === 'earth' ? Phaser.BlendModes.NORMAL : Phaser.BlendModes.ADD);
+        s.setScale(baseScale);
+        // Push fire toward red — orange→red shift via tint multiply
+        if (elem === 'fire') s.setTint(0xff5533);
+        this.projSprites.set(pr.id, s);
+      }
+      s.x = pr.x;
+      s.y = pr.y;
+
+      const baseScale = (s.getData('baseScale') as number) ?? 1;
+      const angle = Math.atan2(pr.vy, pr.vx);
+      // Per-element animation flair
+      if (elem === 'lightning') {
+        // bolt flickers + always points along velocity
+        s.setRotation(angle);
+        s.setAlpha(Math.floor(tNow / 50) % 2 === 0 ? 1 : 0.5);
+      } else if (elem === 'earth') {
+        // rock tumbles
+        s.setRotation((tNow / 120) % (Math.PI * 2));
+        s.setAlpha(1);
+      } else if (elem === 'fire') {
+        // flame points up-from-velocity, scale wobbles
+        s.setRotation(angle + Math.PI / 2);
+        const wobble = 1 + Math.sin(tNow * 0.03) * 0.1;
+        s.setScale(baseScale * wobble);
+        s.setAlpha(0.95);
+      } else if (elem === 'forest') {
+        // leaf spins as it flies
+        s.setRotation(angle + tNow / 200);
+        s.setAlpha(1);
+      } else if (elem === 'shadow') {
+        // pulsing darkness
+        const pulse = 1 + Math.sin(tNow * 0.012) * 0.12;
+        s.setScale(baseScale * pulse);
+        s.setRotation((tNow / 300) % (Math.PI * 2));
+        s.setAlpha(0.95);
+      } else {
+        // arcane: gentle pulse
+        const pulse = 1 + Math.sin(tNow * 0.015) * 0.08;
+        s.setScale(baseScale * pulse);
+        s.setAlpha(1);
+      }
+    }
+    for (const [id, s] of this.projSprites) {
+      if (!seenProj.has(id)) { s.destroy(); this.projSprites.delete(id); }
+    }
+
+    // Spirit Wolves — wolf-head sprite layered over a procedural ghost orb.
+    // Orb tints red while lunging so you can read the wolf's state at a glance.
+    const seenWolves = new Set<string>();
+    for (const w of (snap.wolves ?? [])) {
+      seenWolves.add(w.id);
+      let container = this.wolfSprites.get(w.id);
+      if (!container) {
+        container = this.add.container(w.x, w.y);
+        container.setDepth(20);
+        const glow = this.add.graphics().setName('glow').setBlendMode(Phaser.BlendModes.ADD);
+        container.add(glow);
+        if (this.textures.exists('icon_wolf')) {
+          const head = this.add.sprite(0, 0, 'icon_wolf').setName('head').setScale(0.55);
+          container.add(head);
+        }
+        this.wolfSprites.set(w.id, container);
+      }
+      container.x = w.x;
+      container.y = w.y;
+      const glow = container.getByName('glow') as Phaser.GameObjects.Graphics;
+      const head = container.getByName('head') as Phaser.GameObjects.Sprite | null;
+      const colorOuter = w.state === 'lunge' ? 0xffaaaa : 0xaaeeff;
+      const colorInner = w.state === 'lunge' ? 0xffeeee : 0xeeffff;
+      // Pulsing glow so the wolves feel alive
+      const pulse = 1 + Math.sin(performance.now() * 0.006 + w.x * 0.01) * 0.08;
+      glow.clear();
+      glow.fillStyle(colorOuter, 0.28); glow.fillCircle(0, 0, 18 * pulse);
+      glow.fillStyle(colorOuter, 0.50); glow.fillCircle(0, 0, 12 * pulse);
+      glow.fillStyle(colorInner, 0.85); glow.fillCircle(0, 0, 6 * pulse);
+      if (head) {
+        head.setTint(w.state === 'lunge' ? 0xffaaaa : 0xffffff);
+        head.setAlpha(0.95);
+      }
+    }
+    for (const [id, c] of this.wolfSprites) {
+      if (!seenWolves.has(id)) { c.destroy(); this.wolfSprites.delete(id); }
+    }
+
+    // Trail of Fire (client-only visuals): drop a flame puff at each player's
+    // recent position whenever the player has the powerup and is moving.
+    const trailNow = performance.now();
+    for (const p of snap.players) {
+      if (!p.alive) continue;
+      const prev = this.prevPlayerPos.get(p.id);
+      const moved = !prev || (Math.abs(p.x - prev.x) + Math.abs(p.y - prev.y)) > 0.5;
+      if (p.trailOfFireEnabled && moved && (!prev || trailNow - prev.t > 90)) {
+        const puff = this.add.graphics();
+        puff.setDepth(8);
+        puff.setBlendMode(Phaser.BlendModes.ADD);
+        const px = p.x;
+        const py = p.y + 4;
+        puff.fillStyle(0xff5511, 0.5); puff.fillCircle(px, py, 12);
+        puff.fillStyle(0xff9933, 0.65); puff.fillCircle(px, py, 8);
+        puff.fillStyle(0xffeecc, 0.85); puff.fillCircle(px, py, 4);
+        const list = this.trailVisuals.get(p.id) ?? [];
+        list.push({ x: px, y: py, bornAt: trailNow, sprite: puff });
+        this.trailVisuals.set(p.id, list);
+        this.tweens.add({
+          targets: puff,
+          alpha: { from: 1, to: 0 },
+          duration: 1800,
+          ease: 'Quad.easeOut',
+          onComplete: () => puff.destroy(),
+        });
+        this.prevPlayerPos.set(p.id, { x: p.x, y: p.y, t: trailNow });
+      } else if (!prev || moved) {
+        this.prevPlayerPos.set(p.id, { x: p.x, y: p.y, t: prev?.t ?? trailNow });
+      }
+    }
+    // Prune trailVisuals lists every frame
+    for (const [id, list] of this.trailVisuals) {
+      this.trailVisuals.set(id, list.filter((b) => trailNow - b.bornAt < 2200));
+    }
+
+    // camera follow self (use predicted position if available — smoother)
+    const self = snap.players.find((p) => p.id === this.selfId);
+    if (self) {
+      const cx = this.predictedSelf?.x ?? self.x;
+      const cy = this.predictedSelf?.y ?? self.y;
+      this.cameras.main.centerOn(cx, cy);
+    }
+
+    // SFX: detect XP gain / HP loss / respawn for self
+    if (self) {
+      // gem pickup — richer multi-tone "ting"; pitch scales with gem value
+      if (this.prevSelfXp >= 0 && self.xp > this.prevSelfXp && self.level === this.prevSelfLevel) {
+        const delta = self.xp - this.prevSelfXp;
+        this.sfxGem(delta);
+      }
+      // hit — punchier two-layer thud
+      if (this.prevSelfHp >= 0 && self.hp < this.prevSelfHp - 0.5 && self.alive) {
+        this.sfx(120, 0.14, 0.18, 'sawtooth');
+        this.sfx(60, 0.18, 0.10, 'sine');
+      }
+      // respawn — soft chord
+      if (!this.prevSelfAlive && self.alive) {
+        this.sfxArpeggio([392, 494, 587], 0.05, 0.14);
+      }
+      this.prevSelfXp = self.xp;
+      this.prevSelfLevel = self.level;
+      this.prevSelfHp = self.hp;
+      this.prevSelfAlive = self.alive;
+    }
+
+    // emit HUD update — wave info is per-player now (read from self)
+    this.bus.emit('hud', {
+      self,
+      players: snap.players,
+      wave: self?.waveNumber ?? 0,
+      waveName: self?.waveName ?? '',
+      waveTimeLeftMs: self?.waveTimeLeftMs ?? 0,
+      npcs: snap.npcs.length,
+      gems: snap.gems.length,
+    });
+  }
+
+  makePlayerContainer(p: PlayerState) {
+    const container = this.add.container(p.x, p.y);
+    const charScale = (PLAYER_SPRITE_SCALE[p.character] ?? 1.0) * SPRITE_SHRINK;
+    const body = this.add.sprite(0, 0, `${p.character}_${p.facing}`).setName('body').setScale(charScale);
+    body.setTint(hueToTint(p.hue ?? 0));
+    // Aura Shield ring (visible when player has the aura_shield weapon)
+    const aura = this.add.graphics().setName('aura').setVisible(false).setDepth(-1);
+    // Frost Aura ring — subtle, low-opacity icy ring shown whenever the player
+    // has any frost-aura damage. Plain (non-ADD) blend so it stays muted under
+    // the brighter Time Shield / pacifist shield bubbles.
+    const frostAura = this.add.graphics().setName('frostAura').setVisible(false).setDepth(-1);
+    // Time Shield ring (visible only while damageImmuneUntil is in the future).
+    // Drawn above aura so it's visible even with both effects active. ADD blend
+    // mode makes the cyan layers glow brightly on top of any background.
+    const timeShield = this.add
+      .graphics()
+      .setName('timeShield')
+      .setVisible(false)
+      .setBlendMode(Phaser.BlendModes.ADD);
+    // Invulnerability shield bubble (separate sprite — only when invulnerable)
+    const shield = this.add
+      .sprite(0, 0, 'shield')
+      .setName('shield')
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setVisible(false)
+      .setScale(1.05);
+    const name = this.add
+      .text(0, -52, p.name, {
+        fontSize: '11px',
+        color: '#ffffff',
+        stroke: '#000000',
+        strokeThickness: 3,
+      })
+      .setOrigin(0.5, 0.5)
+      .setName('name');
+    const hp = this.add.graphics().setName('hp');
+    drawHpBar(hp, 1, 0xff6666, -38);
+    // aura ring at the bottom layer, then frost aura, time shield, body, UI
+    container.add([aura, frostAura, timeShield, shield, body, hp, name]);
+    return container;
+  }
+}
+
+function lerpEntity<T extends { x: number; y: number }>(
+  prev: T | undefined,
+  cur: T,
+  t: number,
+): { x: number; y: number } {
+  if (!prev) return { x: cur.x, y: cur.y };
+  return { x: prev.x + (cur.x - prev.x) * t, y: prev.y + (cur.y - prev.y) * t };
+}
+
+function drawHpBar(g: Phaser.GameObjects.Graphics, frac: number, color: number, yOffset = 14) {
+  g.clear();
+  const w = 38, h = 5;
+  g.fillStyle(0x000000, 0.65);
+  g.fillRect(-w / 2 - 1, yOffset - 1, w + 2, h + 2);
+  g.fillStyle(color, 1);
+  g.fillRect(-w / 2, yOffset, w * Math.max(0, Math.min(1, frac)), h);
+}
+
+function clamp(v: number, lo: number, hi: number) {
+  return v < lo ? lo : v > hi ? hi : v;
+}
+
+export function createGame(parent: HTMLElement, init: SceneInit) {
+  const scene = new ArenaScene(init);
+  const game = new Phaser.Game({
+    type: Phaser.AUTO,
+    parent,
+    backgroundColor: '#0a0a14',
+    pixelArt: true,
+    scale: {
+      mode: Phaser.Scale.RESIZE,
+      width: '100%',
+      height: '100%',
+    },
+    physics: { default: 'arcade' },
+    scene,
+  });
+  return { game, scene };
+}

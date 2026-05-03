@@ -1,0 +1,28 @@
+{
+  "name": "survivors-online",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -n next,party -c blue,magenta \"next dev\" \"partykit dev\"",
+    "dev:next": "next dev",
+    "dev:party": "partykit dev",
+    "build": "next build",
+    "start": "next start",
+    "deploy:party": "partykit deploy"
+  },
+  "dependencies": {
+    "next": "^15.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "phaser": "^3.87.0",
+    "partysocket": "^1.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "concurrently": "^9.0.0",
+    "partykit": "^0.0.114",
+    "typescript": "^5.6.0"
+  }
+}
