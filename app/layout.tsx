@@ -1,5 +1,6 @@
 import './globals.css';
 import type { Metadata } from 'next';
+import Script from 'next/script';
 
 export const metadata: Metadata = {
   metadataBase: new URL(
@@ -33,7 +34,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           rel="stylesheet"
         />
       </head>
-      <body>{children}</body>
+      <body>
+        {children}
+        <Script
+          src="https://cloud.umami.is/script.js"
+          data-website-id="49381c52-58a4-466d-b10e-27c91fa95ec5"
+          strategy="afterInteractive"
+        />
+      </body>
     </html>
   );
 }
