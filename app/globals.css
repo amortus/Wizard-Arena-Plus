@@ -955,3 +955,116 @@ button {
   line-height: 1.35;
   font-style: italic;
 }
+
+/* ========================================================================
+   Mobile / narrow-viewport tweaks
+   ======================================================================== */
+@media (max-width: 720px) {
+  /* Menu — tighter padding so the wizard grid doesn't overflow */
+  .menu-card { padding: 20px 16px 22px; }
+  .menu-logo { width: clamp(180px, 80%, 320px); }
+  .menu-card p.sub { font-size: 14px; margin-bottom: 18px; }
+
+  /* Wizard grid: 4 cols → 3 cols. Names + blurbs shrink so cells fit. */
+  .char-grid { grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .char-pick { padding: 8px 4px 6px; font-size: 9px; letter-spacing: 0.5px; }
+  .char-portrait { width: 56px; height: 56px; border-width: 2px; }
+  .char-name { font-size: 9px; line-height: 1.1; }
+  .char-pick .blurb { font-size: 11px; line-height: 1.0; }
+
+  /* Top bar — stack tighter, shrink wave block, smaller fonts */
+  .top-bar {
+    height: auto;
+    gap: 6px;
+    padding: 6px 8px;
+    top: 6px; left: 6px; right: 6px;
+  }
+  .top-bar-level {
+    padding: 4px 8px;
+    font-size: 13px;
+    min-width: 38px;
+    letter-spacing: 1px;
+  }
+  .top-bar-xp { height: 20px; }
+  .top-bar-xp-text { font-size: 11px; letter-spacing: 1px; }
+  .top-bar-wave {
+    min-width: 0;
+    padding: 2px 6px;
+    font-size: 10px;
+    letter-spacing: 0.5px;
+  }
+  .top-bar-wave-num { font-size: 11px; letter-spacing: 1px; }
+  .top-bar-wave-name { display: none; } /* drop the name line on small screens */
+  .top-bar-wave-time { font-size: 11px; }
+
+  /* Stat HUD (gem/kill counters) — shrink + push down */
+  .hud {
+    top: 56px;
+    left: 6px;
+    font-size: 13px;
+    min-width: 0;
+    line-height: 1.25;
+  }
+  .hud.player-list {
+    top: 56px;
+    right: 6px;
+    font-size: 12px;
+  }
+
+  /* Level-up modal — stack the 3 powerup cards vertically and shrink */
+  .levelup-card {
+    padding: 18px 12px 14px;
+    border-width: 2px;
+  }
+  .levelup-card h2 {
+    font-size: 16px;
+    letter-spacing: 2px;
+  }
+  .levelup-card .lvl-sub { font-size: 13px; }
+  .choice-row { flex-direction: column; gap: 8px; }
+  .choice {
+    padding: 10px 12px 10px 12px;
+    font-size: 14px;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    grid-template-rows: auto auto;
+    align-items: center;
+    gap: 2px 12px;
+  }
+  .choice-num { top: 4px; right: 8px; font-size: 11px; }
+  .choice-icon {
+    grid-row: 1 / span 2;
+    grid-column: 1;
+    height: 40px; width: 40px;
+    font-size: 26px;
+    margin-bottom: 0;
+  }
+  .choice-sprite { width: 40px; height: 40px; }
+  .choice .name {
+    grid-column: 2; grid-row: 1;
+    font-size: 13px; margin-bottom: 0; letter-spacing: 1px; line-height: 1.2;
+  }
+  .choice .desc {
+    grid-column: 2; grid-row: 2;
+    font-size: 12px; line-height: 1.25;
+  }
+
+  /* Death overlay — title was 42px / 6px letter-spacing, blew off the screen */
+  .death-overlay { gap: 14px; padding: 0 16px; }
+  .death-overlay h2 {
+    font-size: 26px;
+    letter-spacing: 3px;
+    text-align: center;
+  }
+  .death-overlay div { font-size: 16px; text-align: center; }
+
+  /* Leaderboard / room modals — fit smaller widths */
+  .lb-modal { padding: 18px 14px; max-width: 100%; }
+  .room-code { font-size: 22px; letter-spacing: 4px; }
+  .room-actions { flex-direction: column; }
+}
+
+/* Even smaller phones — make wizard grid 2-col below 380px so portraits stay legible */
+@media (max-width: 380px) {
+  .char-grid { grid-template-columns: repeat(2, 1fr); }
+}
