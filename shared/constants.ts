@@ -7,7 +7,7 @@ export const ARENA_HEIGHT = 3200;
 export const PLAYER_SPEED = 140;
 export const PLAYER_RADIUS = 16;
 export const PLAYER_BASE_HP = 100;
-export const PLAYER_MAX_PER_ROOM = 4;
+export const PLAYER_MAX_PER_ROOM = 6;
 
 // NPC speed can never exceed this fraction of base player speed —
 // guarantees players can always run away with a slight buffer.
