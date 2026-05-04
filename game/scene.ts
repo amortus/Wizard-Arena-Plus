@@ -1229,14 +1229,26 @@ export class ArenaScene extends Phaser.Scene {
     if (!this.latestSnapshot) return;
     const snap = this.latestSnapshot;
     const prev = this.prevSnapshot;
+    // Interpolation factor between prev and cur snapshots. We allow it to
+    // exceed 1.0 (up to 1.4) when the next snapshot is late — the lerp then
+    // extrapolates along the prev→cur velocity, which masks ~30ms of jitter
+    // instead of freezing entities in place.
     const interp =
       prev && this.snapshotTime > this.prevSnapshotTime
         ? Math.min(
-            1,
+            1.4,
             (performance.now() - this.snapshotTime) /
               Math.max(16, this.snapshotTime - this.prevSnapshotTime),
           )
         : 1;
+
+    // Build per-id Maps from the previous snapshot once, so subsequent lookups
+    // inside the per-entity render loops are O(1) instead of O(n) per find().
+    // With 100+ NPCs this was the largest CPU cost on the client tick.
+    const prevPlayerById = new Map<string, PlayerState>();
+    if (prev) for (const pp of prev.players) prevPlayerById.set(pp.id, pp);
+    const prevNpcById = new Map<string, typeof snap.npcs[number]>();
+    if (prev) for (const pn of prev.npcs) prevNpcById.set(pn.id, pn);
 
     // Find the "king of the arena" — top player by score (level*100 + waveNumber*50).
     // Their nameplate gets a 👑 prefix. Ties broken by id for stability.
@@ -1267,7 +1279,7 @@ export class ArenaScene extends Phaser.Scene {
         renderX = this.predictedSelf.x;
         renderY = this.predictedSelf.y;
       } else {
-        const interpPos = lerpEntity(prev?.players.find((x) => x.id === p.id), p, interp);
+        const interpPos = lerpEntity(prevPlayerById.get(p.id), p, interp);
         renderX = interpPos.x;
         renderY = interpPos.y;
       }
@@ -1281,7 +1293,7 @@ export class ArenaScene extends Phaser.Scene {
         if (p.id === this.selfId) {
           moving = this.inputDx !== 0 || this.inputDy !== 0;
         } else {
-          const prevP = prev?.players.find((x) => x.id === p.id);
+          const prevP = prevPlayerById.get(p.id);
           if (prevP) {
             moving = (Math.abs(p.x - prevP.x) + Math.abs(p.y - prevP.y)) > 0.5;
           }
@@ -1458,7 +1470,7 @@ export class ArenaScene extends Phaser.Scene {
         s.setData('baseScale', npcScale);
         this.npcSprites.set(n.id, s);
       }
-      const prevN = prev?.npcs.find((x) => x.id === n.id);
+      const prevN = prevNpcById.get(n.id);
       const interpPos = lerpEntity(prevN, n, interp);
       let facing: Facing = 'south';
       if (prevN) {

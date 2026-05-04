@@ -1624,6 +1624,9 @@ export default class GameServer implements Party.Server {
 
   broadcastSnapshot(now: number) {
     // Snapshot-level wave fields kept for backward compat; clients should read from PlayerState.
+    // Round all positions to integer pixels — full-precision floats roughly triple
+    // the JSON size for x/y fields and the player can't see sub-pixel motion anyway.
+    const r = Math.round;
     const snap: Snapshot = {
       type: 'snapshot',
       t: now,
@@ -1637,9 +1640,9 @@ export default class GameServer implements Party.Server {
         color: p.color,
         hue: p.hue,
         country: p.country,
-        x: p.x,
-        y: p.y,
-        hp: p.hp,
+        x: r(p.x),
+        y: r(p.y),
+        hp: r(p.hp),
         maxHp: p.maxHp,
         level: p.level,
         xp: p.xp,
@@ -1691,22 +1694,22 @@ export default class GameServer implements Party.Server {
         projectileLifeMul: p.projectileLifeMul,
         pendingLevelUps: p.pendingLevelUps,
       })),
-      npcs: [...this.npcs.values()].map((n) => ({ id: n.id, kind: n.kind, x: n.x, y: n.y, hp: n.hp })),
-      gems: [...this.gems.values()],
+      npcs: [...this.npcs.values()].map((n) => ({ id: n.id, kind: n.kind, x: r(n.x), y: r(n.y), hp: r(n.hp) })),
+      gems: [...this.gems.values()].map((g) => ({ id: g.id, x: r(g.x), y: r(g.y), value: g.value })),
       projectiles: [...this.projectiles.values()].map((p) => ({
         id: p.id,
         ownerId: p.ownerId,
-        x: p.x,
-        y: p.y,
-        vx: p.vx,
-        vy: p.vy,
+        x: r(p.x),
+        y: r(p.y),
+        vx: r(p.vx),
+        vy: r(p.vy),
         weapon: p.weapon,
       })),
       wolves: [...this.wolves.values()].map((w) => ({
         id: w.id,
         ownerId: w.ownerId,
-        x: w.x,
-        y: w.y,
+        x: r(w.x),
+        y: r(w.y),
         state: w.state,
       })),
     };
