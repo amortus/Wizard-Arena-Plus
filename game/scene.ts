@@ -95,6 +95,13 @@ export class ArenaScene extends Phaser.Scene {
   init_: SceneInit;
   socket?: PartySocket;
   selfId = '';
+  // Cached join payload so the watchdog can resend it after the server loses
+  // our player record (e.g. Durable Object hibernation + cold-resume).
+  joinPayload?: ClientToServer;
+  // Timestamp of the last snapshot in which our own player appeared. If this
+  // gets too stale, we resend join so the server respawns us.
+  lastSelfSeenAt = 0;
+  lastJoinResendAt = 0;
   // Snapshot history queue. Each entry stores the snapshot itself and the
   // perf.now() arrival time. We render at "now - INTERP_DELAY" so we always
   // have a future snapshot to lerp toward — masks network jitter completely.
@@ -556,15 +563,18 @@ export class ArenaScene extends Phaser.Scene {
     });
     this.socket = socket;
 
+    // Build the join payload once and cache it so the watchdog can resend.
+    this.joinPayload = {
+      type: 'join',
+      name, character, color,
+      hue: this.init_.hue,
+      country: this.init_.country,
+    };
+
     // Re-send join on every open (initial + reconnects after server HMR/restart)
     socket.addEventListener('open', () => {
-      const join: ClientToServer = {
-        type: 'join',
-        name, character, color,
-        hue: this.init_.hue,
-        country: this.init_.country,
-      };
-      socket.send(JSON.stringify(join));
+      if (this.joinPayload) socket.send(JSON.stringify(this.joinPayload));
+      this.lastSelfSeenAt = performance.now();
     });
     socket.addEventListener('message', (e) => {
       try {
@@ -602,6 +612,7 @@ export class ArenaScene extends Phaser.Scene {
       if (this.selfId) {
         const self = msg.players.find((p) => p.id === this.selfId);
         if (self) {
+          this.lastSelfSeenAt = arrivedAt;
           if (!this.predictedSelf) {
             this.predictedSelf = { x: self.x, y: self.y };
           } else {
@@ -617,6 +628,16 @@ export class ArenaScene extends Phaser.Scene {
               this.predictedSelf.x += dx * 0.2;
               this.predictedSelf.y += dy * 0.2;
             }
+          }
+        } else {
+          // Snapshot arrived but our player isn't in it. Likely the server lost
+          // its in-memory state (DO hibernation / restart). Resend join — but
+          // throttle to once every 2s to avoid spamming during normal startup.
+          const stale = arrivedAt - this.lastSelfSeenAt > 2000;
+          const cooldown = arrivedAt - this.lastJoinResendAt > 2000;
+          if (stale && cooldown && this.joinPayload && this.socket && this.socket.readyState === 1) {
+            this.lastJoinResendAt = arrivedAt;
+            this.socket.send(JSON.stringify(this.joinPayload));
           }
         }
       }

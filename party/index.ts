@@ -406,6 +406,9 @@ export default class GameServer implements Party.Server {
       pwAuraLastHits: new Map(),
     };
     this.players.set(id, player);
+    // Defensive: if a Durable Object woke from hibernation and lost the tick
+    // interval (but kept WebSocket connections), the next join will restart it.
+    if (!this.tickHandle) this.startTicking();
   }
 
   respawnPlayer(p: ServerPlayer) {
