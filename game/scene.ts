@@ -81,6 +81,10 @@ const NPC_SPRITE_SCALE: Record<string, number> = {
 // Bump down to make the world feel less cluttered without regenerating assets.
 const SPRITE_SHRINK = 0.72; // 0.8 × 0.9 — additional 10% on top of original 20% shrink
 
+// Render-in-the-past buffer. Server ticks at 50Hz (20ms). 60ms = 3 ticks of
+// headroom — masks any jitter where individual packets are 1-2 ticks late.
+const INTERP_DELAY_MS = 60;
+
 type Facing = 'south' | 'north' | 'east' | 'west';
 
 export class ArenaScene extends Phaser.Scene {
@@ -91,6 +95,11 @@ export class ArenaScene extends Phaser.Scene {
   init_: SceneInit;
   socket?: PartySocket;
   selfId = '';
+  // Snapshot history queue. Each entry stores the snapshot itself and the
+  // perf.now() arrival time. We render at "now - INTERP_DELAY" so we always
+  // have a future snapshot to lerp toward — masks network jitter completely.
+  snapshotQueue: { snap: Snapshot; t: number }[] = [];
+  // Convenience: latest received snapshot (used for HUD, self prediction).
   latestSnapshot?: Snapshot;
   prevSnapshot?: Snapshot;
   snapshotTime = 0;
@@ -577,10 +586,18 @@ export class ArenaScene extends Phaser.Scene {
     if (msg.type === 'welcome') {
       this.selfId = msg.selfId;
     } else if (msg.type === 'snapshot') {
+      const arrivedAt = performance.now();
+      this.snapshotQueue.push({ snap: msg, t: arrivedAt });
+      // Keep ~10 snapshots of history (~200ms at 50Hz). Drop anything older than
+      // 4× INTERP_DELAY since it can never be needed for interpolation.
+      const cutoff = arrivedAt - INTERP_DELAY_MS * 4;
+      while (this.snapshotQueue.length > 0 && this.snapshotQueue[0].t < cutoff) {
+        this.snapshotQueue.shift();
+      }
       this.prevSnapshot = this.latestSnapshot;
       this.prevSnapshotTime = this.snapshotTime;
       this.latestSnapshot = msg;
-      this.snapshotTime = performance.now();
+      this.snapshotTime = arrivedAt;
       // reconcile predicted self toward server position
       if (this.selfId) {
         const self = msg.players.find((p) => p.id === this.selfId);
@@ -1227,16 +1244,38 @@ export class ArenaScene extends Phaser.Scene {
 
   renderSnapshot() {
     if (!this.latestSnapshot) return;
-    const snap = this.latestSnapshot;
-    const prev = this.prevSnapshot;
-    const interp =
-      prev && this.snapshotTime > this.prevSnapshotTime
-        ? Math.min(
-            1,
-            (performance.now() - this.snapshotTime) /
-              Math.max(16, this.snapshotTime - this.prevSnapshotTime),
-          )
-        : 1;
+    // Render-in-the-past. Find the snapshot pair (A, B) such that A.t <= target < B.t,
+    // where target = now - INTERP_DELAY_MS. Lerp between A and B by t = (target-A.t)/(B.t-A.t).
+    // If we don't have enough history yet, fall back to the latest snapshot pair.
+    const renderAt = performance.now() - INTERP_DELAY_MS;
+    let snap: Snapshot;
+    let prev: Snapshot | undefined;
+    let interp: number;
+    const q = this.snapshotQueue;
+    if (q.length >= 2) {
+      // Walk from newest backward to find the first pair that brackets renderAt.
+      let aIdx = -1;
+      for (let i = q.length - 1; i >= 1; i--) {
+        if (q[i - 1].t <= renderAt) { aIdx = i - 1; break; }
+      }
+      if (aIdx === -1) {
+        // renderAt is older than any queued snapshot — show oldest
+        prev = q[0].snap;
+        snap = q[1]?.snap ?? q[0].snap;
+        interp = 0;
+      } else {
+        const a = q[aIdx];
+        const b = q[aIdx + 1];
+        prev = a.snap;
+        snap = b.snap;
+        const gap = Math.max(16, b.t - a.t);
+        interp = Math.min(1, Math.max(0, (renderAt - a.t) / gap));
+      }
+    } else {
+      snap = this.latestSnapshot;
+      prev = this.prevSnapshot;
+      interp = 1;
+    }
 
     // Build per-id Maps from the previous snapshot once, so subsequent lookups
     // inside the per-entity render loops are O(1) instead of O(n) per find().
