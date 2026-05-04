@@ -240,6 +240,9 @@ export default class GameServer implements Party.Server {
   }
 
   onConnect(conn: Party.Connection) {
+    // Reap stale entries before checking the cap, in case zombie players
+    // are still occupying slots from a hibernation cycle.
+    this.reapZombiePlayers();
     if (this.players.size >= PLAYER_MAX_PER_ROOM) {
       conn.send(JSON.stringify({ type: 'full' }));
       conn.close();
@@ -269,6 +272,14 @@ export default class GameServer implements Party.Server {
       msg = JSON.parse(message);
     } catch {
       return;
+    }
+
+    // Heartbeat: every message from a known player counts as activity. Used
+    // by the zombie reaper to detect dead clients that PartyKit hasn't yet
+    // declared closed.
+    {
+      const p = this.players.get(sender.id);
+      if (p) p.lastTouchAt = Date.now();
     }
 
     if (msg.type === 'join') {
@@ -381,7 +392,7 @@ export default class GameServer implements Party.Server {
       pendingLevelUps: 0,
       input: { dx: 0, dy: 0 },
       weaponCooldowns: {},
-      lastTouchAt: 0,
+      lastTouchAt: Date.now(),
       nextTimeShieldAt: 0,
       nextLightningAt: 0,
       nextMeteorAt: 0,
@@ -643,6 +654,7 @@ export default class GameServer implements Party.Server {
     const dt = Math.min((now - this.lastTickAt) / 1000, 0.1);
     this.lastTickAt = now;
 
+    this.reapZombiePlayers();
     this.updatePlayers(dt, now);
     this.updateProjectiles(dt);
     this.runWaves(now);
@@ -652,6 +664,28 @@ export default class GameServer implements Party.Server {
     this.updateGems();
 
     this.broadcastSnapshot(now);
+  }
+
+  // Cloudflare hibernation can leave phantom players in our map: their
+  // WebSocket disconnected without firing onClose, but PartyKit's hibernating
+  // connection list might still include them. Two-pronged cleanup:
+  //  1. Drop players whose connection is gone from getConnections().
+  //  2. Drop players who haven't sent any message in ZOMBIE_TIMEOUT_MS — they
+  //     might still appear "live" to PartyKit but are effectively gone.
+  reapZombiePlayers() {
+    if (this.players.size === 0) return;
+    const live = new Set<string>();
+    for (const c of this.room.getConnections()) live.add(c.id);
+    const now = Date.now();
+    const ZOMBIE_TIMEOUT_MS = 60_000;
+    for (const [id, p] of this.players) {
+      const noConn = !live.has(id);
+      const idle = now - p.lastTouchAt > ZOMBIE_TIMEOUT_MS;
+      if (noConn || idle) {
+        this.players.delete(id);
+        for (const [wid, w] of this.wolves) if (w.ownerId === id) this.wolves.delete(wid);
+      }
+    }
   }
 
   updatePlayers(dt: number, now: number) {
