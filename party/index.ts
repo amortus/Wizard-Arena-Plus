@@ -96,6 +96,14 @@ type ServerPlayer = PlayerState & {
   // AI mode applied to all NPCs spawned in this wave. Most waves are 'chase',
   // a small fraction get a varied AI (regroup pauses, flank from the side).
   pwWaveAi: NpcAi;
+  // High-wave bonus injections: extra zombie bears and rats that spawn
+  // alongside the regular wave theme to keep late-game runs spicy.
+  pwBonusBearTarget: number;
+  pwBonusBearsSpawned: number;
+  pwBonusBearLastAt: number;
+  pwBonusRatTarget: number;
+  pwBonusRatsSpawned: number;
+  pwBonusRatLastAt: number;
   // Aura: per-NPC last hit time (so we don't drain HP every tick)
   pwAuraLastHits: Map<string, number>;
 };
@@ -414,6 +422,12 @@ export default class GameServer implements Party.Server {
       pwWaveAnchors: [],
       pwWaveKind: 'goblin',
       pwWaveAi: 'chase',
+      pwBonusBearTarget: 0,
+      pwBonusBearsSpawned: 0,
+      pwBonusBearLastAt: 0,
+      pwBonusRatTarget: 0,
+      pwBonusRatsSpawned: 0,
+      pwBonusRatLastAt: 0,
       pwAuraLastHits: new Map(),
     };
     this.players.set(id, player);
@@ -1244,6 +1258,18 @@ export default class GameServer implements Party.Server {
       if (sizeOverride !== undefined) p.pwWaveTotal = sizeOverride;
       // Spawn anchors are positioned around THIS player (not random arena edges)
       p.pwWaveAnchors = pickAnchorsAround(p.x, p.y, WAVE_ANCHORS_AT(p.waveNumber));
+
+      // High-wave bonus injection targets. These spawn ALONGSIDE the regular
+      // wave theme as extras — they don't replace anything, they just pile on.
+      // Bears: from wave 15+, +1 per 5 waves, capped at 6.
+      // Rats:  from wave 10+, +1.5 per wave, capped at 30.
+      p.pwBonusBearTarget = Math.min(6, Math.max(0, Math.floor((p.waveNumber - 15) / 5)));
+      p.pwBonusRatTarget = Math.min(30, Math.max(0, Math.floor((p.waveNumber - 10) * 1.5)));
+      p.pwBonusBearsSpawned = 0;
+      p.pwBonusRatsSpawned = 0;
+      p.pwBonusBearLastAt = now;
+      p.pwBonusRatLastAt = now;
+
       const initial = Math.max(1, Math.floor(p.pwWaveTotal * WAVE_INITIAL_BURST_FRAC));
       for (let i = 0; i < initial; i++) this.spawnInWave(p);
     } else {
@@ -1259,6 +1285,26 @@ export default class GameServer implements Party.Server {
         const remaining = p.pwWaveTotal - p.pwWaveSpawnedSoFar;
         const trickleSize = Math.max(4, Math.min(remaining, 6));
         for (let i = 0; i < trickleSize; i++) this.spawnInWave(p);
+      }
+
+      // Bonus bear/rat injection during the wave.
+      if (this.npcs.size < NPC_MAX_COUNT) {
+        if (
+          p.pwBonusBearsSpawned < p.pwBonusBearTarget &&
+          now - p.pwBonusBearLastAt >= 2500
+        ) {
+          p.pwBonusBearLastAt = now;
+          this.spawnBonusMonster(p, 'zombie_bear');
+          p.pwBonusBearsSpawned += 1;
+        }
+        if (
+          p.pwBonusRatsSpawned < p.pwBonusRatTarget &&
+          now - p.pwBonusRatLastAt >= 250
+        ) {
+          p.pwBonusRatLastAt = now;
+          this.spawnBonusMonster(p, 'rat');
+          p.pwBonusRatsSpawned += 1;
+        }
       }
     }
 
@@ -1311,8 +1357,11 @@ export default class GameServer implements Party.Server {
     }
 
     const base = MONSTER_BASES[kind];
-    // HP scales steeper with wave (so high-wave runs are tougher even with capped player damage)
-    const waveDiffMul = 1 + (p.waveNumber - 1) * 0.13;
+    // HP curve: linear up to wave 20, then a quadratic late-game term so
+    // high-wave runs (50+, 100+) keep being threatening despite stacked
+    // player damage powerups.
+    const waveDiffMul = 1 + (p.waveNumber - 1) * 0.13
+      + Math.pow(Math.max(0, p.waveNumber - 20), 1.5) * 0.02;
     const levelDiffMul = 1 + (p.level - 1) * 0.10;
     const hp = NPC_BASE_HP * base.hpMul * waveDiffMul * levelDiffMul;
     // Hard cap on speed so player can always run away
@@ -1338,6 +1387,43 @@ export default class GameServer implements Party.Server {
       flankSide: Math.random() < 0.5 ? -1 : 1,
     });
     p.pwWaveSpawnedSoFar += 1;
+  }
+
+  // High-wave injection: spawn a single NPC of the given kind near the player's
+  // wave anchors, sharing the regular wave HP curve. Doesn't count toward
+  // pwWaveTotal — these are extras layered on top of the theme.
+  spawnBonusMonster(p: ServerPlayer, kind: MonsterKind) {
+    if (this.npcs.size >= NPC_MAX_COUNT) return;
+    if (p.pwWaveAnchors.length === 0) return;
+    const anchor = p.pwWaveAnchors[Math.floor(Math.random() * p.pwWaveAnchors.length)];
+    const jitter = MONSTER_GROUP_JITTER_OVERRIDE[kind] ?? 120;
+    const x = clamp(anchor.x + (Math.random() - 0.5) * jitter, 20, ARENA_WIDTH - 20);
+    const y = clamp(anchor.y + (Math.random() - 0.5) * jitter, 20, ARENA_HEIGHT - 20);
+    const base = MONSTER_BASES[kind];
+    const waveDiffMul = 1 + (p.waveNumber - 1) * 0.13
+      + Math.pow(Math.max(0, p.waveNumber - 20), 1.5) * 0.02;
+    const levelDiffMul = 1 + (p.level - 1) * 0.10;
+    const hp = NPC_BASE_HP * base.hpMul * waveDiffMul * levelDiffMul;
+    const cappedSpeed = Math.min(
+      PLAYER_SPEED * NPC_SPEED_CAP_FRAC,
+      NPC_BASE_SPEED * base.speedMul * Math.min(1.8, 0.95 + (p.waveNumber - 1) * 0.05),
+    );
+    const id = genId('npc');
+    this.npcs.set(id, {
+      id, kind, x, y,
+      hp, baseHp: hp,
+      speed: cappedSpeed,
+      baseSpeed: cappedSpeed,
+      slowUntil: 0,
+      slowMul: 1,
+      freezeUntil: 0,
+      lastHitAt: 0,
+      ownerPlayerId: p.id,
+      ai: 'chase', // bonus monsters always chase straight toward the player
+      aiPhase: 'pursue',
+      aiPhaseEndsAt: Date.now() + 5000 + Math.random() * 2000,
+      flankSide: Math.random() < 0.5 ? -1 : 1,
+    });
   }
 
   updateNPCs(dt: number, now: number) {
