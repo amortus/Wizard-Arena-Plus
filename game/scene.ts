@@ -1229,14 +1229,10 @@ export class ArenaScene extends Phaser.Scene {
     if (!this.latestSnapshot) return;
     const snap = this.latestSnapshot;
     const prev = this.prevSnapshot;
-    // Interpolation factor between prev and cur snapshots. We allow it to
-    // exceed 1.0 (up to 1.4) when the next snapshot is late — the lerp then
-    // extrapolates along the prev→cur velocity, which masks ~30ms of jitter
-    // instead of freezing entities in place.
     const interp =
       prev && this.snapshotTime > this.prevSnapshotTime
         ? Math.min(
-            1.4,
+            1,
             (performance.now() - this.snapshotTime) /
               Math.max(16, this.snapshotTime - this.prevSnapshotTime),
           )
