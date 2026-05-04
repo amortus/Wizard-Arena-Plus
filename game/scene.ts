@@ -236,6 +236,28 @@ export class ArenaScene extends Phaser.Scene {
     this.cameras.main.setRoundPixels(false); // sub-pixel positioning = smoother camera
 
     this.connect();
+
+    // Standalone connection watchdog: every 2 seconds, if the socket is open
+    // but we still haven't seen our own player in any snapshot in 3+ seconds,
+    // re-send the join payload. Catches the case where snapshots aren't
+    // arriving at all (e.g. DO hibernation lost in-memory state).
+    this.time.addEvent({
+      delay: 2000,
+      loop: true,
+      callback: () => this.connectionWatchdog(),
+    });
+  }
+
+  connectionWatchdog() {
+    if (!this.socket || this.socket.readyState !== 1) return;
+    if (!this.joinPayload) return;
+    const now = performance.now();
+    const stale = now - this.lastSelfSeenAt > 3000;
+    const cooldown = now - this.lastJoinResendAt > 2000;
+    if (stale && cooldown) {
+      this.lastJoinResendAt = now;
+      this.socket.send(JSON.stringify(this.joinPayload));
+    }
   }
 
   makeFallbackTextures() {
