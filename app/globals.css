@@ -812,6 +812,42 @@ button {
   letter-spacing: 1px;
   font-style: italic;
 }
+.death-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid var(--gold-dim);
+  border-radius: 4px;
+  padding: 16px 28px;
+  margin: 0;
+  font-style: normal;
+}
+.death-stat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 24px;
+  font-family: 'Cinzel', serif;
+  font-size: 16px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+.death-stat-label { color: var(--cream-dim); }
+.death-stat-value {
+  color: var(--gold-bright);
+  font-weight: 900;
+  font-size: 20px;
+}
+.death-rank {
+  margin-top: 10px;
+  text-align: center;
+  font-family: 'VT323', monospace;
+  font-size: 18px;
+  color: var(--gold-bright);
+  letter-spacing: 1px;
+  font-style: normal !important;
+}
 
 /* ---------- Level up modal (Vampire Survivors spell card style) ---------- */
 .levelup-overlay {

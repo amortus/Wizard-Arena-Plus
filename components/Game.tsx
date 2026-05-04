@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import type { CharacterKind } from '../shared/constants';
-import type { PlayerState } from '../shared/types';
+import type { LeaderboardEntry, PlayerState } from '../shared/types';
 
 type Props = {
   name: string;
@@ -38,6 +38,13 @@ export default function Game({ name, character, color, hue, room, country }: Pro
   const [levelUp, setLevelUp] = useState<LevelUpData | null>(null);
   const [levelUpFocus, setLevelUpFocus] = useState(0);
   const [dead, setDead] = useState(false);
+  // Captured at moment of death so the death screen still shows them after
+  // the server has reset the player's HUD state for respawn.
+  const [deathStats, setDeathStats] = useState<{ level: number; wave: number; score: number } | null>(null);
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
+  // Track latest hud.self level/wave so the 'died' event handler can read them
+  // synchronously (the bus.on closure would otherwise capture an empty hud).
+  const lastSelfRef = useRef<{ level: number; wave: number } | null>(null);
 
   useEffect(() => {
     let game: any;
@@ -51,13 +58,32 @@ export default function Game({ name, character, color, hue, room, country }: Pro
       sceneRef.current = result.scene;
       game = result.game;
 
-      result.scene.bus.on('hud', (h: any) => setHud(h));
+      result.scene.bus.on('hud', (h: any) => {
+        setHud(h);
+        if (h.self) {
+          lastSelfRef.current = { level: h.self.level, wave: h.self.waveNumber ?? 0 };
+        }
+      });
       result.scene.bus.on('levelUp', (data: LevelUpData) => {
         setLevelUp(data);
         setLevelUpFocus(0);
       });
-      result.scene.bus.on('died', () => setDead(true));
-      result.scene.bus.on('respawned', () => setDead(false));
+      result.scene.bus.on('died', () => {
+        const stats = lastSelfRef.current;
+        if (stats) {
+          setDeathStats({
+            level: stats.level,
+            wave: stats.wave,
+            score: stats.level * 100 + stats.wave * 50,
+          });
+        }
+        setDead(true);
+      });
+      result.scene.bus.on('respawned', () => {
+        setDead(false);
+        setDeathStats(null);
+      });
+      result.scene.bus.on('leaderboard', (entries: LeaderboardEntry[]) => setLeaderboard(entries));
     })();
 
     return () => {
@@ -75,6 +101,19 @@ export default function Game({ name, character, color, hue, room, country }: Pro
   const respawn = () => {
     sceneRef.current?.respawn();
   };
+
+  // Press Enter (or Space) on the death screen to respawn instantly.
+  useEffect(() => {
+    if (!dead) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        respawn();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [dead]);
 
   // Keyboard nav while level-up modal is open: ←/→ to move focus, Enter/Space to confirm.
   useEffect(() => {
@@ -199,9 +238,37 @@ export default function Game({ name, character, color, hue, room, country }: Pro
       {dead && (
         <div className="death-overlay">
           <h2>YOU DIED</h2>
-          <div style={{ opacity: 0.7 }}>Your XP gems have been scattered.</div>
-          <button className="start-btn" style={{ maxWidth: 200 }} onClick={respawn}>
-            Respawn
+          {deathStats && (() => {
+            // Find rank in the persistent top-10 leaderboard. Server sends a
+            // leaderboard event right after recordDeath() so this is up-to-date
+            // by the time the death screen renders.
+            const myRank = leaderboard.findIndex(
+              (e) => e.name === name && e.level === deathStats.level && e.score === deathStats.score,
+            );
+            return (
+              <div className="death-stats">
+                <div className="death-stat-row">
+                  <span className="death-stat-label">Level</span>
+                  <span className="death-stat-value">{deathStats.level}</span>
+                </div>
+                <div className="death-stat-row">
+                  <span className="death-stat-label">Wave</span>
+                  <span className="death-stat-value">{deathStats.wave}</span>
+                </div>
+                <div className="death-stat-row">
+                  <span className="death-stat-label">Score</span>
+                  <span className="death-stat-value">{deathStats.score}</span>
+                </div>
+                <div className="death-rank">
+                  {myRank >= 0
+                    ? `🏆 Rank #${myRank + 1} on the all-time leaderboard!`
+                    : 'Did not crack the top 10 — try again.'}
+                </div>
+              </div>
+            );
+          })()}
+          <button className="start-btn" style={{ maxWidth: 240 }} onClick={respawn}>
+            Respawn (Enter)
           </button>
         </div>
       )}
