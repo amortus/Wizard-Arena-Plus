@@ -1623,11 +1623,14 @@ export default class GameServer implements Party.Server {
   }
 
   broadcastSnapshot(now: number) {
-    // Build the static-ish data once (player list + gems — these are small) and
-    // then send a personalized snapshot to each connection that filters NPCs,
-    // projectiles, and wolves to those visible from that player's viewpoint.
-    // Cuts each per-client payload by ~70% in busy late-game scenes.
-    const players = [...this.players.values()].map((p) => ({
+    // Snapshot-level wave fields kept for backward compat; clients should read from PlayerState.
+    const snap: Snapshot = {
+      type: 'snapshot',
+      t: now,
+      wave: 0,
+      waveName: '',
+      waveTimeLeftMs: 0,
+      players: [...this.players.values()].map((p) => ({
         id: p.id,
         name: p.name,
         character: p.character,
@@ -1687,54 +1690,27 @@ export default class GameServer implements Party.Server {
         xpMul: p.xpMul,
         projectileLifeMul: p.projectileLifeMul,
         pendingLevelUps: p.pendingLevelUps,
-      }));
-    const allGems = [...this.gems.values()];
-    const allNpcs = [...this.npcs.values()];
-    const allProjectiles = [...this.projectiles.values()];
-    const allWolves = [...this.wolves.values()];
-
-    // Visibility radius — covers a 1.2x-zoom 1280x720 viewport (~1067x600 world)
-    // plus a 200px buffer so entities don't pop in/out at the screen edge.
-    const VIS = 800;
-    const VIS2 = VIS * VIS;
-
-    // Send a personalized snapshot to each connection.
-    for (const conn of this.room.getConnections()) {
-      const self = this.players.get(conn.id);
-      if (!self) continue;
-      const cx = self.x;
-      const cy = self.y;
-
-      const visibleNpcs = allNpcs
-        .filter((n) => (n.x - cx) ** 2 + (n.y - cy) ** 2 < VIS2)
-        .map((n) => ({ id: n.id, kind: n.kind, x: n.x, y: n.y, hp: n.hp }));
-      const visibleProjectiles = allProjectiles
-        .filter((p) => (p.x - cx) ** 2 + (p.y - cy) ** 2 < VIS2)
-        .map((p) => ({
-          id: p.id, ownerId: p.ownerId,
-          x: p.x, y: p.y, vx: p.vx, vy: p.vy,
-          weapon: p.weapon,
-        }));
-      const visibleWolves = allWolves
-        .filter((w) => (w.x - cx) ** 2 + (w.y - cy) ** 2 < VIS2)
-        .map((w) => ({ id: w.id, ownerId: w.ownerId, x: w.x, y: w.y, state: w.state }));
-      // Gems are small but pickup-relevant; only send those near the player.
-      const visibleGems = allGems.filter((g) => (g.x - cx) ** 2 + (g.y - cy) ** 2 < VIS2);
-
-      const snap: Snapshot = {
-        type: 'snapshot',
-        t: now,
-        wave: 0,
-        waveName: '',
-        waveTimeLeftMs: 0,
-        players,
-        npcs: visibleNpcs,
-        gems: visibleGems,
-        projectiles: visibleProjectiles,
-        wolves: visibleWolves,
-      };
-      conn.send(JSON.stringify(snap));
-    }
+      })),
+      npcs: [...this.npcs.values()].map((n) => ({ id: n.id, kind: n.kind, x: n.x, y: n.y, hp: n.hp })),
+      gems: [...this.gems.values()],
+      projectiles: [...this.projectiles.values()].map((p) => ({
+        id: p.id,
+        ownerId: p.ownerId,
+        x: p.x,
+        y: p.y,
+        vx: p.vx,
+        vy: p.vy,
+        weapon: p.weapon,
+      })),
+      wolves: [...this.wolves.values()].map((w) => ({
+        id: w.id,
+        ownerId: w.ownerId,
+        x: w.x,
+        y: w.y,
+        state: w.state,
+      })),
+    };
+    this.room.broadcast(JSON.stringify(snap));
   }
 }
 
