@@ -75,6 +75,7 @@ const PLAYER_SPRITE_SCALE: Record<string, number> = {};
 const NPC_SPRITE_SCALE: Record<string, number> = {
   rat: 0.55,
   zombie_bear: 1.28, // 20% smaller than the original 1.6
+  dragon: 1.5,       // big and intimidating
 };
 
 // Global multiplier applied to every gameplay sprite (players, NPCs, projectiles, gems).
@@ -303,6 +304,7 @@ export class ArenaScene extends Phaser.Scene {
       werewolf: 0x665544,
       rat: 0x6a4a3a,
       zombie_bear: 0x3a2a1a,
+      dragon: 0x6a1a1a,
     };
     for (const [c, col] of Object.entries(fallbackColors)) {
       for (const dir of DIRS) {

@@ -182,6 +182,12 @@ export default class GameServer implements Party.Server {
   projectiles = new Map<string, ServerProjectile>();
   blackHoles = new Map<string, ServerBlackHole>();
   wolves = new Map<string, ServerWolf>();
+  // Arena boss — at most one alive at a time per room. Hunts the top-scoring
+  // alive player at L13+. When that player dies, the dragon dies too and
+  // drops a feast of loot. There's a brief cooldown after a dragon dies
+  // before another can spawn so victories actually feel earned.
+  dragonId: string | null = null;
+  nextDragonAllowedAt = 0;
   lastTickAt = 0;
   tickHandle: ReturnType<typeof setInterval> | null = null;
   // Persistent all-time leaderboard (top 10 by score)
@@ -672,6 +678,8 @@ export default class GameServer implements Party.Server {
     this.updatePlayers(dt, now);
     this.updateProjectiles(dt);
     this.runWaves(now);
+    this.maybeSpawnDragon(now);
+    this.retargetDragon();
     this.updateNPCs(dt, now);
     this.updateBlackHoles(now);
     this.updateWolves(dt, now);
@@ -1389,6 +1397,85 @@ export default class GameServer implements Party.Server {
     p.pwWaveSpawnedSoFar += 1;
   }
 
+  // Each tick, sync the dragon's ownerPlayerId to whoever is currently top.
+  // The existing targetForNpc logic then drives chase movement and damage.
+  retargetDragon() {
+    if (!this.dragonId) return;
+    const dragon = this.npcs.get(this.dragonId);
+    if (!dragon) { this.dragonId = null; return; }
+    let best: ServerPlayer | null = null;
+    let bestScore = -1;
+    for (const p of this.players.values()) {
+      if (!p.alive) continue;
+      const score = p.level * 100 + p.waveNumber * 50;
+      if (score > bestScore) { best = p; bestScore = score; }
+    }
+    if (best) dragon.ownerPlayerId = best.id;
+  }
+
+  // Dragon-on-death loot: 12 golds + 4 epics scattered around the body.
+  dropDragonFeast(x: number, y: number) {
+    for (let i = 0; i < 12; i++) {
+      this.dropGem(x + (Math.random() - 0.5) * 80, y + (Math.random() - 0.5) * 80, 5);
+    }
+    for (let i = 0; i < 4; i++) {
+      this.dropGem(x + (Math.random() - 0.5) * 50, y + (Math.random() - 0.5) * 50, 10);
+    }
+  }
+
+  // Boss spawn check. Conditions: (1) no dragon currently alive in the room,
+  // (2) at least one alive player is level 13+, (3) we're past the post-death
+  // cooldown. Picks the top-scoring eligible player and drops the dragon
+  // ~700-900px away, just off-screen at default zoom.
+  maybeSpawnDragon(now: number) {
+    if (this.dragonId) {
+      // Lazily clear the handle if the dragon NPC was killed somewhere else.
+      if (!this.npcs.has(this.dragonId)) {
+        this.dragonId = null;
+        this.nextDragonAllowedAt = now + 60_000; // 1-minute breather
+      } else {
+        return;
+      }
+    }
+    if (now < this.nextDragonAllowedAt) return;
+    let target: ServerPlayer | null = null;
+    let bestScore = -1;
+    for (const p of this.players.values()) {
+      if (!p.alive || p.level < 13) continue;
+      const score = p.level * 100 + p.waveNumber * 50;
+      if (score > bestScore) { target = p; bestScore = score; }
+    }
+    if (!target) return;
+    if (this.npcs.size >= NPC_MAX_COUNT) return;
+
+    const angle = Math.random() * Math.PI * 2;
+    const dist = 700 + Math.random() * 200;
+    const x = clamp(target.x + Math.cos(angle) * dist, 30, ARENA_WIDTH - 30);
+    const y = clamp(target.y + Math.sin(angle) * dist, 30, ARENA_HEIGHT - 30);
+
+    // HP scales with the target's level so the dragon stays a real threat
+    // even at very high levels: 1500 base + 200 per level past 13.
+    const hp = 1500 + Math.max(0, target.level - 13) * 200;
+    // Dragon ignores the standard NPC speed cap — it's intentionally fast so
+    // running away isn't a free out, but a player can micro-dodge it.
+    const speed = PLAYER_SPEED * 0.95;
+
+    const id = genId('dragon');
+    this.dragonId = id;
+    this.npcs.set(id, {
+      id, kind: 'dragon', x, y,
+      hp, baseHp: hp,
+      speed, baseSpeed: speed,
+      slowUntil: 0, slowMul: 1, freezeUntil: 0,
+      lastHitAt: 0,
+      ownerPlayerId: target.id,
+      ai: 'chase',
+      aiPhase: 'pursue',
+      aiPhaseEndsAt: 0,
+      flankSide: 1,
+    });
+  }
+
   // High-wave injection: spawn a single NPC of the given kind near the player's
   // wave anchors, sharing the regular wave HP curve. Doesn't count toward
   // pwWaveTotal — these are extras layered on top of the theme.
@@ -1569,21 +1656,31 @@ export default class GameServer implements Party.Server {
     const n = this.npcs.get(id);
     if (!n) return;
     this.npcs.delete(id);
-    const tier = MONSTER_BASES[n.kind].tier;
-    if (tier === 'boss') {
-      // Boss drops are LOOT — many greens + golds + epic
-      for (let i = 0; i < 6; i++) this.dropGem(n.x, n.y, 3);
-      for (let i = 0; i < 2; i++) this.dropGem(n.x, n.y, 5);
-      this.dropGem(n.x, n.y, 10);
-    } else if (tier === 'elite') {
-      // Elites always drop 2 greens, often a gold
-      for (let i = 0; i < 2; i++) this.dropGem(n.x, n.y, 3);
-      if (Math.random() < 0.5) this.dropGem(n.x, n.y, 5);
+    if (n.kind === 'dragon') {
+      // Dragon defeated by players — feast! Plus reset cooldown so a new
+      // dragon doesn't spawn immediately, giving the room a victory lap.
+      this.dropDragonFeast(n.x, n.y);
+      if (this.dragonId === n.id) {
+        this.dragonId = null;
+        this.nextDragonAllowedAt = Date.now() + 60_000;
+      }
     } else {
-      // Minions: usually 1 blue, occasional green, very rare gold
-      const r = Math.random();
-      const value = r < 0.03 ? 5 : r < 0.15 ? 3 : 1;
-      this.dropGem(n.x, n.y, value);
+      const tier = MONSTER_BASES[n.kind].tier;
+      if (tier === 'boss') {
+        // Boss drops are LOOT — many greens + golds + epic
+        for (let i = 0; i < 6; i++) this.dropGem(n.x, n.y, 3);
+        for (let i = 0; i < 2; i++) this.dropGem(n.x, n.y, 5);
+        this.dropGem(n.x, n.y, 10);
+      } else if (tier === 'elite') {
+        // Elites always drop 2 greens, often a gold
+        for (let i = 0; i < 2; i++) this.dropGem(n.x, n.y, 3);
+        if (Math.random() < 0.5) this.dropGem(n.x, n.y, 5);
+      } else {
+        // Minions: usually 1 blue, occasional green, very rare gold
+        const r = Math.random();
+        const value = r < 0.03 ? 5 : r < 0.15 ? 3 : 1;
+        this.dropGem(n.x, n.y, value);
+      }
     }
 
     // Soul Harvest stack: each kill grants a permanent +0.1% damage stack
@@ -1663,6 +1760,20 @@ export default class GameServer implements Party.Server {
     p.alive = false;
     p.hp = 0;
     this.recordDeath(p);
+
+    // If a dragon was hunting this player, the dragon dies along with its
+    // target — drops a feast and triggers the spawn cooldown. Doesn't matter
+    // who actually landed the killing blow on the player.
+    if (this.dragonId) {
+      const dragon = this.npcs.get(this.dragonId);
+      if (dragon && dragon.ownerPlayerId === p.id) {
+        this.dropDragonFeast(dragon.x, dragon.y);
+        this.npcs.delete(this.dragonId);
+        this.dragonId = null;
+        this.nextDragonAllowedAt = Date.now() + 60_000;
+      }
+    }
+
     // Drop gems proportional to player level: a few greens + a gold
     const greens = Math.max(2, Math.floor(p.level / 2) + 1);
     const golds = Math.max(0, Math.floor(p.level / 4));

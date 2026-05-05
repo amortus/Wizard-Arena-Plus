@@ -205,6 +205,7 @@ export const MONSTERS = [
   'werewolf',   // pack hunter (line)
   'rat',        // tiny swarm minion (group, lots of them)
   'zombie_bear', // huge tank boss (only 3 spawn)
+  'dragon',      // arena boss — hunts the top player at L13+
 ] as const;
 export type MonsterKind = (typeof MONSTERS)[number];
 
@@ -234,6 +235,9 @@ export const MONSTER_BASES: Record<
   werewolf:          { hpMul: 1.2, speedMul: 1.25, weight: 8,  tier: 'minion' },
   rat:               { hpMul: 0.35, speedMul: 1.30, weight: 16, tier: 'minion' },
   zombie_bear:       { hpMul: 6.0, speedMul: 0.70, weight: 1,  tier: 'boss'   },
+  // Dragon: never spawned via wave system (weight 0). Spawned on its own
+  // at L13+ to hunt the top player. HP scales with target's level on spawn.
+  dragon:            { hpMul: 25.0, speedMul: 1.6, weight: 0, tier: 'boss'   },
 };
 
 // Per-monster NPC-NPC separation radius. Default is NPC_SEPARATION_RADIUS.
@@ -288,6 +292,8 @@ export const MONSTER_FORMATION: Record<MonsterKind, FormationKind> = {
   rat:               'group',
   // Zombie Bear — slow boss, plodding line
   zombie_bear:       'line',
+  // Dragon — never wave-spawned; this is just for type completeness.
+  dragon:            'group',
 };
 
 export function pickMonsterKind(): MonsterKind {
