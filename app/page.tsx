@@ -1,8 +1,8 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
+import Link from 'next/link';
 import type { CharacterKind } from '../shared/constants';
-import type { LeaderboardEntry } from '../shared/types';
 import { isBlockedName } from '../shared/profanity';
 
 // Tiny synth chime played whenever a wizard is picked. Lazily creates an
@@ -74,23 +74,11 @@ function normalizeRoomCode(input: string): string {
   return input.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12);
 }
 
-function partyKitHost(): string {
-  if (typeof window === 'undefined') return 'localhost:1999';
-  const env = (process.env.NEXT_PUBLIC_PARTYKIT_HOST as string | undefined);
-  if (env) return env;
-  const host = window.location.hostname;
-  if (host === 'localhost' || host === '127.0.0.1') return 'localhost:1999';
-  return 'localhost:1999';
-}
-
 export default function Page() {
   const [started, setStarted] = useState(false);
   const [name, setName] = useState('');
   const [character, setCharacter] = useState<CharacterKind>('blue_wizard');
   const [country, setCountry] = useState<string | undefined>(undefined);
-  const [showLeaderboard, setShowLeaderboard] = useState(false);
-  const [lbEntries, setLbEntries] = useState<LeaderboardEntry[] | null>(null);
-  const [lbLoading, setLbLoading] = useState(false);
   const [nameError, setNameError] = useState<string | null>(null);
   const [nameShake, setNameShake] = useState(false);
   // Room state — defaults to "main" public, but can be overridden by ?room= or
@@ -121,25 +109,6 @@ export default function Page() {
     }
     setNameError(null);
     setStarted(true);
-  };
-
-  const openLeaderboard = async () => {
-    setShowLeaderboard(true);
-    setLbLoading(true);
-    try {
-      const proto = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'https' : 'http';
-      const res = await fetch(`${proto}://${partyKitHost()}/parties/main/main`);
-      if (res.ok) {
-        const data = await res.json();
-        setLbEntries(data.entries ?? []);
-      } else {
-        setLbEntries([]);
-      }
-    } catch {
-      setLbEntries([]);
-    } finally {
-      setLbLoading(false);
-    }
   };
 
   useEffect(() => {
@@ -289,73 +258,10 @@ export default function Page() {
           👥 Play with Friends
           {room !== 'main' && <span className="room-tag">Room: {room}</span>}
         </button>
-        <button
-          className="leaderboard-btn"
-          onClick={openLeaderboard}
-          type="button"
-        >
+        <Link href="/leaderboard" className="leaderboard-btn lb-link-btn">
           🏆 Leaderboard
-        </button>
+        </Link>
       </div>
-
-      {showLeaderboard && (
-        <div
-          className="lb-overlay"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setShowLeaderboard(false);
-          }}
-        >
-          <div className="lb-modal">
-            <h2>All-Time Leaderboard</h2>
-            <p className="lb-sub">Top survivors of the arena</p>
-            {lbLoading ? (
-              <div className="lb-empty">Loading...</div>
-            ) : !lbEntries || lbEntries.length === 0 ? (
-              <div className="lb-empty">No survivors yet — be the first.</div>
-            ) : (
-              <div className="lb-table">
-                <div className="lb-table-head">
-                  <span>#</span>
-                  <span></span>
-                  <span>Wizard</span>
-                  <span>Level</span>
-                  <span>Wave</span>
-                  <span>Score</span>
-                </div>
-                {lbEntries.slice(0, 10).map((e, i) => (
-                  <div key={i} className="lb-table-row">
-                    <span className="lb-rank">#{i + 1}</span>
-                    <span className="lb-flag">{countryFlag(e.country)}</span>
-                    <span className="lb-name">
-                      {e.character && (
-                        <img
-                          className="lb-wizard"
-                          src={`/portraits/${e.character}.png`}
-                          alt=""
-                          onError={(ev) => {
-                            const img = ev.currentTarget;
-                            if (!img.dataset.fallback) {
-                              img.dataset.fallback = '1';
-                              img.src = `/sprites/${e.character}_south.png`;
-                            }
-                          }}
-                        />
-                      )}
-                      {e.name}
-                    </span>
-                    <span className="lb-stats">L{e.level}</span>
-                    <span className="lb-stats">W{e.wave}</span>
-                    <span className="lb-score">{e.score}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-            <button className="start-btn lb-close" onClick={() => setShowLeaderboard(false)}>
-              Close
-            </button>
-          </div>
-        </div>
-      )}
 
       {showRoomModal && (
         <div

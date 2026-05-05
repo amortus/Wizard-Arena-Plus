@@ -61,7 +61,7 @@ import type {
 } from '../shared/types';
 
 const LEADERBOARD_KEY = 'leaderboard:v1';
-const LEADERBOARD_SIZE = 10;
+const LEADERBOARD_SIZE = 100;
 
 type ServerPlayer = PlayerState & {
   input: { dx: number; dy: number };

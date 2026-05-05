@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CharacterKind } from '../shared/constants';
 import type { LeaderboardEntry, PlayerState } from '../shared/types';
+import { dedupeBestByName } from '../shared/leaderboard';
 
 type Props = {
   name: string;
@@ -239,11 +240,12 @@ export default function Game({ name, character, color, hue, room, country }: Pro
         <div className="death-overlay">
           <h2>YOU DIED</h2>
           {deathStats && (() => {
-            // Find rank in the persistent top-10 leaderboard. Server sends a
-            // leaderboard event right after recordDeath() so this is up-to-date
-            // by the time the death screen renders.
-            const myRank = leaderboard.findIndex(
-              (e) => e.name === name && e.level === deathStats.level && e.score === deathStats.score,
+            // Rank against the deduped leaderboard (one row per name) so ranks
+            // match what the leaderboard page shows. Server pushes an updated
+            // leaderboard event right after recordDeath().
+            const ranked = dedupeBestByName(leaderboard);
+            const myRank = ranked.findIndex(
+              (e) => e.name === name && e.score === deathStats.score,
             );
             return (
               <div className="death-stats">
@@ -262,7 +264,7 @@ export default function Game({ name, character, color, hue, room, country }: Pro
                 <div className="death-rank">
                   {myRank >= 0
                     ? `🏆 Rank #${myRank + 1} on the all-time leaderboard!`
-                    : 'Did not crack the top 10 — try again.'}
+                    : 'Did not crack the top 100 — try again.'}
                 </div>
               </div>
             );
