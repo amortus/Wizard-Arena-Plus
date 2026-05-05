@@ -257,7 +257,10 @@ export default class GameServer implements Party.Server {
     // Reap stale entries before checking the cap, in case zombie players
     // are still occupying slots from a hibernation cycle.
     this.reapZombiePlayers();
-    if (this.players.size >= PLAYER_MAX_PER_ROOM) {
+    // Public 'main' room is more permissive (6) since it's first-come-first-served
+    // for everyone on the site. Private friend rooms stay tight at 4 for chaos.
+    const cap = this.room.id === 'main' ? 6 : PLAYER_MAX_PER_ROOM;
+    if (this.players.size >= cap) {
       conn.send(JSON.stringify({ type: 'full' }));
       conn.close();
       return;

@@ -164,6 +164,7 @@ export type ServerToClient =
   | { type: 'died'; playerId: string }
   | { type: 'killed'; killerId: string; victimId: string }
   | { type: 'leaderboard'; entries: LeaderboardEntry[] }
+  | { type: 'full' }
   | { type: 'effect'; effect: 'lightning'; x: number; y: number }
   | { type: 'effect'; effect: 'meteor'; x: number; y: number }
   | { type: 'effect'; effect: 'frostNova'; x: number; y: number; radius: number }

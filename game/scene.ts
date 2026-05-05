@@ -678,6 +678,12 @@ export class ArenaScene extends Phaser.Scene {
       }
     } else if (msg.type === 'leaderboard') {
       this.bus.emit('leaderboard', msg.entries);
+    } else if (msg.type === 'full') {
+      // Server rejected us — room is at capacity. Stop reconnecting and
+      // surface a UI overlay so the player can take action.
+      this.joinPayload = undefined; // prevent watchdog from re-sending join
+      try { this.socket?.close(); } catch (e) { void e; }
+      this.bus.emit('roomFull');
     } else if (msg.type === 'effect') {
       if (msg.effect === 'lightning') {
         this.spawnLightningEffect(msg.x, msg.y);

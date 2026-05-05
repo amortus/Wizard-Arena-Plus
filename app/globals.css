@@ -717,6 +717,44 @@ button {
   text-align: center;
 }
 
+/* ---------- Room-full overlay (when arena is at cap) ---------- */
+.room-full-card {
+  background:
+    linear-gradient(180deg, var(--bg-card-2) 0%, var(--bg-card) 100%);
+  border: 3px solid var(--gold);
+  border-radius: 4px;
+  padding: 28px 32px;
+  max-width: 460px;
+  width: 90%;
+  text-align: center;
+  box-shadow:
+    inset 0 0 0 1px var(--gold-dim),
+    0 8px 32px rgba(0, 0, 0, 0.7),
+    0 0 64px rgba(255, 204, 68, 0.15);
+}
+.room-full-card h2 {
+  font-family: 'Press Start 2P', monospace;
+  font-weight: normal;
+  color: var(--gold-bright);
+  font-size: 18px;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  margin: 0 0 12px;
+  text-shadow: 2px 2px 0 var(--bg-deep);
+}
+.room-full-card p {
+  font-family: 'VT323', monospace;
+  font-size: 18px;
+  color: var(--cream-dim);
+  margin: 0 0 18px;
+  line-height: 1.4;
+}
+.room-full-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 /* ---------- Play with Friends modal ---------- */
 .room-block {
   background: rgba(0, 0, 0, 0.35);

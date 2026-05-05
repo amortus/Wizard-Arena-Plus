@@ -43,6 +43,7 @@ export default function Game({ name, character, color, hue, room, country }: Pro
   // the server has reset the player's HUD state for respawn.
   const [deathStats, setDeathStats] = useState<{ level: number; wave: number; score: number } | null>(null);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
+  const [roomFull, setRoomFull] = useState(false);
   // Track latest hud.self level/wave so the 'died' event handler can read them
   // synchronously (the bus.on closure would otherwise capture an empty hud).
   const lastSelfRef = useRef<{ level: number; wave: number } | null>(null);
@@ -85,6 +86,7 @@ export default function Game({ name, character, color, hue, room, country }: Pro
         setDeathStats(null);
       });
       result.scene.bus.on('leaderboard', (entries: LeaderboardEntry[]) => setLeaderboard(entries));
+      result.scene.bus.on('roomFull', () => setRoomFull(true));
     })();
 
     return () => {
@@ -141,7 +143,7 @@ export default function Game({ name, character, color, hue, room, country }: Pro
     return () => window.removeEventListener('keydown', onKey);
   }, [levelUp, levelUpFocus]);
 
-  const isConnecting = !hud.self && !dead;
+  const isConnecting = !hud.self && !dead && !roomFull;
 
   return (
     <div className="game-root">
@@ -154,6 +156,33 @@ export default function Game({ name, character, color, hue, room, country }: Pro
             <span className="connecting-dot dot1">.</span>
             <span className="connecting-dot dot2">.</span>
             <span className="connecting-dot dot3">.</span>
+          </div>
+        </div>
+      )}
+
+      {roomFull && (
+        <div className="connecting-overlay">
+          <div className="room-full-card">
+            <h2>Arena Is Full</h2>
+            <p>The public arena is at capacity. Try again in a moment, or jump into a fresh private room with friends.</p>
+            <div className="room-full-actions">
+              <button
+                className="start-btn"
+                onClick={() => {
+                  if (typeof window !== 'undefined') window.location.reload();
+                }}
+              >
+                Try Again
+              </button>
+              <button
+                className="leaderboard-btn"
+                onClick={() => {
+                  if (typeof window !== 'undefined') window.location.href = '/';
+                }}
+              >
+                ← Back to Menu
+              </button>
+            </div>
           </div>
         </div>
       )}
