@@ -1453,9 +1453,13 @@ export default class GameServer implements Party.Server {
     const x = clamp(target.x + Math.cos(angle) * dist, 30, ARENA_WIDTH - 30);
     const y = clamp(target.y + Math.sin(angle) * dist, 30, ARENA_HEIGHT - 30);
 
-    // HP scales with the target's level so the dragon stays a real threat
-    // even at very high levels: 1500 base + 200 per level past 13.
-    const hp = 1500 + Math.max(0, target.level - 13) * 200;
+    // HP scales with both wave and level so the dragon stays a real threat
+    // against players who've stacked damage powerups. 8000 floor guarantees
+    // even a fresh L13 player faces a proper wall, not a 5-second pinata.
+    const wMul = 1 + (target.waveNumber - 1) * 0.13
+      + Math.pow(Math.max(0, target.waveNumber - 20), 1.5) * 0.02;
+    const lMul = 1 + (target.level - 1) * 0.10;
+    const hp = Math.max(8000, NPC_BASE_HP * 50 * wMul * lMul);
     // Dragon ignores the standard NPC speed cap — it's intentionally fast so
     // running away isn't a free out, but a player can micro-dodge it.
     const speed = PLAYER_SPEED * 0.95;
