@@ -48,8 +48,8 @@ export default function LeaderboardPage() {
       <div className="scanlines" />
       <div className="menu-card lb-page-card">
         <img
-          src="/wizard_arena_logo.png"
-          alt="Wizard Arena Online"
+          src="/madness_arena_logo.png"
+          alt="Madness Arena"
           className="menu-logo"
         />
         <h1 className="lb-page-title">All-Time Leaderboard</h1>

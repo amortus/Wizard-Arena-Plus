@@ -7,19 +7,19 @@ export const metadata: Metadata = {
     process.env.NEXT_PUBLIC_SITE_URL ??
       (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000'),
   ),
-  title: 'Wizard Arena Plus',
+  title: 'Madness Arena',
   description: 'Free multiplayer survivors-style game. Pick a wizard, dodge hordes, stack powerups, top the leaderboard.',
   openGraph: {
-    title: 'Wizard Arena Plus',
+    title: 'Madness Arena',
     description: 'Free multiplayer survivors-style game. Pick a wizard, dodge hordes, stack powerups, top the leaderboard.',
     type: 'website',
-    images: ['/wizard_arena_plus_logo.png'],
+    images: ['/madness_arena_logo.png'],
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Wizard Arena Plus',
+    title: 'Madness Arena',
     description: 'Free multiplayer survivors-style game.',
-    images: ['/wizard_arena_plus_logo.png'],
+    images: ['/madness_arena_logo.png'],
   },
 };
 

@@ -193,8 +193,8 @@ export default function Page() {
       <div className="scanlines" />
       <div className="menu-card">
         <img
-          src="/wizard_arena_plus_logo.png"
-          alt="Wizard Arena Plus"
+          src="/madness_arena_logo.png"
+          alt="Madness Arena"
           className="menu-logo"
         />
         <p className="sub">WASD or mouse to move · Weapons strike automatically · Survive the arena</p>

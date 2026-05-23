@@ -204,7 +204,8 @@ export class ArenaScene extends Phaser.Scene {
   // Mouse control: hold left button to move toward cursor; right-click toggles always-on
   mouseDown = false;
   mouseAlwaysOn = false;
-  bgm?: Phaser.Sound.BaseSound;
+  bgmTracks: Phaser.Sound.BaseSound[] = [];
+  bgmIdx = 0;
   musicMuted = false;
   // SFX synth
   audioCtx?: AudioContext;
@@ -259,7 +260,9 @@ export class ArenaScene extends Phaser.Scene {
     this.load.image('floor_rocks', '/sprites/floor_rocks.png?v=1');
     // Spirit Wolf head sprite — drawn over the procedural orb glow
     this.load.image('icon_wolf', '/sprites/icon_wolf.png');
-    this.load.audio('bgm', '/audio/bgm.mp3');
+    this.load.audio('bgm0', '/audio/bgm.mp3');
+    this.load.audio('bgm1', '/audio/bmg1.mp3');
+    this.load.audio('bgm2', '/audio/bmg2.mp3');
 
     this.load.on('loaderror', (file: Phaser.Loader.File) => {
       void file;
@@ -344,10 +347,25 @@ export class ArenaScene extends Phaser.Scene {
       this.input.on('pointerupoutside', clearJoystick);
     }
 
-    // Background music — start on first user interaction (browsers block autoplay)
-    if (this.cache.audio.exists('bgm')) {
-      this.bgm = this.sound.add('bgm', { loop: true, volume: 0.16 });
+    // Background music playlist — advances to the next track when each one ends
+    const trackKeys = ['bgm0', 'bgm1', 'bgm2'];
+    for (const key of trackKeys) {
+      if (this.cache.audio.exists(key)) {
+        const t = this.sound.add(key, { loop: false, volume: 0.16 });
+        t.on('complete', () => {
+          if (this.musicMuted) return;
+          this.bgmIdx = (this.bgmIdx + 1) % this.bgmTracks.length;
+          this.bgmTracks[this.bgmIdx]?.play();
+        });
+        this.bgmTracks.push(t);
+      }
     }
+    // Shuffle playlist order so it doesn't always start from track 0
+    for (let i = this.bgmTracks.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [this.bgmTracks[i], this.bgmTracks[j]] = [this.bgmTracks[j], this.bgmTracks[i]];
+    }
+
     const startAudio = () => {
       if (!this.audioCtx) {
         try {
@@ -355,7 +373,9 @@ export class ArenaScene extends Phaser.Scene {
           if (Ctx) this.audioCtx = new Ctx();
         } catch (e) { void e; }
       }
-      if (this.bgm && !this.bgm.isPlaying && !this.musicMuted) this.bgm.play();
+      if (this.bgmTracks.length > 0 && !this.bgmTracks[this.bgmIdx].isPlaying && !this.musicMuted) {
+        this.bgmTracks[this.bgmIdx].play();
+      }
     };
     this.input.once('pointerdown', startAudio);
     this.input.keyboard?.once('keydown', startAudio);
@@ -1654,10 +1674,14 @@ export class ArenaScene extends Phaser.Scene {
 
   toggleMusic() {
     this.musicMuted = !this.musicMuted;
-    if (this.bgm) {
-      if (this.musicMuted) this.bgm.pause();
-      else if (!this.bgm.isPlaying) this.bgm.play();
-      else this.bgm.resume();
+    const cur = this.bgmTracks[this.bgmIdx];
+    if (!cur) return;
+    if (this.musicMuted) {
+      cur.pause();
+    } else if (!cur.isPlaying) {
+      cur.play();
+    } else {
+      cur.resume();
     }
   }
 
