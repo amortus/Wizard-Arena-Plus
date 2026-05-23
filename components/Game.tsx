@@ -33,6 +33,7 @@ export default function Game({ name, character, color, hue, room, country }: Pro
     wave?: number;
     waveName?: string;
     waveTimeLeftMs?: number;
+    survivalWave?: number;
     npcs?: number;
     gems?: number;
   }>({ players: [] });
@@ -241,6 +242,9 @@ export default function Game({ name, character, color, hue, room, country }: Pro
           <img className="unit-frame-portrait" src={`/portraits/${character}.png`} alt="" />
           <div className="unit-frame-info">
             <div className="unit-frame-name">{hud.self.name}</div>
+            {(hud.survivalWave ?? 0) > 0 && (
+              <div className="unit-frame-survival">⚔ Wave {hud.survivalWave}</div>
+            )}
             <div className="unit-frame-hp-bar">
               <div className="unit-frame-hp-fill" style={{ width: `${hpPct}%`, background: hpColor }} />
               <span className="unit-frame-hp-text">

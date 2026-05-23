@@ -2320,7 +2320,7 @@ export default class GameServer implements Party.Server {
 
   tryDropPickup(npc: ServerNpc, now: number) {
     const tier = MONSTER_BASES[npc.kind].tier;
-    const dropChance = tier === 'boss' ? 0.85 : tier === 'elite' ? 0.35 : 0.05;
+    const dropChance = tier === 'boss' ? 0.42 : tier === 'elite' ? 0.18 : 0.025;
     if (Math.random() > dropChance) return;
 
     const pools: Record<string, PickupKind[]> = {

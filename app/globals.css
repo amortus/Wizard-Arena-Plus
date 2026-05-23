@@ -440,7 +440,11 @@ button {
   inset: 0;
   background: var(--bg);
 }
-#phaser-container { width: 100vw; height: 100vh; }
+#phaser-container {
+  width: 100%;
+  height: 100%;
+  touch-action: none; /* prevent scroll interference on mobile */
+}
 
 /* Connecting splash — visible until first snapshot lands */
 .connecting-overlay {
@@ -1256,6 +1260,12 @@ button {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.unit-frame-survival {
+  font-size: 8px;
+  font-family: 'Press Start 2P', monospace;
+  color: rgba(200, 220, 255, 0.7);
+  white-space: nowrap;
 }
 .unit-frame-hp-bar {
   height: 16px;

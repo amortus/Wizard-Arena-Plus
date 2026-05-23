@@ -2279,13 +2279,14 @@ export class ArenaScene extends Phaser.Scene {
     // Hazard timestamps are server Date.now() — use snap.t (server time) for comparison.
     this.renderHazards(snap.hazards ?? [], snap.t);
 
-    // emit HUD update — wave info is per-player now (read from self)
+    // emit HUD update — top-bar wave is the room's global wave; survivalWave tracks this player's personal progression
     this.bus.emit('hud', {
       self,
       players: snap.players,
-      wave: self?.waveNumber ?? 0,
-      waveName: self?.waveName ?? '',
-      waveTimeLeftMs: self?.waveTimeLeftMs ?? 0,
+      wave: snap.wave,
+      waveName: snap.waveName,
+      waveTimeLeftMs: snap.waveTimeLeftMs,
+      survivalWave: self?.waveNumber ?? 0,
       npcs: snap.npcs.length,
       gems: snap.gems.length,
     });
