@@ -1254,7 +1254,7 @@ export default class GameServer implements Party.Server {
       p.pwWaveActive = true;
       p.pwWaveStartedAt = now;
       // Wave size scales with this player's level (not avg)
-      const lvlBonus = Math.floor((p.level - 1) * 5);
+      const lvlBonus = Math.floor((p.level - 1) * 2);
       p.pwWaveTotal = WAVE_BASE_SIZE + WAVE_GROWTH * (p.waveNumber - 1) + lvlBonus;
       p.pwWaveSpawnedSoFar = 0;
       p.pwWaveLastTrickleAt = now;

@@ -57,10 +57,10 @@ export const MAX_PROJECTILES = 250;
 // Max extra projectiles a player can stack via powerups.
 export const MAX_PROJECTILE_BONUS = 5;
 
-// Steeper non-linear curve — higher levels are a real climb.
-//   L1 → 13   L5 → 125   L10 → 445   L15 → 965   L20 → 1685   L25 → 2605
+// Slower curve — mid-to-late levels are a real grind.
+//   L1 → 21   L5 → 193   L10 → 678   L15 → 1283   L20 → 2188
 export const XP_FOR_LEVEL = (level: number) =>
-  Math.round(6 + level * 5 + level * level * 4);
+  Math.round(8 + level * 7 + level * level * 6);
 
 // ---- Characters (player wizards) ----
 
@@ -210,6 +210,12 @@ export const MONSTERS = [
   'rat',        // tiny swarm minion (group, lots of them)
   'zombie_bear', // huge tank boss (only 3 spawn)
   'dragon',      // arena boss — hunts the top player at L13+
+  // Elite variants — palette-swapped stronger versions, waves 21-40 (weight 0: wave-only)
+  'goblin_elite', 'skeleton_elite', 'zombie_elite',
+  'wraith_elite', 'werewolf_elite', 'rat_elite', 'zombie_bear_elite',
+  // Veteran variants — even stronger, waves 41+ (weight 0: wave-only)
+  'goblin_veteran', 'skeleton_veteran', 'zombie_veteran',
+  'wraith_veteran', 'werewolf_veteran', 'rat_veteran', 'zombie_bear_black',
 ] as const;
 export type MonsterKind = (typeof MONSTERS)[number];
 
@@ -241,25 +247,41 @@ export const MONSTER_BASES: Record<
   zombie_bear:       { hpMul: 6.0, speedMul: 0.70, weight: 1,  tier: 'boss'   },
   // Dragon: never spawned via wave system (weight 0). Spawned on its own
   // at L13+ to hunt the top player. HP scales with target's level on spawn.
-  dragon:            { hpMul: 25.0, speedMul: 1.6, weight: 0, tier: 'boss'   },
+  dragon:            { hpMul: 25.0, speedMul: 1.6,  weight: 0,  tier: 'boss'  },
+  // ── Elite variants (waves 21-40) — same sprite + tint, ~2.5× base HP ──────
+  goblin_elite:      { hpMul: 2.2,  speedMul: 1.25, weight: 0,  tier: 'elite' },
+  skeleton_elite:    { hpMul: 2.5,  speedMul: 1.1,  weight: 0,  tier: 'elite' },
+  zombie_elite:      { hpMul: 3.0,  speedMul: 0.95, weight: 0,  tier: 'elite' },
+  wraith_elite:      { hpMul: 3.0,  speedMul: 1.3,  weight: 0,  tier: 'elite' },
+  werewolf_elite:    { hpMul: 2.5,  speedMul: 1.4,  weight: 0,  tier: 'elite' },
+  rat_elite:         { hpMul: 0.6,  speedMul: 1.6,  weight: 0,  tier: 'minion'},
+  zombie_bear_elite: { hpMul: 10.0, speedMul: 0.85, weight: 0,  tier: 'boss'  },
+  // ── Veteran variants (waves 41+) — same sprite + darker tint, ~5× base HP ─
+  goblin_veteran:    { hpMul: 4.5,  speedMul: 1.5,  weight: 0,  tier: 'elite' },
+  skeleton_veteran:  { hpMul: 5.0,  speedMul: 1.25, weight: 0,  tier: 'elite' },
+  zombie_veteran:    { hpMul: 6.0,  speedMul: 1.1,  weight: 0,  tier: 'elite' },
+  wraith_veteran:    { hpMul: 6.0,  speedMul: 1.45, weight: 0,  tier: 'elite' },
+  werewolf_veteran:  { hpMul: 5.0,  speedMul: 1.55, weight: 0,  tier: 'elite' },
+  rat_veteran:       { hpMul: 1.0,  speedMul: 1.9,  weight: 0,  tier: 'minion'},
+  zombie_bear_black: { hpMul: 14.0, speedMul: 1.0,  weight: 0,  tier: 'boss'  },
 };
 
 // Per-monster NPC-NPC separation radius. Default is NPC_SEPARATION_RADIUS.
 // Smaller values let minions bunch up (rats cluster tightly into a swarm).
 export const MONSTER_SEPARATION_RADIUS_OVERRIDE: Partial<Record<MonsterKind, number>> = {
-  rat: 10, // very tight — they swarm as a single mass
+  rat: 10, rat_elite: 10, rat_veteran: 10,
 };
 
 // Per-monster spawn-jitter radius for 'group' formations. Default 120.
 // Smaller = tighter spawn cluster.
 export const MONSTER_GROUP_JITTER_OVERRIDE: Partial<Record<MonsterKind, number>> = {
-  rat: 36, // rats spawn nearly on top of each other for swarm feel
+  rat: 36, rat_elite: 36, rat_veteran: 36,
 };
 
 // Some monster types have a hard cap on how many spawn per wave (boss-style hordes).
 // Anything not listed here uses the standard WAVE_BASE_SIZE + growth formula.
 export const MONSTER_WAVE_SIZE_OVERRIDE: Partial<Record<MonsterKind, number>> = {
-  zombie_bear: 3, // only 3 bears per wave — they're tanky bosses
+  zombie_bear: 3, zombie_bear_elite: 3, zombie_bear_black: 2,
 };
 
 // Spawn formation per monster — drives where in the wave they appear.
@@ -298,6 +320,22 @@ export const MONSTER_FORMATION: Record<MonsterKind, FormationKind> = {
   zombie_bear:       'line',
   // Dragon — never wave-spawned; this is just for type completeness.
   dragon:            'group',
+  // Elite variants — same sprite as base, tint applied on client
+  goblin_elite:      'group',
+  skeleton_elite:    'line',
+  zombie_elite:      'group',
+  wraith_elite:      'swarm',
+  werewolf_elite:    'line',
+  rat_elite:         'group',
+  zombie_bear_elite: 'line',
+  // Veteran variants
+  goblin_veteran:    'group',
+  skeleton_veteran:  'line',
+  zombie_veteran:    'group',
+  wraith_veteran:    'swarm',
+  werewolf_veteran:  'line',
+  rat_veteran:       'group',
+  zombie_bear_black: 'line',
 };
 
 export function pickMonsterKind(): MonsterKind {
@@ -335,7 +373,55 @@ export const WAVE_THEMES: { name: string; kind: MonsterKind }[] = [
   { name: 'Bear Onslaught',   kind: 'zombie_bear' },     // boss
 ];
 
+export const WAVE_THEMES_ELITE: { name: string; kind: MonsterKind }[] = [
+  { name: 'Goblin Raiders',   kind: 'goblin_elite' },
+  { name: 'Iron Bones',       kind: 'skeleton_elite' },
+  { name: 'Rotting Elite',    kind: 'zombie_elite' },
+  { name: 'Spider Brood II',  kind: 'spider' },
+  { name: 'Wolf Pack Elite',  kind: 'werewolf_elite' },
+  { name: 'Plague Elite',     kind: 'zombie_elite' },
+  { name: 'Spectral March',   kind: 'skeleton_elite' },
+  { name: 'Brute Squad',      kind: 'goblin_elite' },
+  { name: 'Stalker Elite',    kind: 'skeleton_elite' },
+  { name: 'Wraith Storm',     kind: 'wraith_elite' },
+  { name: 'Feral Elite',      kind: 'goblin_elite' },
+  { name: 'Steel Knights',    kind: 'skeleton_elite' },
+  { name: 'Bloated Horde',    kind: 'zombie_elite' },
+  { name: 'Rat Flood',        kind: 'rat_elite' },
+  { name: 'Heavy Mob',        kind: 'goblin_elite' },
+  { name: 'Ghoul Frenzy',     kind: 'zombie_elite' },
+  { name: 'Undead March',     kind: 'zombie_elite' },
+  { name: 'Elite Bear',       kind: 'zombie_bear_elite' },
+  { name: 'Wraith Swarm',     kind: 'wraith_elite' },
+  { name: 'Elite Onslaught',  kind: 'werewolf_elite' },
+];
+
+export const WAVE_THEMES_VETERAN: { name: string; kind: MonsterKind }[] = [
+  { name: 'Goblin Veterans',  kind: 'goblin_veteran' },
+  { name: 'Ancient Bones',    kind: 'skeleton_veteran' },
+  { name: 'Plague Vets',      kind: 'zombie_veteran' },
+  { name: 'Spider Horde',     kind: 'spider' },
+  { name: 'Alpha Pack',       kind: 'werewolf_veteran' },
+  { name: 'Death March',      kind: 'zombie_veteran' },
+  { name: 'Bone Legion',      kind: 'skeleton_veteran' },
+  { name: 'Warlord Squad',    kind: 'goblin_veteran' },
+  { name: 'Wraith Legion',    kind: 'wraith_veteran' },
+  { name: 'Rat Plague',       kind: 'rat_veteran' },
+  { name: 'Veteran Horde',    kind: 'goblin_veteran' },
+  { name: 'Bone Fortress',    kind: 'skeleton_veteran' },
+  { name: 'Death Plague',     kind: 'zombie_veteran' },
+  { name: 'Rat Apocalypse',   kind: 'rat_veteran' },
+  { name: 'Shadow Pack',      kind: 'werewolf_veteran' },
+  { name: 'Undead Legion',    kind: 'zombie_veteran' },
+  { name: 'Black Bear',       kind: 'zombie_bear_black' },
+  { name: 'Wraith Apocalypse',kind: 'wraith_veteran' },
+  { name: 'Veteran Wolves',   kind: 'werewolf_veteran' },
+  { name: 'Nightmare Wave',   kind: 'goblin_veteran' },
+];
+
 export function themeForWave(waveNumber: number): { name: string; kind: MonsterKind } {
   if (waveNumber <= 0) return WAVE_THEMES[0];
-  return WAVE_THEMES[(waveNumber - 1) % WAVE_THEMES.length];
+  if (waveNumber <= 20) return WAVE_THEMES[(waveNumber - 1) % WAVE_THEMES.length];
+  if (waveNumber <= 40) return WAVE_THEMES_ELITE[(waveNumber - 21) % WAVE_THEMES_ELITE.length];
+  return WAVE_THEMES_VETERAN[(waveNumber - 41) % WAVE_THEMES_VETERAN.length];
 }

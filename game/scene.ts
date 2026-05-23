@@ -74,8 +74,39 @@ const PLAYER_SPRITE_SCALE: Record<string, number> = {};
 // Used to make rats tiny (small swarm) and zombie bears huge (boss tank).
 const NPC_SPRITE_SCALE: Record<string, number> = {
   rat: 0.55,
-  zombie_bear: 1.28, // 20% smaller than the original 1.6
-  dragon: 1.5,       // big and intimidating
+  rat_elite: 0.55, rat_veteran: 0.55,
+  zombie_bear: 1.28,
+  zombie_bear_elite: 1.28, zombie_bear_black: 1.28,
+  dragon: 1.5,
+};
+
+// Variant kinds reuse their base kind's sprite sheet.
+const VARIANT_BASE: Record<string, string> = {
+  goblin_elite: 'goblin',    goblin_veteran: 'goblin',
+  skeleton_elite: 'skeleton', skeleton_veteran: 'skeleton',
+  zombie_elite: 'zombie_v2', zombie_veteran: 'zombie_v2',
+  wraith_elite: 'wraith',    wraith_veteran: 'wraith',
+  werewolf_elite: 'werewolf', werewolf_veteran: 'werewolf',
+  rat_elite: 'rat',          rat_veteran: 'rat',
+  zombie_bear_elite: 'zombie_bear', zombie_bear_black: 'zombie_bear',
+};
+
+// Tint applied to variant kinds so they're visually distinct from their base.
+const VARIANT_TINT: Record<string, number> = {
+  goblin_elite:      0xff9944,
+  skeleton_elite:    0x44ccff,
+  zombie_elite:      0x88ff44,
+  wraith_elite:      0xff44ff,
+  werewolf_elite:    0xff4444,
+  rat_elite:         0xffcc44,
+  zombie_bear_elite: 0xff6600,
+  goblin_veteran:    0xff2200,
+  skeleton_veteran:  0x2244ff,
+  zombie_veteran:    0x44ff88,
+  wraith_veteran:    0xcc00cc,
+  werewolf_veteran:  0x880000,
+  rat_veteran:       0xff8800,
+  zombie_bear_black: 0x440044,
 };
 
 // Global multiplier applied to every gameplay sprite (players, NPCs, projectiles, gems).
@@ -277,9 +308,16 @@ export class ArenaScene extends Phaser.Scene {
       zombie_v2: 8, zombie_b: 8, ghoul: 8, bloated_zombie: 8,
       goblin_brute: 6, fat_goblin: 6, spider: 6, treant: 4, slime: 4, werewolf: 4,
       zombie_bear: 3, dragon: 1,
+      // Elite variants
+      goblin_elite: 8, skeleton_elite: 8, zombie_elite: 8,
+      wraith_elite: 6, werewolf_elite: 6, rat_elite: 14, zombie_bear_elite: 2,
+      // Veteran variants
+      goblin_veteran: 6, skeleton_veteran: 6, zombie_veteran: 6,
+      wraith_veteran: 5, werewolf_veteran: 5, rat_veteran: 14, zombie_bear_black: 2,
     };
     for (const [kind, count] of Object.entries(npcWarmCount)) {
-      const tex = `${kind}_south`;
+      const baseKind = VARIANT_BASE[kind] ?? kind;
+      const tex = `${baseKind}_south`;
       const npcScale = (NPC_SPRITE_SCALE[kind] ?? 1) * SPRITE_SHRINK;
       const pool: Phaser.GameObjects.Sprite[] = [];
       for (let i = 0; i < count; i++) {
@@ -1648,7 +1686,8 @@ export class ArenaScene extends Phaser.Scene {
       seenNpcs.add(n.id);
       let s = this.npcSprites.get(n.id);
       if (!s) {
-        const tex = `${n.kind}_south`;
+        const baseKind = VARIANT_BASE[n.kind] ?? n.kind;
+        const tex = `${baseKind}_south`;
         const npcScale = (NPC_SPRITE_SCALE[n.kind] ?? 1) * SPRITE_SHRINK;
         const kindPool = this.npcPool.get(n.kind);
         if (kindPool && kindPool.length > 0) {
@@ -1676,8 +1715,9 @@ export class ArenaScene extends Phaser.Scene {
       const moving = prevN
         ? (Math.abs(n.x - prevN.x) + Math.abs(n.y - prevN.y)) > 0.5
         : false;
-      const animKey = `${n.kind}_walk_${facing}`;
-      const idleKey = `${n.kind}_${facing}`;
+      const spriteKind = VARIANT_BASE[n.kind] ?? n.kind;
+      const animKey = `${spriteKind}_walk_${facing}`;
+      const idleKey = `${spriteKind}_${facing}`;
       if (moving && this.anims.exists(animKey)) {
         s.anims.play(animKey, true);
       } else {
@@ -1695,7 +1735,11 @@ export class ArenaScene extends Phaser.Scene {
       }
       ntrack.lastHp = n.hp;
       this.npcHpTrack.set(n.id, ntrack);
-      s.setTint(now < ntrack.flashUntilMs ? 0xff5555 : 0xffffff);
+      if (now < ntrack.flashUntilMs) {
+        s.setTint(0xff5555);
+      } else {
+        s.setTint(VARIANT_TINT[n.kind] ?? 0xffffff);
+      }
 
       s.x = interpPos.x;
       s.y = interpPos.y;
