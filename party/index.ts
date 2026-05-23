@@ -152,6 +152,7 @@ type ServerNpc = NPCState & {
   lastHitAt: number;
   baseHp: number;
   ownerPlayerId: string;
+  retargetAt: number;  // epoch ms — re-roll target when now >= this
   // AI behavior — most NPCs are 'chase'. A small fraction of wave groups get
   // a varied AI to add visual interest (regroup pauses, flanks from the side).
   ai: NpcAi;
@@ -1477,6 +1478,7 @@ export default class GameServer implements Party.Server {
       freezeUntil: 0,
       lastHitAt: 0,
       ownerPlayerId: p.id,
+      retargetAt: Date.now() + 30000 + Math.random() * 60000,
       ai: p.pwWaveAi,
       aiPhase: 'pursue',
       // First regroup pause comes 5-7s in so NPCs reach the player before pausing
@@ -1562,6 +1564,7 @@ export default class GameServer implements Party.Server {
       slowUntil: 0, slowMul: 1, freezeUntil: 0,
       lastHitAt: 0,
       ownerPlayerId: target.id,
+      retargetAt: Number.MAX_SAFE_INTEGER, // dragon uses retargetDragon() every tick
       ai: 'chase',
       aiPhase: 'pursue',
       aiPhaseEndsAt: 0,
@@ -1616,6 +1619,7 @@ export default class GameServer implements Party.Server {
       slowUntil: 0, slowMul: 1, freezeUntil: 0,
       lastHitAt: 0,
       ownerPlayerId: target.id,
+      retargetAt: Number.MAX_SAFE_INTEGER, // unique bosses stay locked on their target
       ai: boss.ai,
       aiPhase: 'pursue',
       aiPhaseEndsAt: 0,
@@ -1652,6 +1656,7 @@ export default class GameServer implements Party.Server {
         slowUntil: 0, slowMul: 1, freezeUntil: 0,
         lastHitAt: 0,
         ownerPlayerId: boss.ownerPlayerId,
+        retargetAt: now + 30000 + Math.random() * 60000,
         ai: 'chase',
         aiPhase: 'pursue',
         aiPhaseEndsAt: now + 3000,
@@ -1691,6 +1696,7 @@ export default class GameServer implements Party.Server {
       freezeUntil: 0,
       lastHitAt: 0,
       ownerPlayerId: p.id,
+      retargetAt: Date.now() + 30000 + Math.random() * 60000,
       ai: 'chase', // bonus monsters always chase straight toward the player
       aiPhase: 'pursue',
       aiPhaseEndsAt: Date.now() + 5000 + Math.random() * 2000,
@@ -1702,7 +1708,17 @@ export default class GameServer implements Party.Server {
     // Each NPC chases its owner (the player whose wave spawned it). If owner is
     // invulnerable (picking a powerup), the NPC switches to the nearest non-invuln
     // player — so picking transfers your hordes to your teammates.
+    // Collect alive player ids once for random retargeting
+    const alivePlayers = [...this.players.values()].filter((p) => p.alive);
+
     for (const n of this.npcs.values()) {
+      // Random retarget: every 30-90s each NPC re-rolls which player it chases.
+      // Dragon and unique bosses use MAX_SAFE_INTEGER so this never fires for them.
+      if (now >= n.retargetAt && alivePlayers.length > 0) {
+        n.ownerPlayerId = alivePlayers[Math.floor(Math.random() * alivePlayers.length)].id;
+        n.retargetAt = now + 30000 + Math.random() * 60000;
+      }
+
       const target = this.targetForNpc(n);
       // Freeze (Time Stop): hard-stop while > now. Slow + freeze are independent;
       // freeze takes precedence because it's a stronger effect.
