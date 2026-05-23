@@ -1,20 +1,20 @@
-/* ---------- Vampire Survivors-inspired palette ---------- */
+/* ---------- Madness Arena — Blood/Crimson dark palette ---------- */
 :root {
-  --bg: #08081a;              /* very dark navy */
-  --bg-deep: #04040d;         /* near black */
-  --bg-card: #1a1530;         /* dark purple */
-  --bg-card-2: #2a1f48;       /* lighter purple highlight */
-  --gold: #ffcc44;            /* warm gold */
-  --gold-bright: #ffe080;     /* highlight gold */
-  --gold-dim: #886622;        /* shadow gold */
-  --cream: #f0e6d0;           /* parchment text */
-  --cream-dim: #a89880;       /* subdued text */
+  --bg: #0e0505;              /* near black with blood tint */
+  --bg-deep: #070202;         /* black blood */
+  --bg-card: #1a0808;         /* dark crimson */
+  --bg-card-2: #2d1010;       /* crimson highlight */
+  --gold: #c8a46e;            /* iron/bone */
+  --gold-bright: #e8d0a0;     /* light bone */
+  --gold-dim: #6b3a1a;        /* rust */
+  --cream: #ecddd0;           /* parchment text */
+  --cream-dim: #9a8878;       /* subdued text */
   --danger: #d9483b;          /* HP red */
   --hp: #ff5544;
   --green: #79c25e;
-  --blue: #5a8be2;
-  --purple: #9c5dca;
-  --amber: #ffaa55;
+  --blue: #6a8faa;            /* steel */
+  --purple: #c45a2a;          /* rust orange */
+  --amber: #e07030;           /* ember */
 }
 
 * { box-sizing: border-box; }
@@ -44,7 +44,7 @@ button {
   height: 100vh;
   padding: 24px;
   background:
-    radial-gradient(ellipse at center, rgba(80, 30, 100, 0.35) 0%, var(--bg-deep) 70%),
+    radial-gradient(ellipse at center, rgba(120, 20, 20, 0.40) 0%, var(--bg-deep) 70%),
     var(--bg-deep);
   position: relative;
   overflow-y: auto;
@@ -57,9 +57,9 @@ button {
   position: fixed;
   inset: 0;
   background:
-    radial-gradient(circle at 15% 30%, rgba(255, 204, 68, 0.05) 0%, transparent 25%),
-    radial-gradient(circle at 85% 70%, rgba(156, 93, 202, 0.08) 0%, transparent 30%),
-    radial-gradient(circle at 50% 90%, rgba(90, 139, 226, 0.05) 0%, transparent 35%);
+    radial-gradient(circle at 15% 30%, rgba(200, 164, 110, 0.05) 0%, transparent 25%),
+    radial-gradient(circle at 85% 70%, rgba(180, 30, 30, 0.10) 0%, transparent 30%),
+    radial-gradient(circle at 50% 90%, rgba(106, 143, 170, 0.05) 0%, transparent 35%);
   pointer-events: none;
 }
 
@@ -681,7 +681,7 @@ button {
   align-items: center;
   gap: 6px;
 }
-.lb-wizard {
+.lb-character {
   width: 22px;
   height: 22px;
   border-radius: 50%;

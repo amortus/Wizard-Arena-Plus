@@ -76,7 +76,7 @@ export default function LeaderboardPage() {
                 <span className="lb-name">
                   {e.character && (
                     <img
-                      className="lb-wizard"
+                      className="lb-character"
                       src={`/portraits/${e.character}.png`}
                       alt=""
                       onError={(ev) => {

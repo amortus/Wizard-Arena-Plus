@@ -29,6 +29,7 @@ import {
   PLAYER_RADIUS,
   PLAYER_SPEED,
   PROJECTILE_LIFETIME_MS,
+  MAX_PROJECTILES,
   PROJECTILE_RADIUS,
   TICK_MS,
   WAVE_BASE_SIZE,
@@ -80,10 +81,8 @@ type ServerPlayer = PlayerState & {
   nextEarthquakeAt: number;
   nextTimeStopAt: number;
   // Trail of Fire breadcrumbs — server-side damage application; client renders independently.
-  trailBreadcrumbs: { x: number; y: number; expiresAt: number }[];
+  trailBreadcrumbs: { x: number; y: number; expiresAt: number; hitNpcs: Set<string> }[];
   trailLastDropAt: number;
-  // NPCs already damaged by a given breadcrumb (so a single breadcrumb doesn't re-tick).
-  trailHits: Map<string, number>;
   pendingChoices: { id: string; name: string; description: string; icon: string; iconSprite?: string }[][];
   // Per-player wave engine
   pwWaveStartedAt: number;
@@ -421,7 +420,6 @@ export default class GameServer implements Party.Server {
       nextTimeStopAt: 0,
       trailBreadcrumbs: [],
       trailLastDropAt: 0,
-      trailHits: new Map(),
       pendingChoices: [],
       pwWaveStartedAt: 0,
       pwWaveActive: false,
@@ -499,7 +497,6 @@ export default class GameServer implements Party.Server {
     p.trailOfFireEnabled = false;
     p.trailBreadcrumbs = [];
     p.trailLastDropAt = 0;
-    p.trailHits.clear();
     p.timeStopEnabled = false;
     p.nextTimeStopAt = 0;
     p.auraShieldRangeMul = 1;
@@ -893,7 +890,7 @@ export default class GameServer implements Party.Server {
         const moving = (p.input.dx * p.input.dx + p.input.dy * p.input.dy) > 0.01;
         if (moving && wallNow - p.trailLastDropAt >= 100) {
           p.trailLastDropAt = wallNow;
-          p.trailBreadcrumbs.push({ x: p.x, y: p.y, expiresAt: wallNow + 2000 * (p.trailDurationMul || 1) });
+          p.trailBreadcrumbs.push({ x: p.x, y: p.y, expiresAt: wallNow + 2000 * (p.trailDurationMul || 1), hitNpcs: new Set() });
         }
         // prune expired
         p.trailBreadcrumbs = p.trailBreadcrumbs.filter((b) => b.expiresAt > wallNow);
@@ -903,19 +900,14 @@ export default class GameServer implements Party.Server {
           const r2 = 28 * 28;
           for (const b of p.trailBreadcrumbs) {
             for (const n of this.npcs.values()) {
-              const key = `${b.x | 0}:${b.y | 0}:${n.id}`;
-              if (p.trailHits.has(key)) continue;
+              if (b.hitNpcs.has(n.id)) continue;
               if ((n.x - b.x) ** 2 + (n.y - b.y) ** 2 < r2) {
-                p.trailHits.set(key, wallNow);
+                b.hitNpcs.add(n.id);
                 n.hp -= dmg;
                 this.applyVampire(p, dmg);
                 if (n.hp <= 0) this.killNPC(n.id, p.id);
               }
             }
-          }
-          // prune trailHits older than 2.5s to avoid unbounded growth
-          for (const [k, t] of p.trailHits) {
-            if (wallNow - t > 2500) p.trailHits.delete(k);
           }
         }
       }
@@ -1001,6 +993,13 @@ export default class GameServer implements Party.Server {
     // Orbital spawns N projectiles spaced evenly around the player; doesn't need a target.
     if (pattern === 'orbital') {
       const totalProjectiles = def.projectiles + p.projectileBonus;
+      if (this.projectiles.size + totalProjectiles > MAX_PROJECTILES) {
+        let toEvict = this.projectiles.size + totalProjectiles - MAX_PROJECTILES;
+        for (const key of this.projectiles.keys()) {
+          this.projectiles.delete(key);
+          if (--toEvict <= 0) break;
+        }
+      }
       const lifetime = 4500; // orbits for 4.5s
       const orbitRadius = 80;
       const spinSpeed = 3; // rad/sec
@@ -1030,6 +1029,13 @@ export default class GameServer implements Party.Server {
     const target = this.findNearestTarget(p, def.range);
     if (!target) return;
     const totalProjectiles = def.projectiles + p.projectileBonus;
+    if (this.projectiles.size + totalProjectiles > MAX_PROJECTILES) {
+      let toEvict = this.projectiles.size + totalProjectiles - MAX_PROJECTILES;
+      for (const key of this.projectiles.keys()) {
+        this.projectiles.delete(key);
+        if (--toEvict <= 0) break;
+      }
+    }
     const spread = totalProjectiles > 1 ? WEAPON_SPREAD[w] : 0;
     const baseAngle = Math.atan2(target.y - p.y, target.x - p.x);
     for (let i = 0; i < totalProjectiles; i++) {
@@ -1130,7 +1136,7 @@ export default class GameServer implements Party.Server {
 
   updateProjectiles(dt: number) {
     const now = Date.now();
-    for (const proj of [...this.projectiles.values()]) {
+    for (const proj of this.projectiles.values()) {
       // ---- Movement per pattern ----
       if (proj.pattern === 'orbital') {
         const owner = this.players.get(proj.ownerId);
@@ -1191,9 +1197,9 @@ export default class GameServer implements Party.Server {
       const owner0 = this.players.get(proj.ownerId);
       const collR = NPC_RADIUS + PROJECTILE_RADIUS * (owner0?.bigHitMul ?? 1);
       const collR2 = collR * collR;
-      const hitNpcs: string[] = [];
+      const hitNpcs = new Set<string>();
       for (const n of this.npcs.values()) {
-        if (hitNpcs.includes(n.id)) continue;
+        if (hitNpcs.has(n.id)) continue;
         if ((n.x - proj.x) ** 2 + (n.y - proj.y) ** 2 < collR2) {
           // Orbitals have a per-NPC hit cooldown (don't drain HP every tick)
           if (proj.pattern === 'orbital') {
@@ -1206,7 +1212,7 @@ export default class GameServer implements Party.Server {
           this.applyVampire(owner0, dmg);
           if (n.hp <= 0) this.killNPC(n.id, owner0?.id);
           this.applySplash(proj.x, proj.y, owner0, dmg);
-          hitNpcs.push(n.id);
+          hitNpcs.add(n.id);
           if (proj.pattern === 'orbital') {
             // orbitals never consume — they keep spinning
             continue;
@@ -1601,13 +1607,15 @@ export default class GameServer implements Party.Server {
     }
 
     // 2) NPC-NPC separation (push overlapping pairs apart)
-    const list = [...this.npcs.values()];
+    const list = Array.from(this.npcs.values());
     for (let i = 0; i < list.length; i++) {
       for (let j = i + 1; j < list.length; j++) {
         const a = list[i];
         const b = list[j];
         const dx = b.x - a.x;
+        if (dx > NPC_SEPARATION_RADIUS || dx < -NPC_SEPARATION_RADIUS) continue;
         const dy = b.y - a.y;
+        if (dy > NPC_SEPARATION_RADIUS || dy < -NPC_SEPARATION_RADIUS) continue;
         const distSq = dx * dx + dy * dy;
         // Per-pair separation radius: minimum of the two monsters' overrides.
         // Lets rats bunch tightly while still spreading from larger monsters they overlap with.
@@ -1803,7 +1811,7 @@ export default class GameServer implements Party.Server {
   }
 
   updateGems() {
-    for (const gem of [...this.gems.values()]) {
+    for (const gem of this.gems.values()) {
       // find any player within pickup range
       for (const p of this.players.values()) {
         if (!p.alive) continue;
@@ -1864,14 +1872,10 @@ export default class GameServer implements Party.Server {
   }
 
   broadcastSnapshot(now: number) {
-    // Snapshot-level wave fields kept for backward compat; clients should read from PlayerState.
-    const snap: Snapshot = {
-      type: 'snapshot',
-      t: now,
-      wave: 0,
-      waveName: '',
-      waveTimeLeftMs: 0,
-      players: [...this.players.values()].map((p) => ({
+    // Build arrays inline with for-of to avoid intermediate spread allocations each tick.
+    const players = [];
+    for (const p of this.players.values()) {
+      players.push({
         id: p.id,
         name: p.name,
         character: p.character,
@@ -1931,25 +1935,35 @@ export default class GameServer implements Party.Server {
         xpMul: p.xpMul,
         projectileLifeMul: p.projectileLifeMul,
         pendingLevelUps: p.pendingLevelUps,
-      })),
-      npcs: [...this.npcs.values()].map((n) => ({ id: n.id, kind: n.kind, x: n.x, y: n.y, hp: n.hp })),
-      gems: [...this.gems.values()],
-      projectiles: [...this.projectiles.values()].map((p) => ({
-        id: p.id,
-        ownerId: p.ownerId,
-        x: p.x,
-        y: p.y,
-        vx: p.vx,
-        vy: p.vy,
-        weapon: p.weapon,
-      })),
-      wolves: [...this.wolves.values()].map((w) => ({
-        id: w.id,
-        ownerId: w.ownerId,
-        x: w.x,
-        y: w.y,
-        state: w.state,
-      })),
+      });
+    }
+    const npcs = [];
+    for (const n of this.npcs.values()) {
+      npcs.push({ id: n.id, kind: n.kind, x: n.x, y: n.y, hp: n.hp });
+    }
+    const gems = [];
+    for (const g of this.gems.values()) {
+      gems.push(g);
+    }
+    const projectiles = [];
+    for (const p of this.projectiles.values()) {
+      projectiles.push({ id: p.id, ownerId: p.ownerId, x: p.x, y: p.y, vx: p.vx, vy: p.vy, weapon: p.weapon });
+    }
+    const wolves = [];
+    for (const w of this.wolves.values()) {
+      wolves.push({ id: w.id, ownerId: w.ownerId, x: w.x, y: w.y, state: w.state });
+    }
+    const snap: Snapshot = {
+      type: 'snapshot',
+      t: now,
+      wave: 0,
+      waveName: '',
+      waveTimeLeftMs: 0,
+      players,
+      npcs,
+      gems,
+      projectiles,
+      wolves,
     };
     this.room.broadcast(JSON.stringify(snap));
   }

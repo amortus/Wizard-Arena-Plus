@@ -116,11 +116,17 @@ export class ArenaScene extends Phaser.Scene {
   // entity caches keyed by id
   playerSprites = new Map<string, Phaser.GameObjects.Container>();
   npcSprites = new Map<string, Phaser.GameObjects.Sprite>();
+  npcPool = new Map<string, Phaser.GameObjects.Sprite[]>();
   gemSprites = new Map<string, Phaser.GameObjects.Sprite>();
+  gemPool: Phaser.GameObjects.Sprite[] = [];
   projSprites = new Map<string, Phaser.GameObjects.Sprite>();
+  projPool: Phaser.GameObjects.Sprite[] = [];
   wolfSprites = new Map<string, Phaser.GameObjects.Container>();
+  wolfPool: Phaser.GameObjects.Container[] = [];
+  dmgNumPool: Phaser.GameObjects.Text[] = [];
   // Per-player breadcrumb visuals for Trail of Fire (client-only).
   trailVisuals = new Map<string, { x: number; y: number; bornAt: number; sprite: Phaser.GameObjects.Graphics }[]>();
+  trailPool: Phaser.GameObjects.Graphics[] = [];
   prevPlayerPos = new Map<string, { x: number; y: number; t: number }>();
   // hit-flash tracking: playerId -> { lastHp, flashUntilMs }
   playerHpTrack = new Map<string, { lastHp: number; flashUntilMs: number }>();
@@ -1186,19 +1192,20 @@ export class ArenaScene extends Phaser.Scene {
 
   // Floating damage text — rises and fades over ~700ms.
   spawnDamageNumber(x: number, y: number, dmg: number) {
-    const isCrit = dmg >= 20; // heuristic — bigger hits look like crits
+    const isCrit = dmg >= 20;
     const color = isCrit ? '#ff3333' : '#ffe080';
     const size = isCrit ? '14px' : '12px';
-    const txt = this.add.text(x, y, String(dmg), {
-      fontFamily: 'monospace',
-      fontSize: size,
-      color,
-      stroke: '#000000',
-      strokeThickness: 3,
-    });
-    txt.setOrigin(0.5, 0.5);
-    txt.setDepth(50);
-    // small horizontal drift so multiple stacked hits don't overlap
+    let txt: Phaser.GameObjects.Text;
+    if (this.dmgNumPool.length > 0) {
+      txt = this.dmgNumPool.pop()!;
+      txt.setStyle({ fontFamily: 'monospace', fontSize: size, color, stroke: '#000000', strokeThickness: 3 });
+      txt.setText(String(dmg)).setPosition(x, y).setAlpha(1).setVisible(true).setActive(true);
+    } else {
+      txt = this.add.text(x, y, String(dmg), {
+        fontFamily: 'monospace', fontSize: size, color, stroke: '#000000', strokeThickness: 3,
+      });
+      txt.setOrigin(0.5, 0.5).setDepth(50);
+    }
     const dx = (Math.random() - 0.5) * 14;
     this.tweens.add({
       targets: txt,
@@ -1207,7 +1214,7 @@ export class ArenaScene extends Phaser.Scene {
       alpha: { from: 1, to: 0 },
       ease: 'Quad.easeOut',
       duration: 700,
-      onComplete: () => txt.destroy(),
+      onComplete: () => { txt.setVisible(false).setActive(false); this.dmgNumPool.push(txt); },
     });
   }
 
@@ -1438,6 +1445,11 @@ export class ArenaScene extends Phaser.Scene {
       if (timeShield) {
         if (tsActive) {
           timeShield.setVisible(true);
+          const tsLastDraw = (timeShield.getData('lastDraw') as number) ?? 0;
+          if (now - tsLastDraw < 33) {
+            // throttle to 30fps — skip redraw this frame
+          } else {
+          timeShield.setData('lastDraw', now);
           timeShield.clear();
           const pulse = 1 + Math.sin(now * 0.012) * 0.08;
           const r = 30 * pulse;
@@ -1465,6 +1477,7 @@ export class ArenaScene extends Phaser.Scene {
             timeShield.fillStyle(0xaaeeff, 0.5);
             timeShield.fillCircle(sx, sy, 4.5);
           }
+          } // end throttle else
         } else {
           timeShield.setVisible(false);
         }
@@ -1477,23 +1490,27 @@ export class ArenaScene extends Phaser.Scene {
       if (frostAura) {
         if (p.frostAuraDmg > 0 && p.frostAuraRadius > 0) {
           frostAura.setVisible(true);
-          frostAura.clear();
-          const r = p.frostAuraRadius;
-          // very faint inner mist
-          frostAura.fillStyle(0xaaccee, 0.05);
-          frostAura.fillCircle(0, 0, r);
-          // soft outline ring
-          frostAura.lineStyle(1, 0xccddee, 0.35);
-          frostAura.strokeCircle(0, 0, r);
-          // 6 slowly drifting tiny snowflakes around the perimeter
-          const t = now / 1400;
-          for (let i = 0; i < 6; i++) {
-            const a = t + (i / 6) * Math.PI * 2;
-            const wob = Math.sin(now * 0.002 + i) * 3;
-            const sx = Math.cos(a) * (r + wob);
-            const sy = Math.sin(a) * (r + wob);
-            frostAura.fillStyle(0xffffff, 0.45);
-            frostAura.fillCircle(sx, sy, 1.5);
+          const faLastDraw = (frostAura.getData('lastDraw') as number) ?? 0;
+          if (now - faLastDraw >= 33) {
+            frostAura.setData('lastDraw', now);
+            frostAura.clear();
+            const r = p.frostAuraRadius;
+            // very faint inner mist
+            frostAura.fillStyle(0xaaccee, 0.05);
+            frostAura.fillCircle(0, 0, r);
+            // soft outline ring
+            frostAura.lineStyle(1, 0xccddee, 0.35);
+            frostAura.strokeCircle(0, 0, r);
+            // 6 slowly drifting tiny snowflakes around the perimeter
+            const t = now / 1400;
+            for (let i = 0; i < 6; i++) {
+              const a = t + (i / 6) * Math.PI * 2;
+              const wob = Math.sin(now * 0.002 + i) * 3;
+              const sx = Math.cos(a) * (r + wob);
+              const sy = Math.sin(a) * (r + wob);
+              frostAura.fillStyle(0xffffff, 0.45);
+              frostAura.fillCircle(sx, sy, 1.5);
+            }
           }
         } else {
           frostAura.setVisible(false);
@@ -1506,24 +1523,28 @@ export class ArenaScene extends Phaser.Scene {
       if (aura) {
         if (hasAura) {
           aura.setVisible(true);
-          const radius = 70 * (p.auraShieldRangeMul ?? 1);
-          const pulse = 1 + Math.sin(now * 0.005) * 0.05;
-          const r = radius * pulse;
-          aura.clear();
-          // outer soft glow
-          aura.lineStyle(2, 0xffcc44, 0.35);
-          aura.strokeCircle(0, 0, r + 4);
-          // bright inner ring
-          aura.lineStyle(3, 0xffe080, 0.85);
-          aura.strokeCircle(0, 0, r);
-          // sparkle dots rotating around perimeter
-          const t = now / 400;
-          for (let i = 0; i < 6; i++) {
-            const a = t + (i / 6) * Math.PI * 2;
-            const sx = Math.cos(a) * r;
-            const sy = Math.sin(a) * r;
-            aura.fillStyle(0xfff0a0, 0.9);
-            aura.fillCircle(sx, sy, 2.5);
+          const auraLastDraw = (aura.getData('lastDraw') as number) ?? 0;
+          if (now - auraLastDraw >= 33) {
+            aura.setData('lastDraw', now);
+            const radius = 70 * (p.auraShieldRangeMul ?? 1);
+            const pulse = 1 + Math.sin(now * 0.005) * 0.05;
+            const r = radius * pulse;
+            aura.clear();
+            // outer soft glow
+            aura.lineStyle(2, 0xffcc44, 0.35);
+            aura.strokeCircle(0, 0, r + 4);
+            // bright inner ring
+            aura.lineStyle(3, 0xffe080, 0.85);
+            aura.strokeCircle(0, 0, r);
+            // sparkle dots rotating around perimeter
+            const t = now / 400;
+            for (let i = 0; i < 6; i++) {
+              const a = t + (i / 6) * Math.PI * 2;
+              const sx = Math.cos(a) * r;
+              const sy = Math.sin(a) * r;
+              aura.fillStyle(0xfff0a0, 0.9);
+              aura.fillCircle(sx, sy, 2.5);
+            }
           }
         } else {
           aura.setVisible(false);
@@ -1552,8 +1573,18 @@ export class ArenaScene extends Phaser.Scene {
       if (!s) {
         const tex = `${n.kind}_south`;
         const npcScale = (NPC_SPRITE_SCALE[n.kind] ?? 1) * SPRITE_SHRINK;
-        s = this.add.sprite(n.x, n.y, this.textures.exists(tex) ? tex : 'skeleton_south').setScale(npcScale);
+        const kindPool = this.npcPool.get(n.kind);
+        if (kindPool && kindPool.length > 0) {
+          s = kindPool.pop()!;
+          s.setTexture(this.textures.exists(tex) ? tex : 'skeleton_south');
+          s.setVisible(true).setActive(true).setAlpha(1).clearTint();
+        } else {
+          s = this.add.sprite(n.x, n.y, this.textures.exists(tex) ? tex : 'skeleton_south');
+          s.setDepth(10);
+        }
+        s.setScale(npcScale);
         s.setData('baseScale', npcScale);
+        s.setData('kind', n.kind);
         this.npcSprites.set(n.id, s);
       }
       const prevN = prevNpcById.get(n.id);
@@ -1594,7 +1625,13 @@ export class ArenaScene extends Phaser.Scene {
     }
     for (const [id, s] of this.npcSprites) {
       if (!seenNpcs.has(id)) {
-        s.destroy();
+        const kind = s.getData('kind') as string;
+        s.anims.stop();
+        s.setVisible(false).setActive(false);
+        let kindPool = this.npcPool.get(kind);
+        if (!kindPool) { kindPool = []; this.npcPool.set(kind, kindPool); }
+        kindPool.push(s);
+        this.npcHpTrack.delete(id);
         this.npcSprites.delete(id);
       }
     }
@@ -1618,9 +1655,14 @@ export class ArenaScene extends Phaser.Scene {
                         0.4
       );
       if (!s) {
-        s = this.add.sprite(g.x, g.y, tex);
+        if (this.gemPool.length > 0) {
+          s = this.gemPool.pop()!;
+          s.setTexture(tex).setVisible(true).setActive(true).setAlpha(1);
+        } else {
+          s = this.add.sprite(g.x, g.y, tex);
+          s.setBlendMode(Phaser.BlendModes.NORMAL);
+        }
         s.setData('baseScale', baseScale);
-        s.setBlendMode(Phaser.BlendModes.NORMAL);
         this.gemSprites.set(g.id, s);
       } else if (s.texture.key !== tex) {
         s.setTexture(tex);
@@ -1638,7 +1680,11 @@ export class ArenaScene extends Phaser.Scene {
       if (g.value >= 10) s.setRotation((gemTNow / 600) % (Math.PI * 2));
     }
     for (const [id, s] of this.gemSprites) {
-      if (!seenGems.has(id)) { s.destroy(); this.gemSprites.delete(id); }
+      if (!seenGems.has(id)) {
+        s.setVisible(false).setActive(false);
+        this.gemPool.push(s);
+        this.gemSprites.delete(id);
+      }
     }
 
     // projectiles — element comes from the WEAPON (so picking up Leaf Cutter on a fire wizard
@@ -1663,7 +1709,12 @@ export class ArenaScene extends Phaser.Scene {
           0.75;
         const elementScale = elem === 'forest' ? 0.6 : elem === 'lightning' ? 1.1 : elem === 'earth' ? 1.0 : 0.95;
         const baseScale = weaponScale * elementScale * GLOBAL_SCALE;
-        s = this.add.sprite(pr.x, pr.y, tex);
+        if (this.projPool.length > 0) {
+          s = this.projPool.pop()!;
+          s.setTexture(tex).setPosition(pr.x, pr.y).setVisible(true).setActive(true).setAlpha(1).clearTint();
+        } else {
+          s = this.add.sprite(pr.x, pr.y, tex);
+        }
         s.setData('baseScale', baseScale);
         s.setBlendMode(elem === 'earth' ? Phaser.BlendModes.NORMAL : Phaser.BlendModes.ADD);
         s.setScale(baseScale);
@@ -1709,7 +1760,11 @@ export class ArenaScene extends Phaser.Scene {
       }
     }
     for (const [id, s] of this.projSprites) {
-      if (!seenProj.has(id)) { s.destroy(); this.projSprites.delete(id); }
+      if (!seenProj.has(id)) {
+        s.setVisible(false).setActive(false);
+        this.projPool.push(s);
+        this.projSprites.delete(id);
+      }
     }
 
     // Spirit Wolves — wolf-head sprite layered over a procedural ghost orb.
@@ -1719,13 +1774,18 @@ export class ArenaScene extends Phaser.Scene {
       seenWolves.add(w.id);
       let container = this.wolfSprites.get(w.id);
       if (!container) {
-        container = this.add.container(w.x, w.y);
-        container.setDepth(20);
-        const glow = this.add.graphics().setName('glow').setBlendMode(Phaser.BlendModes.ADD);
-        container.add(glow);
-        if (this.textures.exists('icon_wolf')) {
-          const head = this.add.sprite(0, 0, 'icon_wolf').setName('head').setScale(0.55);
-          container.add(head);
+        if (this.wolfPool.length > 0) {
+          container = this.wolfPool.pop()!;
+          container.setVisible(true).setActive(true);
+        } else {
+          container = this.add.container(w.x, w.y);
+          container.setDepth(20);
+          const glow = this.add.graphics().setName('glow').setBlendMode(Phaser.BlendModes.ADD);
+          container.add(glow);
+          if (this.textures.exists('icon_wolf')) {
+            const head = this.add.sprite(0, 0, 'icon_wolf').setName('head').setScale(0.55);
+            container.add(head);
+          }
         }
         this.wolfSprites.set(w.id, container);
       }
@@ -1733,21 +1793,29 @@ export class ArenaScene extends Phaser.Scene {
       container.y = w.y;
       const glow = container.getByName('glow') as Phaser.GameObjects.Graphics;
       const head = container.getByName('head') as Phaser.GameObjects.Sprite | null;
-      const colorOuter = w.state === 'lunge' ? 0xffaaaa : 0xaaeeff;
-      const colorInner = w.state === 'lunge' ? 0xffeeee : 0xeeffff;
-      // Pulsing glow so the wolves feel alive
-      const pulse = 1 + Math.sin(performance.now() * 0.006 + w.x * 0.01) * 0.08;
-      glow.clear();
-      glow.fillStyle(colorOuter, 0.28); glow.fillCircle(0, 0, 18 * pulse);
-      glow.fillStyle(colorOuter, 0.50); glow.fillCircle(0, 0, 12 * pulse);
-      glow.fillStyle(colorInner, 0.85); glow.fillCircle(0, 0, 6 * pulse);
-      if (head) {
-        head.setTint(w.state === 'lunge' ? 0xffaaaa : 0xffffff);
-        head.setAlpha(0.95);
+      const wolfNow = performance.now();
+      const wolfLastDraw = (glow.getData('lastDraw') as number) ?? 0;
+      if (wolfNow - wolfLastDraw >= 33) {
+        glow.setData('lastDraw', wolfNow);
+        const colorOuter = w.state === 'lunge' ? 0xffaaaa : 0xaaeeff;
+        const colorInner = w.state === 'lunge' ? 0xffeeee : 0xeeffff;
+        const pulse = 1 + Math.sin(wolfNow * 0.006 + w.x * 0.01) * 0.08;
+        glow.clear();
+        glow.fillStyle(colorOuter, 0.28); glow.fillCircle(0, 0, 18 * pulse);
+        glow.fillStyle(colorOuter, 0.50); glow.fillCircle(0, 0, 12 * pulse);
+        glow.fillStyle(colorInner, 0.85); glow.fillCircle(0, 0, 6 * pulse);
+        if (head) {
+          head.setTint(w.state === 'lunge' ? 0xffaaaa : 0xffffff);
+          head.setAlpha(0.95);
+        }
       }
     }
     for (const [id, c] of this.wolfSprites) {
-      if (!seenWolves.has(id)) { c.destroy(); this.wolfSprites.delete(id); }
+      if (!seenWolves.has(id)) {
+        c.setVisible(false).setActive(false);
+        this.wolfPool.push(c);
+        this.wolfSprites.delete(id);
+      }
     }
 
     // Trail of Fire (client-only visuals): drop a flame puff at each player's
@@ -1758,9 +1826,16 @@ export class ArenaScene extends Phaser.Scene {
       const prev = this.prevPlayerPos.get(p.id);
       const moved = !prev || (Math.abs(p.x - prev.x) + Math.abs(p.y - prev.y)) > 0.5;
       if (p.trailOfFireEnabled && moved && (!prev || trailNow - prev.t > 90)) {
-        const puff = this.add.graphics();
-        puff.setDepth(8);
-        puff.setBlendMode(Phaser.BlendModes.ADD);
+        let puff: Phaser.GameObjects.Graphics;
+        if (this.trailPool.length > 0) {
+          puff = this.trailPool.pop()!;
+          puff.clear();
+          puff.setAlpha(1).setVisible(true).setActive(true);
+        } else {
+          puff = this.add.graphics();
+          puff.setDepth(8);
+          puff.setBlendMode(Phaser.BlendModes.ADD);
+        }
         const px = p.x;
         const py = p.y + 4;
         puff.fillStyle(0xff5511, 0.5); puff.fillCircle(px, py, 12);
@@ -1774,7 +1849,7 @@ export class ArenaScene extends Phaser.Scene {
           alpha: { from: 1, to: 0 },
           duration: 1800,
           ease: 'Quad.easeOut',
-          onComplete: () => puff.destroy(),
+          onComplete: () => { puff.clear(); puff.setVisible(false).setActive(false); this.trailPool.push(puff); },
         });
         this.prevPlayerPos.set(p.id, { x: p.x, y: p.y, t: trailNow });
       } else if (!prev || moved) {

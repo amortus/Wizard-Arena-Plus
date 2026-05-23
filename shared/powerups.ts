@@ -1,3 +1,4 @@
+import { MAX_PROJECTILE_BONUS } from './constants';
 import type { PlayerState } from './types';
 
 export type Powerup = {
@@ -292,14 +293,14 @@ export const POWERUPS: Powerup[] = [
     id: 'extra_projectile', icon: '➕',
     name: '+1 Projectile',
     description: 'Every weapon fires +1 shot.',
-    apply: (p) => { p.projectileBonus += 1; },
+    apply: (p) => { p.projectileBonus = Math.min(MAX_PROJECTILE_BONUS, p.projectileBonus + 1); },
   },
   {
     id: 'extra_projectile_2', icon: '✨',
     name: '+2 Projectiles',
     description: 'Every weapon fires +2 shots. Levels 5+.',
     available: minLevel(5),
-    apply: (p) => { p.projectileBonus += 2; },
+    apply: (p) => { p.projectileBonus = Math.min(MAX_PROJECTILE_BONUS, p.projectileBonus + 2); },
   },
   {
     id: 'big_hit', icon: '🎯',

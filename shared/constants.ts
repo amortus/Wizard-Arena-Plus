@@ -52,6 +52,10 @@ export const GEM_PICKUP_RADIUS = 60;
 
 export const PROJECTILE_RADIUS = 6;
 export const PROJECTILE_LIFETIME_MS = 1500;
+// Hard cap on simultaneous projectiles in a room. Oldest are dropped when exceeded.
+export const MAX_PROJECTILES = 250;
+// Max extra projectiles a player can stack via powerups.
+export const MAX_PROJECTILE_BONUS = 5;
 
 // Steeper non-linear curve — higher levels are a real climb.
 //   L1 → 13   L5 → 125   L10 → 445   L15 → 965   L20 → 1685   L25 → 2605

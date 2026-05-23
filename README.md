@@ -1,4 +1,4 @@
-# Survivors Online
+# Madness Arena
 
 Multiplayer Vampire-Survivors-style roguelike. Top-down auto-attack arena with friendly fire, NPC monsters, XP gems, and powerup picks on level-up.
 
@@ -82,7 +82,7 @@ Add powerups in `shared/powerups.ts`.
 
 ## Deploying
 
-**PartyKit server:** `npm run deploy:party` (will prompt you to log in via Cloudflare email link the first time). It returns a URL like `survivors-online.YOUR_USER.partykit.dev`.
+**PartyKit server:** `npm run deploy:party` (will prompt you to log in via Cloudflare email link the first time). It returns a URL like `madness-arena.YOUR_USER.partykit.dev`.
 
 **Next.js frontend:** push to a Vercel project. Set `NEXT_PUBLIC_PARTYKIT_HOST` to the PartyKit URL above, then update `game/scene.ts` to use it (replace the `PARTY_HOST` const).
 

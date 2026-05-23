@@ -5,7 +5,7 @@ import Link from 'next/link';
 import type { CharacterKind } from '../shared/constants';
 import { isBlockedName } from '../shared/profanity';
 
-// Tiny synth chime played whenever a wizard is picked. Lazily creates an
+// Tiny synth chime played whenever a gladiator is picked. Lazily creates an
 // AudioContext on first click so the browser allows playback.
 function useSelectSfx() {
   const ctxRef = useRef<AudioContext | null>(null);
@@ -41,18 +41,18 @@ function useSelectSfx() {
 const Game = dynamic(() => import('../components/Game'), { ssr: false });
 
 const CHAR_INFO: { id: CharacterKind; name: string; blurb: string }[] = [
-  { id: 'blue_wizard',       name: 'Azuriel',    blurb: 'Magic Orb · balanced' },
-  { id: 'fire_wizard',       name: 'Pyrion',     blurb: 'Fireball · fragile dmg' },
-  { id: 'salamander_wizard', name: 'Scorch',     blurb: 'Fireball · tanky' },
-  { id: 'lightning_wizard',  name: 'Voltaric',   blurb: 'Spark · fast multi' },
-  { id: 'earth_wizard',      name: 'Mossback',   blurb: 'Rock · heavy hit' },
-  { id: 'forest_wizard',     name: 'Briarwick',  blurb: 'Leaf · balanced' },
-  { id: 'shadow_wizard',     name: 'Umbra',      blurb: 'Magic Orb · agile' },
-  { id: 'mouse_apprentice',  name: 'Pip',        blurb: 'Spark · tiny & fast' },
-  { id: 'frog_wizard',       name: 'Croakwell',  blurb: 'Leaf · forest spirit' },
-  { id: 'old_man_wizard',    name: 'Eldwin',     blurb: 'Arcane · wise & tanky' },
-  { id: 'owl_wizard',        name: 'Hootley',    blurb: 'Shadow · agile homing' },
-  { id: 'cat_wizard',        name: 'Whiskerwhip',blurb: 'Leaf · fast scatter' },
+  { id: 'blue_wizard',       name: 'Kael',      blurb: 'Arcane Blade · balanced' },
+  { id: 'fire_wizard',       name: 'Ignis',     blurb: 'Fire Lash · fragile dmg' },
+  { id: 'salamander_wizard', name: 'Brazok',    blurb: 'Fire Lash · tanky' },
+  { id: 'lightning_wizard',  name: 'Zarak',     blurb: 'Storm Spear · fast multi' },
+  { id: 'earth_wizard',      name: 'Stonehide', blurb: 'Earth Slam · heavy hit' },
+  { id: 'forest_wizard',     name: 'Thornback', blurb: 'Thorn Blade · balanced' },
+  { id: 'shadow_wizard',     name: 'Shade',     blurb: 'Shadow Strike · agile' },
+  { id: 'mouse_apprentice',  name: 'Runt',      blurb: 'Quick Jab · tiny & fast' },
+  { id: 'frog_wizard',       name: 'Murkus',    blurb: 'Swamp Blade · resilient' },
+  { id: 'old_man_wizard',    name: 'Elder Rex', blurb: 'Ancient Force · wise & tanky' },
+  { id: 'owl_wizard',        name: 'Kestrel',   blurb: 'Talon Strike · agile homing' },
+  { id: 'cat_wizard',        name: 'Velox',     blurb: 'Swift Claw · fast scatter' },
 ];
 
 function countryFlag(code?: string): string {
@@ -193,15 +193,15 @@ export default function Page() {
       <div className="scanlines" />
       <div className="menu-card">
         <img
-          src="/wizard_arena_logo.png"
-          alt="Wizard Arena Online"
+          src="/wizard_arena_plus_logo.png"
+          alt="Wizard Arena Plus"
           className="menu-logo"
         />
-        <p className="sub">WASD or mouse to move · Spells cast automatically · Survive the hordes</p>
+        <p className="sub">WASD or mouse to move · Weapons strike automatically · Survive the arena</p>
 
         <div className="field">
-          <label>Choose Your Wizard</label>
-          <div className="char-grid wizards">
+          <label>Choose Your Gladiator</label>
+          <div className="char-grid characters">
             {CHAR_INFO.map((c) => (
               <button
                 key={c.id}
@@ -248,7 +248,7 @@ export default function Page() {
         </div>
 
         <button className="start-btn" onClick={handleStart}>
-          Enter Wizard Arena
+          Enter Wizard Arena Plus
         </button>
         <button
           className="leaderboard-btn"
