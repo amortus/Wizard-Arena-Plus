@@ -468,12 +468,12 @@ export const BOSS_ROSTER: {
   summonCount: number;
   summonIntervalMs: number;
 }[] = [
-  { kind: 'rat_king',       name: 'Rat King',        hpMul: 8,  speedFrac: 0.80, ai: 'boss_summon', summonKind: 'rat',    summonCount: 12, summonIntervalMs: 7000  },
-  { kind: 'bone_colossus',  name: 'Bone Colossus',   hpMul: 15, speedFrac: 0.70, ai: 'boss_charge', summonKind: null,     summonCount: 0,  summonIntervalMs: 0     },
-  { kind: 'plague_lord',    name: 'Plague Lord',     hpMul: 18, speedFrac: 0.75, ai: 'boss_enrage', summonKind: null,     summonCount: 0,  summonIntervalMs: 0     },
-  { kind: 'wraith_lord',    name: 'Wraith Lord',     hpMul: 20, speedFrac: 0.85, ai: 'boss_enrage', summonKind: null,     summonCount: 0,  summonIntervalMs: 0     },
-  { kind: 'warchief',       name: 'Goblin Warchief', hpMul: 25, speedFrac: 0.75, ai: 'boss_charge', summonKind: 'goblin', summonCount: 6,  summonIntervalMs: 10000 },
-  { kind: 'ancient_treant', name: 'Ancient Treant',  hpMul: 30, speedFrac: 0.55, ai: 'boss_summon', summonKind: 'spider', summonCount: 8,  summonIntervalMs: 6000  },
-  { kind: 'alpha_wolf',     name: 'Alpha Wolf',      hpMul: 28, speedFrac: 0.90, ai: 'boss_enrage', summonKind: null,     summonCount: 0,  summonIntervalMs: 0     },
-  { kind: 'death_titan',    name: 'Death Titan',     hpMul: 40, speedFrac: 0.65, ai: 'boss_charge', summonKind: null,     summonCount: 0,  summonIntervalMs: 0     },
+  { kind: 'rat_king',       name: 'Rat King',        hpMul: 22,  speedFrac: 0.80, ai: 'boss_summon', summonKind: 'rat',    summonCount: 12, summonIntervalMs: 7000  },
+  { kind: 'bone_colossus',  name: 'Bone Colossus',   hpMul: 35,  speedFrac: 0.70, ai: 'boss_charge', summonKind: null,     summonCount: 0,  summonIntervalMs: 0     },
+  { kind: 'plague_lord',    name: 'Plague Lord',     hpMul: 42,  speedFrac: 0.75, ai: 'boss_enrage', summonKind: null,     summonCount: 0,  summonIntervalMs: 0     },
+  { kind: 'wraith_lord',    name: 'Wraith Lord',     hpMul: 50,  speedFrac: 0.85, ai: 'boss_enrage', summonKind: null,     summonCount: 0,  summonIntervalMs: 0     },
+  { kind: 'warchief',       name: 'Goblin Warchief', hpMul: 60,  speedFrac: 0.75, ai: 'boss_charge', summonKind: 'goblin', summonCount: 6,  summonIntervalMs: 10000 },
+  { kind: 'ancient_treant', name: 'Ancient Treant',  hpMul: 72,  speedFrac: 0.55, ai: 'boss_summon', summonKind: 'spider', summonCount: 8,  summonIntervalMs: 6000  },
+  { kind: 'alpha_wolf',     name: 'Alpha Wolf',      hpMul: 65,  speedFrac: 0.90, ai: 'boss_enrage', summonKind: null,     summonCount: 0,  summonIntervalMs: 0     },
+  { kind: 'death_titan',    name: 'Death Titan',     hpMul: 95,  speedFrac: 0.65, ai: 'boss_charge', summonKind: null,     summonCount: 0,  summonIntervalMs: 0     },
 ];
