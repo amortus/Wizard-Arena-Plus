@@ -1,5 +1,17 @@
 import type { CharacterKind, MonsterKind, WeaponKind } from './constants';
 
+export type HazardKind = 'fire_pool' | 'lightning_strike';
+
+export type HazardState = {
+  id: string;
+  kind: HazardKind;
+  x: number;
+  y: number;
+  radius: number;
+  warningUntilMs: number;
+  activeUntilMs: number;
+};
+
 export type PlayerState = {
   id: string;
   name: string;
@@ -128,6 +140,7 @@ export type Snapshot = {
   gems: GemState[];
   projectiles: ProjectileState[];
   wolves?: WolfState[];
+  hazards?: HazardState[];
 };
 
 export type LeaderboardEntry = {
@@ -173,4 +186,5 @@ export type ServerToClient =
   | { type: 'effect'; effect: 'chainExplosion'; x: number; y: number }
   | { type: 'effect'; effect: 'phoenixRevive'; x: number; y: number }
   | { type: 'effect'; effect: 'earthquake'; x: number; y: number; radius: number }
-  | { type: 'effect'; effect: 'timeStop'; x: number; y: number; radius: number };
+  | { type: 'effect'; effect: 'timeStop'; x: number; y: number; radius: number }
+  | { type: 'bossAlert'; bossName: string };

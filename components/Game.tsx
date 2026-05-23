@@ -44,6 +44,7 @@ export default function Game({ name, character, color, hue, room, country }: Pro
   const [deathStats, setDeathStats] = useState<{ level: number; wave: number; score: number } | null>(null);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [roomFull, setRoomFull] = useState(false);
+  const [bossAlert, setBossAlert] = useState<string | null>(null);
   // Track latest hud.self level/wave so the 'died' event handler can read them
   // synchronously (the bus.on closure would otherwise capture an empty hud).
   const lastSelfRef = useRef<{ level: number; wave: number } | null>(null);
@@ -87,6 +88,10 @@ export default function Game({ name, character, color, hue, room, country }: Pro
       });
       result.scene.bus.on('leaderboard', (entries: LeaderboardEntry[]) => setLeaderboard(entries));
       result.scene.bus.on('roomFull', () => setRoomFull(true));
+      result.scene.bus.on('bossAlert', (name: string) => {
+        setBossAlert(name);
+        setTimeout(() => setBossAlert(null), 3500);
+      });
     })();
 
     return () => {
@@ -184,6 +189,12 @@ export default function Game({ name, character, color, hue, room, country }: Pro
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {bossAlert && (
+        <div className="boss-alert-overlay">
+          <div className="boss-alert-text">⚠ {bossAlert.toUpperCase()} APPROACHES ⚠</div>
         </div>
       )}
 

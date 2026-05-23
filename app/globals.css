@@ -1169,3 +1169,36 @@ button {
 @media (max-width: 380px) {
   .char-grid { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* ── Boss Alert Overlay ──────────────────────────────────────────── */
+.boss-alert-overlay {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 40;
+  pointer-events: none;
+  text-align: center;
+  animation: boss-alert-in 0.3s ease-out, boss-alert-out 0.5s ease-in 3s forwards;
+}
+.boss-alert-text {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 22px;
+  letter-spacing: 3px;
+  color: #ff2200;
+  text-shadow: 2px 2px 0 #000, 0 0 30px rgba(255, 34, 0, 0.8), 0 0 60px rgba(255, 34, 0, 0.4);
+  animation: boss-alert-pulse 0.4s ease-in-out infinite alternate;
+  white-space: nowrap;
+}
+@keyframes boss-alert-in {
+  from { opacity: 0; transform: translate(-50%, -60%) scale(0.8); }
+  to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+@keyframes boss-alert-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+@keyframes boss-alert-pulse {
+  from { text-shadow: 2px 2px 0 #000, 0 0 20px rgba(255,34,0,0.7); }
+  to   { text-shadow: 2px 2px 0 #000, 0 0 40px rgba(255,100,0,1), 0 0 80px rgba(255,34,0,0.5); }
+}

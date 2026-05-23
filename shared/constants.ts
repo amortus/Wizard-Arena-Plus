@@ -216,6 +216,9 @@ export const MONSTERS = [
   // Veteran variants — even stronger, waves 41+ (weight 0: wave-only)
   'goblin_veteran', 'skeleton_veteran', 'zombie_veteran',
   'wraith_veteran', 'werewolf_veteran', 'rat_veteran', 'zombie_bear_black',
+  // Unique bosses — roster cycles as game progresses (weight 0: never wave-spawned)
+  'rat_king', 'bone_colossus', 'plague_lord', 'wraith_lord',
+  'warchief', 'ancient_treant', 'alpha_wolf', 'death_titan',
 ] as const;
 export type MonsterKind = (typeof MONSTERS)[number];
 
@@ -264,6 +267,15 @@ export const MONSTER_BASES: Record<
   werewolf_veteran:  { hpMul: 5.0,  speedMul: 1.55, weight: 0,  tier: 'elite' },
   rat_veteran:       { hpMul: 1.0,  speedMul: 1.9,  weight: 0,  tier: 'minion'},
   zombie_bear_black: { hpMul: 14.0, speedMul: 1.0,  weight: 0,  tier: 'boss'  },
+  // ── Unique bosses — roster-spawned (weight 0: never wave-spawned) ────────
+  rat_king:      { hpMul: 8,  speedMul: 0.80, weight: 0, tier: 'boss' },
+  bone_colossus: { hpMul: 15, speedMul: 0.70, weight: 0, tier: 'boss' },
+  plague_lord:   { hpMul: 18, speedMul: 0.75, weight: 0, tier: 'boss' },
+  wraith_lord:   { hpMul: 20, speedMul: 0.85, weight: 0, tier: 'boss' },
+  warchief:      { hpMul: 25, speedMul: 0.75, weight: 0, tier: 'boss' },
+  ancient_treant:{ hpMul: 30, speedMul: 0.55, weight: 0, tier: 'boss' },
+  alpha_wolf:    { hpMul: 28, speedMul: 0.90, weight: 0, tier: 'boss' },
+  death_titan:   { hpMul: 40, speedMul: 0.65, weight: 0, tier: 'boss' },
 };
 
 // Per-monster NPC-NPC separation radius. Default is NPC_SEPARATION_RADIUS.
@@ -282,6 +294,9 @@ export const MONSTER_GROUP_JITTER_OVERRIDE: Partial<Record<MonsterKind, number>>
 // Anything not listed here uses the standard WAVE_BASE_SIZE + growth formula.
 export const MONSTER_WAVE_SIZE_OVERRIDE: Partial<Record<MonsterKind, number>> = {
   zombie_bear: 3, zombie_bear_elite: 3, zombie_bear_black: 2,
+  // Bosses always spawn alone
+  rat_king: 1, bone_colossus: 1, plague_lord: 1, wraith_lord: 1,
+  warchief: 1, ancient_treant: 1, alpha_wolf: 1, death_titan: 1,
 };
 
 // Spawn formation per monster — drives where in the wave they appear.
@@ -336,6 +351,15 @@ export const MONSTER_FORMATION: Record<MonsterKind, FormationKind> = {
   werewolf_veteran:  'line',
   rat_veteran:       'group',
   zombie_bear_black: 'line',
+  // Unique bosses — all spawn as single unit (formation irrelevant)
+  rat_king:       'group',
+  bone_colossus:  'line',
+  plague_lord:    'group',
+  wraith_lord:    'swarm',
+  warchief:       'group',
+  ancient_treant: 'group',
+  alpha_wolf:     'line',
+  death_titan:    'line',
 };
 
 export function pickMonsterKind(): MonsterKind {
@@ -425,3 +449,28 @@ export function themeForWave(waveNumber: number): { name: string; kind: MonsterK
   if (waveNumber <= 40) return WAVE_THEMES_ELITE[(waveNumber - 21) % WAVE_THEMES_ELITE.length];
   return WAVE_THEMES_VETERAN[(waveNumber - 41) % WAVE_THEMES_VETERAN.length];
 }
+
+// Boss AI behavior kinds — used in the boss roster and server NPC AI.
+export type BossAiKind = 'boss_charge' | 'boss_summon' | 'boss_enrage';
+
+// Roster of unique bosses. Cycles through as players progress.
+// HP is further scaled by wave/level/generation multipliers at spawn time.
+export const BOSS_ROSTER: {
+  kind: MonsterKind;
+  name: string;
+  hpMul: number;
+  speedFrac: number;    // fraction of PLAYER_SPEED
+  ai: BossAiKind;
+  summonKind: MonsterKind | null;
+  summonCount: number;
+  summonIntervalMs: number;
+}[] = [
+  { kind: 'rat_king',       name: 'Rat King',        hpMul: 8,  speedFrac: 0.80, ai: 'boss_summon', summonKind: 'rat',    summonCount: 12, summonIntervalMs: 7000  },
+  { kind: 'bone_colossus',  name: 'Bone Colossus',   hpMul: 15, speedFrac: 0.70, ai: 'boss_charge', summonKind: null,     summonCount: 0,  summonIntervalMs: 0     },
+  { kind: 'plague_lord',    name: 'Plague Lord',     hpMul: 18, speedFrac: 0.75, ai: 'boss_enrage', summonKind: null,     summonCount: 0,  summonIntervalMs: 0     },
+  { kind: 'wraith_lord',    name: 'Wraith Lord',     hpMul: 20, speedFrac: 0.85, ai: 'boss_enrage', summonKind: null,     summonCount: 0,  summonIntervalMs: 0     },
+  { kind: 'warchief',       name: 'Goblin Warchief', hpMul: 25, speedFrac: 0.75, ai: 'boss_charge', summonKind: 'goblin', summonCount: 6,  summonIntervalMs: 10000 },
+  { kind: 'ancient_treant', name: 'Ancient Treant',  hpMul: 30, speedFrac: 0.55, ai: 'boss_summon', summonKind: 'spider', summonCount: 8,  summonIntervalMs: 6000  },
+  { kind: 'alpha_wolf',     name: 'Alpha Wolf',      hpMul: 28, speedFrac: 0.90, ai: 'boss_enrage', summonKind: null,     summonCount: 0,  summonIntervalMs: 0     },
+  { kind: 'death_titan',    name: 'Death Titan',     hpMul: 40, speedFrac: 0.65, ai: 'boss_charge', summonKind: null,     summonCount: 0,  summonIntervalMs: 0     },
+];

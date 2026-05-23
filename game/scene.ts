@@ -78,6 +78,15 @@ const NPC_SPRITE_SCALE: Record<string, number> = {
   zombie_bear: 1.28,
   zombie_bear_elite: 1.28, zombie_bear_black: 1.28,
   dragon: 1.5,
+  // Unique bosses — scaled up versions of base sprites
+  rat_king: 3.5,
+  bone_colossus: 2.8,
+  plague_lord: 2.5,
+  wraith_lord: 3.0,
+  warchief: 2.8,
+  ancient_treant: 2.2,
+  alpha_wolf: 3.0,
+  death_titan: 2.2,
 };
 
 // Variant kinds reuse their base kind's sprite sheet.
@@ -89,6 +98,15 @@ const VARIANT_BASE: Record<string, string> = {
   werewolf_elite: 'werewolf', werewolf_veteran: 'werewolf',
   rat_elite: 'rat',          rat_veteran: 'rat',
   zombie_bear_elite: 'zombie_bear', zombie_bear_black: 'zombie_bear',
+  // Unique bosses
+  rat_king: 'rat',
+  bone_colossus: 'skeleton',
+  plague_lord: 'bloated_zombie',
+  wraith_lord: 'wraith',
+  warchief: 'goblin_brute',
+  ancient_treant: 'treant',
+  alpha_wolf: 'werewolf',
+  death_titan: 'zombie_bear',
 };
 
 // Tint applied to variant kinds so they're visually distinct from their base.
@@ -107,6 +125,15 @@ const VARIANT_TINT: Record<string, number> = {
   werewolf_veteran:  0x880000,
   rat_veteran:       0xff8800,
   zombie_bear_black: 0x440044,
+  // Unique bosses
+  rat_king:       0xffd700,
+  bone_colossus:  0x88ccff,
+  plague_lord:    0x66ff22,
+  wraith_lord:    0xee00ff,
+  warchief:       0xff2200,
+  ancient_treant: 0xff7700,
+  alpha_wolf:     0x8b0000,
+  death_titan:    0x440055,
 };
 
 // Global multiplier applied to every gameplay sprite (players, NPCs, projectiles, gems).
@@ -158,6 +185,9 @@ export class ArenaScene extends Phaser.Scene {
   // Per-player breadcrumb visuals for Trail of Fire (client-only).
   trailVisuals = new Map<string, { x: number; y: number; bornAt: number; sprite: Phaser.GameObjects.Graphics }[]>();
   trailPool: Phaser.GameObjects.Graphics[] = [];
+  hazardVisuals = new Map<string, Phaser.GameObjects.Graphics>();
+  bossAlertUntil = 0;
+  bossAlertName = '';
   prevPlayerPos = new Map<string, { x: number; y: number; t: number }>();
   // hit-flash tracking: playerId -> { lastHp, flashUntilMs }
   playerHpTrack = new Map<string, { lastHp: number; flashUntilMs: number }>();
@@ -314,6 +344,9 @@ export class ArenaScene extends Phaser.Scene {
       // Veteran variants
       goblin_veteran: 6, skeleton_veteran: 6, zombie_veteran: 6,
       wraith_veteran: 5, werewolf_veteran: 5, rat_veteran: 14, zombie_bear_black: 2,
+      // Unique bosses — only 1 per kind ever active, but pre-allocate the sprite
+      rat_king: 1, bone_colossus: 1, plague_lord: 1, wraith_lord: 1,
+      warchief: 1, ancient_treant: 1, alpha_wolf: 1, death_titan: 1,
     };
     for (const [kind, count] of Object.entries(npcWarmCount)) {
       const baseKind = VARIANT_BASE[kind] ?? kind;
@@ -825,6 +858,11 @@ export class ArenaScene extends Phaser.Scene {
       } else if (msg.effect === 'timeStop') {
         this.spawnTimeStopEffect(msg.x, msg.y, msg.radius);
       }
+    } else if (msg.type === 'bossAlert') {
+      this.bossAlertUntil = performance.now() + 3500;
+      this.bossAlertName = msg.bossName;
+      this.cameras.main.shake(300, 0.008);
+      this.bus.emit('bossAlert', msg.bossName);
     }
   }
 
@@ -1212,6 +1250,50 @@ export class ArenaScene extends Phaser.Scene {
       },
     });
     draw();
+  }
+
+  renderHazards(hazards: import('../shared/types').HazardState[], serverNow: number) {
+    const clientNow = performance.now();
+    const seen = new Set<string>();
+    for (const h of hazards) {
+      seen.add(h.id);
+      let g = this.hazardVisuals.get(h.id);
+      if (!g) {
+        g = this.add.graphics();
+        g.setDepth(9); // just under NPCs
+        this.hazardVisuals.set(h.id, g);
+      }
+      g.clear();
+      const warning = serverNow < h.warningUntilMs;
+      if (warning) {
+        // Pulsing red danger ring
+        const pulse = 0.45 + Math.sin(clientNow * 0.008) * 0.25;
+        g.lineStyle(4, 0xff2200, pulse);
+        g.strokeCircle(h.x, h.y, h.radius);
+        g.lineStyle(2, 0xff8800, pulse * 0.5);
+        g.strokeCircle(h.x, h.y, h.radius * 0.65);
+      } else if (h.kind === 'fire_pool') {
+        // Animated fire pool
+        const t = clientNow * 0.003;
+        g.fillStyle(0xff3300, 0.45);
+        g.fillCircle(h.x, h.y, h.radius);
+        g.fillStyle(0xff7700, 0.35);
+        g.fillCircle(h.x + Math.sin(t) * 12, h.y + Math.cos(t * 1.3) * 10, h.radius * 0.65);
+        g.fillStyle(0xffcc00, 0.25);
+        g.fillCircle(h.x + Math.cos(t * 0.7) * 8, h.y + Math.sin(t * 1.1) * 8, h.radius * 0.35);
+        g.lineStyle(3, 0xff5500, 0.7);
+        g.strokeCircle(h.x, h.y, h.radius);
+        g.setBlendMode(Phaser.BlendModes.ADD);
+      }
+    }
+    // Clean up visuals for hazards that expired
+    for (const [id, g] of this.hazardVisuals) {
+      if (!seen.has(id)) {
+        g.destroy();
+        this.hazardVisuals.delete(id);
+      }
+    }
+
   }
 
   // Tiny synthesized SFX — louder than the music (BGM is at 0.16, SFX peaks ~0.18).
@@ -2011,6 +2093,10 @@ export class ArenaScene extends Phaser.Scene {
       this.prevSelfHp = self.hp;
       this.prevSelfAlive = self.alive;
     }
+
+    // Hazards: warning ring + active fire/lightning visuals.
+    // Hazard timestamps are server Date.now() — use snap.t (server time) for comparison.
+    this.renderHazards(snap.hazards ?? [], snap.t);
 
     // emit HUD update — wave info is per-player now (read from self)
     this.bus.emit('hud', {

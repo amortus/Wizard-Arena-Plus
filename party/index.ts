@@ -44,6 +44,8 @@ import {
   XP_FOR_LEVEL,
   WAVE_ANCHORS_AT,
   themeForWave,
+  BOSS_ROSTER,
+  type BossAiKind,
   type CharacterKind,
   type MonsterKind,
   type WeaponKind,
@@ -53,6 +55,7 @@ import { isBlockedName } from '../shared/profanity';
 import type {
   ClientToServer,
   GemState,
+  HazardState,
   LeaderboardEntry,
   NPCState,
   PlayerState,
@@ -128,7 +131,7 @@ type ServerProjectile = ProjectileState & {
 let nextId = 1;
 const genId = (prefix: string) => `${prefix}_${nextId++}`;
 
-type NpcAi = 'chase' | 'regroup' | 'flank';
+type NpcAi = 'chase' | 'regroup' | 'flank' | BossAiKind;
 
 type ServerNpc = NPCState & {
   speed: number;
@@ -145,6 +148,21 @@ type ServerNpc = NPCState & {
   aiPhase: 'pursue' | 'pause';
   aiPhaseEndsAt: number;
   flankSide: 1 | -1;
+  // Boss-only fields (undefined on regular NPCs)
+  bossPhase?: 'idle' | 'windup' | 'dash' | 'recover';
+  bossPhaseUntil?: number;
+  bossDashVx?: number;
+  bossDashVy?: number;
+  bossEnraged?: boolean;
+  bossNextSummonAt?: number;
+  bossSummonKind?: MonsterKind | null;
+  bossSummonCount?: number;
+  bossSummonIntervalMs?: number;
+};
+
+type ServerHazard = HazardState & {
+  lastDamageAt: number;
+  lightningFired?: boolean;
 };
 
 type ServerWolf = {
@@ -187,6 +205,14 @@ export default class GameServer implements Party.Server {
   // before another can spawn so victories actually feel earned.
   dragonId: string | null = null;
   nextDragonAllowedAt = 0;
+  // Boss roster system — cycles through 8 unique bosses as the game progresses
+  activeBossId: string | null = null;
+  nextBossAllowedAt = 0;
+  bossRosterIdx = 0;
+  bossGeneration = 0;
+  // Environmental hazards — fire pools and lightning strikes
+  hazards = new Map<string, ServerHazard>();
+  nextHazardAt = 0;
   lastTickAt = 0;
   tickHandle: ReturnType<typeof setInterval> | null = null;
   // Persistent all-time leaderboard (top 10 by score)
@@ -680,10 +706,13 @@ export default class GameServer implements Party.Server {
     this.runWaves(now);
     this.maybeSpawnDragon(now);
     this.retargetDragon();
+    this.maybeSpawnBoss(now);
     this.updateNPCs(dt, now);
     this.updateBlackHoles(now);
     this.updateWolves(dt, now);
     this.updateGems();
+    this.scheduleHazard(now);
+    this.updateHazards(now);
 
     this.broadcastSnapshot(now);
   }
@@ -1489,6 +1518,98 @@ export default class GameServer implements Party.Server {
     });
   }
 
+  maybeSpawnBoss(now: number) {
+    // Clear stale handle
+    if (this.activeBossId && !this.npcs.has(this.activeBossId)) {
+      this.activeBossId = null;
+      this.nextBossAllowedAt = now + 90_000;
+      // Advance roster
+      this.bossRosterIdx++;
+      if (this.bossRosterIdx >= BOSS_ROSTER.length) {
+        this.bossRosterIdx = 0;
+        this.bossGeneration++;
+      }
+    }
+    if (this.activeBossId) return;
+    if (now < this.nextBossAllowedAt) return;
+    // Find top-scoring player at L10+ to anchor the boss
+    let target: ServerPlayer | null = null;
+    let bestScore = -1;
+    for (const p of this.players.values()) {
+      if (!p.alive || p.level < 10) continue;
+      const score = p.level * 100 + p.waveNumber * 50;
+      if (score > bestScore) { target = p; bestScore = score; }
+    }
+    if (!target) return;
+    if (this.npcs.size >= NPC_MAX_COUNT) return;
+
+    const boss = BOSS_ROSTER[this.bossRosterIdx];
+    const angle = Math.random() * Math.PI * 2;
+    const dist = 700 + Math.random() * 200;
+    const x = clamp(target.x + Math.cos(angle) * dist, 30, ARENA_WIDTH - 30);
+    const y = clamp(target.y + Math.sin(angle) * dist, 30, ARENA_HEIGHT - 30);
+
+    const wMul = 1 + (target.waveNumber - 1) * 0.10
+      + Math.pow(Math.max(0, target.waveNumber - 20), 1.4) * 0.015;
+    const lMul = 1 + (target.level - 1) * 0.08;
+    const genMul = 1 + this.bossGeneration * 0.5;
+    const hp = Math.round(NPC_BASE_HP * boss.hpMul * wMul * lMul * genMul);
+    const speed = PLAYER_SPEED * boss.speedFrac;
+
+    const id = genId('boss');
+    this.activeBossId = id;
+    this.npcs.set(id, {
+      id, kind: boss.kind, x, y,
+      hp, baseHp: hp,
+      speed, baseSpeed: speed,
+      slowUntil: 0, slowMul: 1, freezeUntil: 0,
+      lastHitAt: 0,
+      ownerPlayerId: target.id,
+      ai: boss.ai,
+      aiPhase: 'pursue',
+      aiPhaseEndsAt: 0,
+      flankSide: 1,
+      // Boss-specific state
+      bossPhase: boss.ai === 'boss_charge' ? 'idle' : undefined,
+      bossPhaseUntil: boss.ai === 'boss_charge' ? now + 4000 + Math.random() * 2000 : undefined,
+      bossEnraged: false,
+      bossNextSummonAt: boss.summonKind ? now + boss.summonIntervalMs : undefined,
+      bossSummonKind: boss.summonKind,
+      bossSummonCount: boss.summonCount,
+      bossSummonIntervalMs: boss.summonIntervalMs,
+    });
+
+    this.room.broadcast(JSON.stringify({ type: 'bossAlert', bossName: boss.name } satisfies ServerToClient));
+  }
+
+  spawnBossMinions(boss: ServerNpc, now: number) {
+    if (!boss.bossSummonKind || !boss.bossSummonCount) return;
+    const count = Math.min(boss.bossSummonCount, NPC_MAX_COUNT - this.npcs.size);
+    for (let i = 0; i < count; i++) {
+      const angle = (i / count) * Math.PI * 2 + Math.random() * 0.5;
+      const dist = 80 + Math.random() * 60;
+      const x = clamp(boss.x + Math.cos(angle) * dist, 20, ARENA_WIDTH - 20);
+      const y = clamp(boss.y + Math.sin(angle) * dist, 20, ARENA_HEIGHT - 20);
+      const base = MONSTER_BASES[boss.bossSummonKind];
+      const hp = NPC_BASE_HP * base.hpMul;
+      const speed = Math.min(PLAYER_SPEED * NPC_SPEED_CAP_FRAC, NPC_BASE_SPEED * base.speedMul);
+      const sid = genId('minion');
+      this.npcs.set(sid, {
+        id: sid, kind: boss.bossSummonKind, x, y,
+        hp, baseHp: hp,
+        speed, baseSpeed: speed,
+        slowUntil: 0, slowMul: 1, freezeUntil: 0,
+        lastHitAt: 0,
+        ownerPlayerId: boss.ownerPlayerId,
+        ai: 'chase',
+        aiPhase: 'pursue',
+        aiPhaseEndsAt: now + 3000,
+        flankSide: Math.random() < 0.5 ? -1 : 1,
+      });
+    }
+    boss.bossNextSummonAt = now + (boss.bossSummonIntervalMs ?? 8000);
+  }
+
   // High-wave injection: spawn a single NPC of the given kind near the player's
   // wave anchors, sharing the regular wave HP curve. Doesn't count toward
   // pwWaveTotal — these are extras layered on top of the theme.
@@ -1570,6 +1691,58 @@ export default class GameServer implements Party.Server {
           const py = dxToT / distToT;
           aimX = target.x + px * 110 * n.flankSide;
           aimY = target.y + py * 110 * n.flankSide;
+        }
+      } else if (n.ai === 'boss_charge') {
+        // Cycle: idle (slow chase) → windup (stop) → dash (3× speed) → recover (stop)
+        const phase = n.bossPhase ?? 'idle';
+        if (now >= (n.bossPhaseUntil ?? 0)) {
+          if (phase === 'idle') {
+            n.bossPhase = 'windup';
+            n.bossPhaseUntil = now + 1200;
+          } else if (phase === 'windup') {
+            // Lock in dash direction toward current target position
+            const ddx = target.x - n.x;
+            const ddy = target.y - n.y;
+            const ddist = Math.hypot(ddx, ddy) || 1;
+            n.bossDashVx = ddx / ddist;
+            n.bossDashVy = ddy / ddist;
+            n.bossPhase = 'dash';
+            n.bossPhaseUntil = now + 450;
+          } else if (phase === 'dash') {
+            n.bossPhase = 'recover';
+            n.bossPhaseUntil = now + 2000;
+          } else {
+            n.bossPhase = 'idle';
+            n.bossPhaseUntil = now + 4000 + Math.random() * 2000;
+          }
+        }
+        if (n.bossPhase === 'windup' || n.bossPhase === 'recover') {
+          speedNow = 0;
+        } else if (n.bossPhase === 'dash' && n.bossDashVx != null && n.bossDashVy != null) {
+          n.x += n.bossDashVx * n.baseSpeed * 3 * dt;
+          n.y += n.bossDashVy * n.baseSpeed * 3 * dt;
+          n.x = clamp(n.x, 20, ARENA_WIDTH - 20);
+          n.y = clamp(n.y, 20, ARENA_HEIGHT - 20);
+          speedNow = 0; // position already updated
+        } else {
+          speedNow = n.baseSpeed * 0.5; // slow idle chase
+        }
+        // Summon minions on timer (warchief has summon + charge)
+        if (n.bossSummonKind && n.bossNextSummonAt && now >= n.bossNextSummonAt) {
+          this.spawnBossMinions(n, now);
+        }
+      } else if (n.ai === 'boss_summon') {
+        // Chase normally + spawn minions on timer
+        if (n.bossSummonKind && n.bossNextSummonAt && now >= n.bossNextSummonAt) {
+          this.spawnBossMinions(n, now);
+        }
+      } else if (n.ai === 'boss_enrage') {
+        // Enrage trigger at 40% HP
+        if (!n.bossEnraged && n.hp < n.baseHp * 0.4) {
+          n.bossEnraged = true;
+          n.baseSpeed = n.baseSpeed * 1.8;
+          n.speed = n.baseSpeed;
+          speedNow = n.baseSpeed;
         }
       }
       const dx = aimX - n.x;
@@ -1679,10 +1852,16 @@ export default class GameServer implements Party.Server {
         this.dragonId = null;
         this.nextDragonAllowedAt = Date.now() + 60_000;
       }
+    } else if (n.id === this.activeBossId) {
+      // Unique roster boss — big feast
+      for (let i = 0; i < 15; i++) this.dropGem(n.x, n.y, 5);
+      for (let i = 0; i < 5; i++) this.dropGem(n.x, n.y, 10);
+      this.activeBossId = null;
+      // Cooldown + roster advance handled in maybeSpawnBoss() next tick
     } else {
       const tier = MONSTER_BASES[n.kind].tier;
       if (tier === 'boss') {
-        // Boss drops are LOOT — many greens + golds + epic
+        // Wave boss drops — many greens + golds + epic
         for (let i = 0; i < 6; i++) this.dropGem(n.x, n.y, 3);
         for (let i = 0; i < 2; i++) this.dropGem(n.x, n.y, 5);
         this.dropGem(n.x, n.y, 10);
@@ -1953,6 +2132,10 @@ export default class GameServer implements Party.Server {
     for (const w of this.wolves.values()) {
       wolves.push({ id: w.id, ownerId: w.ownerId, x: w.x, y: w.y, state: w.state });
     }
+    const hazards: HazardState[] = [];
+    for (const h of this.hazards.values()) {
+      hazards.push({ id: h.id, kind: h.kind, x: h.x, y: h.y, radius: h.radius, warningUntilMs: h.warningUntilMs, activeUntilMs: h.activeUntilMs });
+    }
     const snap: Snapshot = {
       type: 'snapshot',
       t: now,
@@ -1964,8 +2147,76 @@ export default class GameServer implements Party.Server {
       gems,
       projectiles,
       wolves,
+      hazards,
     };
     this.room.broadcast(JSON.stringify(snap));
+  }
+
+  scheduleHazard(now: number) {
+    if (now < this.nextHazardAt) return;
+    if (this.hazards.size >= 2) return;
+    // Only spawn if at least one player is past wave 3
+    let anyEligible = false;
+    let anchorPlayer: ServerPlayer | null = null;
+    for (const p of this.players.values()) {
+      if (p.alive && p.waveNumber >= 3) { anyEligible = true; anchorPlayer = p; break; }
+    }
+    if (!anyEligible || !anchorPlayer) return;
+
+    const kind = Math.random() < 0.5 ? 'fire_pool' : 'lightning_strike';
+    const angle = Math.random() * Math.PI * 2;
+    const dist = 100 + Math.random() * 200;
+    const x = clamp(anchorPlayer.x + Math.cos(angle) * dist, 40, ARENA_WIDTH - 40);
+    const y = clamp(anchorPlayer.y + Math.sin(angle) * dist, 40, ARENA_HEIGHT - 40);
+    const radius = kind === 'fire_pool' ? 70 : 80;
+    const duration = kind === 'fire_pool' ? 8000 : 0;
+    const id = genId('hazard');
+    this.hazards.set(id, {
+      id, kind, x, y, radius,
+      warningUntilMs: now + 3000,
+      activeUntilMs: now + 3000 + duration,
+      lastDamageAt: 0,
+      lightningFired: false,
+    });
+    this.nextHazardAt = now + 35_000 + Math.random() * 35_000;
+  }
+
+  updateHazards(now: number) {
+    for (const [id, h] of this.hazards) {
+      if (h.kind === 'fire_pool' && now >= h.warningUntilMs) {
+        // Damage players standing in the pool every 500ms
+        if (now - h.lastDamageAt > 500) {
+          h.lastDamageAt = now;
+          const r2 = h.radius * h.radius;
+          for (const p of this.players.values()) {
+            if (!p.alive) continue;
+            if ((p.x - h.x) ** 2 + (p.y - h.y) ** 2 < r2) {
+              p.hp -= 5;
+              if (p.hp <= 0) this.killPlayer(p, '__hazard__');
+            }
+          }
+        }
+      } else if (h.kind === 'lightning_strike' && !h.lightningFired && now >= h.warningUntilMs) {
+        h.lightningFired = true;
+        // Instant damage in radius
+        const r2 = h.radius * h.radius;
+        for (const p of this.players.values()) {
+          if (!p.alive) continue;
+          if ((p.x - h.x) ** 2 + (p.y - h.y) ** 2 < r2) {
+            p.hp -= 35;
+            if (p.hp <= 0) this.killPlayer(p, '__hazard__');
+          }
+        }
+        // Trigger lightning visual on all clients
+        const fx: ServerToClient = { type: 'effect', effect: 'lightning', x: h.x, y: h.y };
+        this.room.broadcast(JSON.stringify(fx));
+        // Expire immediately after firing
+        h.activeUntilMs = now;
+      }
+      if (now > h.activeUntilMs) {
+        this.hazards.delete(id);
+      }
+    }
   }
 }
 
