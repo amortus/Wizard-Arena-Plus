@@ -40,9 +40,9 @@ export const POWERUPS: Powerup[] = [
   // ---- Speed / Cooldown ----
   {
     id: 'speed_up', icon: '🏃',
-    name: '+15% Move Speed',
+    name: '+5% Move Speed',
     description: 'Run faster.',
-    apply: (p) => { p.speedMul *= 1.15; },
+    apply: (p) => { p.speedMul = Math.min(1.5, p.speedMul * 1.05); },
   },
   {
     id: 'cooldown_down', icon: '⏱️',
