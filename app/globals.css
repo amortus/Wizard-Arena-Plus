@@ -508,6 +508,7 @@ button {
   position: fixed;
   top: 12px; left: 12px; right: 12px;
   height: 52px;
+  pointer-events: none;
   background:
     linear-gradient(180deg, rgba(8, 8, 26, 0.95) 0%, rgba(8, 8, 26, 0.75) 100%);
   border: 2px solid var(--gold);
@@ -1219,6 +1220,7 @@ button {
   border: 2px solid #776644;
   border-radius: 6px;
   padding: 8px 12px 8px 8px;
+  pointer-events: none;
   z-index: 20;
   pointer-events: none;
 }

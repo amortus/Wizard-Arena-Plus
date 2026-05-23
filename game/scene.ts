@@ -218,6 +218,16 @@ export class ArenaScene extends Phaser.Scene {
   inputDy = 0;
   lastSentInput = { dx: 0, dy: 0, t: 0 };
 
+  // Virtual joystick (mobile only)
+  isMobile = false;
+  joystickPointer: Phaser.Input.Pointer | null = null;
+  joystickOriginX = 0;
+  joystickOriginY = 0;
+  joystickDx = 0;
+  joystickDy = 0;
+  joystickBase: Phaser.GameObjects.Graphics | null = null;
+  joystickKnob: Phaser.GameObjects.Graphics | null = null;
+
   // client-side prediction for self
   predictedSelf?: { x: number; y: number };
 
@@ -284,6 +294,55 @@ export class ArenaScene extends Phaser.Scene {
     this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
       if (!pointer.leftButtonDown()) this.mouseDown = false;
     });
+
+    // Virtual joystick — enabled on touch devices
+    this.isMobile =
+      ('ontouchstart' in window && navigator.maxTouchPoints > 0) ||
+      /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+    if (this.isMobile) {
+      const RADIUS = 64;
+
+      const clearJoystick = (ptr: Phaser.Input.Pointer) => {
+        if (ptr !== this.joystickPointer) return;
+        this.joystickPointer = null;
+        this.joystickDx = 0;
+        this.joystickDy = 0;
+        this.joystickBase?.destroy();
+        this.joystickKnob?.destroy();
+        this.joystickBase = null;
+        this.joystickKnob = null;
+      };
+
+      this.input.on('pointerdown', (ptr: Phaser.Input.Pointer) => {
+        if (this.joystickPointer) return; // already tracking a touch
+        this.joystickPointer = ptr;
+        this.joystickOriginX = ptr.x;
+        this.joystickOriginY = ptr.y;
+        this.joystickDx = 0;
+        this.joystickDy = 0;
+        this.renderJoystick(ptr.x, ptr.y, ptr.x, ptr.y, RADIUS);
+      });
+
+      this.input.on('pointermove', (ptr: Phaser.Input.Pointer) => {
+        if (ptr !== this.joystickPointer) return;
+        const rawDx = ptr.x - this.joystickOriginX;
+        const rawDy = ptr.y - this.joystickOriginY;
+        const dist = Math.hypot(rawDx, rawDy) || 1;
+        const scale = dist > RADIUS ? RADIUS / dist : 1;
+        this.joystickDx = (rawDx * scale) / RADIUS;
+        this.joystickDy = (rawDy * scale) / RADIUS;
+        this.renderJoystick(
+          this.joystickOriginX, this.joystickOriginY,
+          this.joystickOriginX + rawDx * scale,
+          this.joystickOriginY + rawDy * scale,
+          RADIUS,
+        );
+      });
+
+      this.input.on('pointerup', clearJoystick);
+      this.input.on('pointerupoutside', clearJoystick);
+    }
 
     // Background music — start on first user interaction (browsers block autoplay)
     if (this.cache.audio.exists('bgm')) {
@@ -1613,6 +1672,26 @@ export class ArenaScene extends Phaser.Scene {
     this.bus.emit('respawned');
   }
 
+  renderJoystick(ox: number, oy: number, kx: number, ky: number, radius: number) {
+    if (!this.joystickBase) {
+      this.joystickBase = this.add.graphics().setScrollFactor(0).setDepth(200);
+    }
+    if (!this.joystickKnob) {
+      this.joystickKnob = this.add.graphics().setScrollFactor(0).setDepth(201);
+    }
+    this.joystickBase.clear();
+    this.joystickBase.fillStyle(0x000000, 0.35);
+    this.joystickBase.fillCircle(ox, oy, radius);
+    this.joystickBase.lineStyle(2, 0xffffff, 0.45);
+    this.joystickBase.strokeCircle(ox, oy, radius);
+
+    this.joystickKnob.clear();
+    this.joystickKnob.fillStyle(0xffffff, 0.6);
+    this.joystickKnob.fillCircle(kx, ky, 26);
+    this.joystickKnob.lineStyle(2, 0xffffff, 0.9);
+    this.joystickKnob.strokeCircle(kx, ky, 26);
+  }
+
   update(_time: number, delta: number) {
     this.handleInput(delta);
     this.renderSnapshot();
@@ -1625,16 +1704,22 @@ export class ArenaScene extends Phaser.Scene {
     if (this.keyW?.isDown || this.cursors?.up?.isDown) dy -= 1;
     if (this.keyS?.isDown || this.cursors?.down?.isDown) dy += 1;
 
-    // Mouse override: when held (or always-on), aim direction = vector from self to cursor.
-    // Only kicks in if no WASD is being pressed (so you can stop without releasing the mouse).
-    if ((this.mouseDown || this.mouseAlwaysOn) && dx === 0 && dy === 0 && this.predictedSelf) {
-      const ptr = this.input.activePointer;
-      const world = this.cameras.main.getWorldPoint(ptr.x, ptr.y);
-      const mdx = world.x - this.predictedSelf.x;
-      const mdy = world.y - this.predictedSelf.y;
-      const dist = Math.hypot(mdx, mdy);
-      // Don't twitch when cursor is essentially on the player
-      if (dist > 12) { dx = mdx / dist; dy = mdy / dist; }
+    if (this.isMobile) {
+      // On mobile, joystick is the sole movement source (overrides any keyboard)
+      if (this.joystickPointer) {
+        dx = this.joystickDx;
+        dy = this.joystickDy;
+      }
+    } else {
+      // Mouse override (desktop only): hold left → move toward cursor
+      if ((this.mouseDown || this.mouseAlwaysOn) && dx === 0 && dy === 0 && this.predictedSelf) {
+        const ptr = this.input.activePointer;
+        const world = this.cameras.main.getWorldPoint(ptr.x, ptr.y);
+        const mdx = world.x - this.predictedSelf.x;
+        const mdy = world.y - this.predictedSelf.y;
+        const dist = Math.hypot(mdx, mdy);
+        if (dist > 12) { dx = mdx / dist; dy = mdy / dist; }
+      }
     }
 
     const len = Math.hypot(dx, dy);
