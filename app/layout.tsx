@@ -13,13 +13,13 @@ export const metadata: Metadata = {
     title: 'Madness Arena',
     description: 'Free multiplayer survivors-style game. Pick a wizard, dodge hordes, stack powerups, top the leaderboard.',
     type: 'website',
-    images: ['/madness_arena_logo.png'],
+    images: ['/wizard_arena_plus_logo.png'],
   },
   twitter: {
     card: 'summary_large_image',
     title: 'Madness Arena',
     description: 'Free multiplayer survivors-style game.',
-    images: ['/madness_arena_logo.png'],
+    images: ['/wizard_arena_plus_logo.png'],
   },
 };
 

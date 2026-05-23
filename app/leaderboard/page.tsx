@@ -48,7 +48,7 @@ export default function LeaderboardPage() {
       <div className="scanlines" />
       <div className="menu-card lb-page-card">
         <img
-          src="/madness_arena_logo.png"
+          src="/wizard_arena_plus_logo.png"
           alt="Madness Arena"
           className="menu-logo"
         />
