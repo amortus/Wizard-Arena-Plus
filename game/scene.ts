@@ -186,6 +186,7 @@ export class ArenaScene extends Phaser.Scene {
   trailVisuals = new Map<string, { x: number; y: number; bornAt: number; sprite: Phaser.GameObjects.Graphics }[]>();
   trailPool: Phaser.GameObjects.Graphics[] = [];
   hazardVisuals = new Map<string, Phaser.GameObjects.Graphics>();
+  hazardLabels = new Map<string, Phaser.GameObjects.Text>();
   bossAlertUntil = 0;
   bossAlertName = '';
   prevPlayerPos = new Map<string, { x: number; y: number; t: number }>();
@@ -1255,45 +1256,113 @@ export class ArenaScene extends Phaser.Scene {
   renderHazards(hazards: import('../shared/types').HazardState[], serverNow: number) {
     const clientNow = performance.now();
     const seen = new Set<string>();
+
+    // Track if self is inside any active smoke_zone
+    let selfInSmoke = false;
+    const self = this.latestSnapshot?.players.find((p) => p.id === this.selfId);
+
     for (const h of hazards) {
       seen.add(h.id);
+
+      // Graphics object
       let g = this.hazardVisuals.get(h.id);
       if (!g) {
         g = this.add.graphics();
-        g.setDepth(9); // just under NPCs
+        g.setDepth(9);
         this.hazardVisuals.set(h.id, g);
       }
       g.clear();
+      g.setBlendMode(Phaser.BlendModes.NORMAL);
+
       const warning = serverNow < h.warningUntilMs;
+      const t = clientNow * 0.003;
+
       if (warning) {
-        // Pulsing red danger ring
         const pulse = 0.45 + Math.sin(clientNow * 0.008) * 0.25;
         g.lineStyle(4, 0xff2200, pulse);
         g.strokeCircle(h.x, h.y, h.radius);
         g.lineStyle(2, 0xff8800, pulse * 0.5);
         g.strokeCircle(h.x, h.y, h.radius * 0.65);
-      } else if (h.kind === 'fire_pool') {
-        // Animated fire pool
-        const t = clientNow * 0.003;
-        g.fillStyle(0xff3300, 0.45);
-        g.fillCircle(h.x, h.y, h.radius);
-        g.fillStyle(0xff7700, 0.35);
-        g.fillCircle(h.x + Math.sin(t) * 12, h.y + Math.cos(t * 1.3) * 10, h.radius * 0.65);
-        g.fillStyle(0xffcc00, 0.25);
-        g.fillCircle(h.x + Math.cos(t * 0.7) * 8, h.y + Math.sin(t * 1.1) * 8, h.radius * 0.35);
-        g.lineStyle(3, 0xff5500, 0.7);
-        g.strokeCircle(h.x, h.y, h.radius);
-        g.setBlendMode(Phaser.BlendModes.ADD);
+
+        // Warning label — create once, reuse
+        let lbl = this.hazardLabels.get(h.id);
+        if (!lbl) {
+          const icon = h.kind === 'lightning_strike' ? '⚡'
+            : h.kind === 'fire_pool' ? '🔥'
+            : h.kind === 'poison_cloud' ? '☠'
+            : h.kind === 'slow_zone' ? '❄'
+            : '💨';
+          lbl = this.add.text(h.x, h.y, icon, { fontSize: '28px' })
+            .setOrigin(0.5, 0.5)
+            .setDepth(10);
+          this.hazardLabels.set(h.id, lbl);
+        }
+        lbl.setAlpha(pulse);
+      } else {
+        // Active phase — hide the label
+        const lbl = this.hazardLabels.get(h.id);
+        if (lbl) lbl.setAlpha(0);
+
+        if (h.kind === 'fire_pool') {
+          g.fillStyle(0xff3300, 0.45);
+          g.fillCircle(h.x, h.y, h.radius);
+          g.fillStyle(0xff7700, 0.35);
+          g.fillCircle(h.x + Math.sin(t) * 12, h.y + Math.cos(t * 1.3) * 10, h.radius * 0.65);
+          g.fillStyle(0xffcc00, 0.25);
+          g.fillCircle(h.x + Math.cos(t * 0.7) * 8, h.y + Math.sin(t * 1.1) * 8, h.radius * 0.35);
+          g.lineStyle(3, 0xff5500, 0.7);
+          g.strokeCircle(h.x, h.y, h.radius);
+          g.setBlendMode(Phaser.BlendModes.ADD);
+        } else if (h.kind === 'poison_cloud') {
+          g.fillStyle(0x882299, 0.40);
+          g.fillCircle(h.x, h.y, h.radius);
+          g.fillStyle(0x44aa22, 0.25);
+          g.fillCircle(h.x + Math.sin(t * 0.9) * 14, h.y + Math.cos(t * 1.2) * 12, h.radius * 0.6);
+          g.fillStyle(0xcc44ff, 0.18);
+          g.fillCircle(h.x + Math.cos(t * 0.6) * 10, h.y + Math.sin(t) * 10, h.radius * 0.35);
+          g.lineStyle(3, 0xaa33dd, 0.6);
+          g.strokeCircle(h.x, h.y, h.radius);
+          g.setBlendMode(Phaser.BlendModes.ADD);
+        } else if (h.kind === 'slow_zone') {
+          g.fillStyle(0x2255ff, 0.22);
+          g.fillCircle(h.x, h.y, h.radius);
+          g.fillStyle(0x88ddff, 0.18);
+          g.fillCircle(h.x + Math.sin(t * 0.5) * 8, h.y + Math.cos(t * 0.7) * 8, h.radius * 0.55);
+          g.lineStyle(3, 0x44aaff, 0.55);
+          g.strokeCircle(h.x, h.y, h.radius);
+          g.setBlendMode(Phaser.BlendModes.ADD);
+        } else if (h.kind === 'smoke_zone') {
+          g.fillStyle(0x333333, 0.55);
+          g.fillCircle(h.x, h.y, h.radius);
+          g.fillStyle(0x555555, 0.30);
+          g.fillCircle(h.x + Math.sin(t * 0.4) * 18, h.y + Math.cos(t * 0.6) * 16, h.radius * 0.7);
+          g.lineStyle(2, 0x666666, 0.4);
+          g.strokeCircle(h.x, h.y, h.radius);
+          // no ADD blend — intentionally opaque
+          if (self) {
+            const dx = self.x - h.x, dy = self.y - h.y;
+            if (dx * dx + dy * dy < h.radius * h.radius) selfInSmoke = true;
+          }
+        }
       }
     }
-    // Clean up visuals for hazards that expired
+
+    // Emit smoke state to React overlay
+    this.bus.emit('smokeZone', selfInSmoke);
+
+    // Clean up visuals for expired hazards
     for (const [id, g] of this.hazardVisuals) {
       if (!seen.has(id)) {
         g.destroy();
         this.hazardVisuals.delete(id);
       }
     }
-
+    for (const [id, lbl] of this.hazardLabels) {
+      if (!seen.has(id)) {
+        lbl.destroy();
+        this.hazardLabels.delete(id);
+      }
+    }
   }
 
   // Tiny synthesized SFX — louder than the music (BGM is at 0.16, SFX peaks ~0.18).

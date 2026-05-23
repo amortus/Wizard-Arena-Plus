@@ -45,6 +45,7 @@ export default function Game({ name, character, color, hue, room, country }: Pro
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [roomFull, setRoomFull] = useState(false);
   const [bossAlert, setBossAlert] = useState<string | null>(null);
+  const [inSmoke, setInSmoke] = useState(false);
   // Track latest hud.self level/wave so the 'died' event handler can read them
   // synchronously (the bus.on closure would otherwise capture an empty hud).
   const lastSelfRef = useRef<{ level: number; wave: number } | null>(null);
@@ -92,6 +93,7 @@ export default function Game({ name, character, color, hue, room, country }: Pro
         setBossAlert(name);
         setTimeout(() => setBossAlert(null), 3500);
       });
+      result.scene.bus.on('smokeZone', (inside: boolean) => setInSmoke(inside));
     })();
 
     return () => {
@@ -149,6 +151,9 @@ export default function Game({ name, character, color, hue, room, country }: Pro
   }, [levelUp, levelUpFocus]);
 
   const isConnecting = !hud.self && !dead && !roomFull;
+  const hpPct = hud.self ? Math.max(0, (hud.self.hp / hud.self.maxHp) * 100) : 100;
+  const hpColor = hpPct > 60 ? '#22cc44' : hpPct > 30 ? '#ddcc22' : '#cc3333';
+  const xpPct = hud.self ? Math.min(100, (hud.self.xp / Math.max(1, hud.self.xpToNext)) * 100) : 0;
 
   return (
     <div className="game-root">
@@ -228,20 +233,30 @@ export default function Game({ name, character, color, hue, room, country }: Pro
         </div>
       </div>
 
-      <div className="hud">
-        <div className="row">
-          <strong>{hud.self?.name ?? '...'}</strong>
-          {hud.self && (
-            <> · HP {Math.max(0, Math.round(hud.self.hp))}/{hud.self.maxHp}</>
-          )}
-        </div>
-        {hud.self && (
-          <div className="row" style={{ opacity: 0.7, marginTop: 4 }}>
-            Spells: {hud.self.weapons.join(', ')}
-            {hud.self.projectileBonus > 0 ? ` · +${hud.self.projectileBonus} proj` : ''}
+      {inSmoke && <div className="smoke-overlay" />}
+
+      {hud.self && (
+        <div className="unit-frame">
+          <div className="unit-frame-level">{hud.self.level}</div>
+          <img className="unit-frame-portrait" src={`/portraits/${character}.png`} alt="" />
+          <div className="unit-frame-info">
+            <div className="unit-frame-name">{hud.self.name}</div>
+            <div className="unit-frame-hp-bar">
+              <div className="unit-frame-hp-fill" style={{ width: `${hpPct}%`, background: hpColor }} />
+              <span className="unit-frame-hp-text">
+                {Math.max(0, Math.round(hud.self.hp))}/{hud.self.maxHp}
+              </span>
+            </div>
+            <div className="unit-frame-xp-bar">
+              <div className="unit-frame-xp-fill" style={{ width: `${xpPct}%` }} />
+            </div>
+            <div className="unit-frame-spells">
+              {hud.self.weapons.join(' · ')}
+              {hud.self.projectileBonus > 0 ? ` +${hud.self.projectileBonus}` : ''}
+            </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {levelUp && (
         <div className="levelup-overlay">

@@ -1202,3 +1202,111 @@ button {
   from { text-shadow: 2px 2px 0 #000, 0 0 20px rgba(255,34,0,0.7); }
   to   { text-shadow: 2px 2px 0 #000, 0 0 40px rgba(255,100,0,1), 0 0 80px rgba(255,34,0,0.5); }
 }
+
+/* ── MMORPG Unit Frame ─────────────────────────────────────── */
+.unit-frame {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.80);
+  border: 2px solid #776644;
+  border-radius: 6px;
+  padding: 8px 12px 8px 8px;
+  z-index: 20;
+  pointer-events: none;
+}
+.unit-frame-level {
+  position: absolute;
+  top: -10px;
+  left: -10px;
+  background: #c8a000;
+  color: #000;
+  font-size: 11px;
+  font-weight: bold;
+  font-family: 'Press Start 2P', monospace;
+  border-radius: 50%;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #8a6800;
+}
+.unit-frame-portrait {
+  width: 52px;
+  height: 52px;
+  border: 2px solid #554433;
+  border-radius: 4px;
+  image-rendering: pixelated;
+  flex-shrink: 0;
+}
+.unit-frame-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 138px;
+}
+.unit-frame-name {
+  font-size: 12px;
+  font-family: 'Press Start 2P', monospace;
+  color: #f0d080;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.unit-frame-hp-bar {
+  height: 16px;
+  background: #111;
+  border: 1px solid #444;
+  border-radius: 2px;
+  position: relative;
+  overflow: hidden;
+}
+.unit-frame-hp-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.12s linear;
+}
+.unit-frame-hp-text {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-family: 'Press Start 2P', monospace;
+  color: #fff;
+  text-shadow: 1px 1px 0 #000;
+}
+.unit-frame-xp-bar {
+  height: 5px;
+  background: #1a1020;
+  border: 1px solid #332244;
+  border-radius: 1px;
+}
+.unit-frame-xp-fill {
+  height: 100%;
+  background: #7744dd;
+  border-radius: 1px;
+  transition: width 0.2s linear;
+}
+.unit-frame-spells {
+  font-size: 9px;
+  font-family: 'Press Start 2P', monospace;
+  color: rgba(255, 255, 255, 0.55);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Smoke Zone Overlay ────────────────────────────────────── */
+.smoke-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 20, 20, 0.72);
+  pointer-events: none;
+  z-index: 8;
+}

@@ -108,6 +108,8 @@ type ServerPlayer = PlayerState & {
   pwBonusRatLastAt: number;
   // Aura: per-NPC last hit time (so we don't drain HP every tick)
   pwAuraLastHits: Map<string, number>;
+  // Set each tick by updateHazards — not part of PlayerState, server-only
+  inSlowZone: boolean;
 };
 
 type ServerProjectile = ProjectileState & {
@@ -305,7 +307,27 @@ export default class GameServer implements Party.Server {
 
   onClose(conn: Party.Connection) {
     this.players.delete(conn.id);
-    if (this.players.size === 0) this.stopTicking();
+    if (this.players.size === 0) {
+      this.stopTicking();
+      this.resetRoom();
+    }
+  }
+
+  resetRoom() {
+    this.npcs.clear();
+    this.gems.clear();
+    this.projectiles.clear();
+    this.blackHoles.clear();
+    this.wolves.clear();
+    this.hazards.clear();
+    this.dragonId = null;
+    this.nextDragonAllowedAt = 0;
+    this.activeBossId = null;
+    this.nextBossAllowedAt = 0;
+    this.bossRosterIdx = 0;
+    this.bossGeneration = 0;
+    this.nextHazardAt = 0;
+    this.lastTickAt = 0;
   }
 
   onMessage(message: string, sender: Party.Connection) {
@@ -462,6 +484,7 @@ export default class GameServer implements Party.Server {
       pwBonusRatsSpawned: 0,
       pwBonusRatLastAt: 0,
       pwAuraLastHits: new Map(),
+      inSlowZone: false,
     };
     this.players.set(id, player);
     // Defensive: if a Durable Object woke from hibernation and lost the tick
@@ -744,7 +767,7 @@ export default class GameServer implements Party.Server {
     void now;
     for (const p of this.players.values()) {
       if (!p.alive) continue;
-      const speed = PLAYER_SPEED * p.speedMul;
+      const speed = PLAYER_SPEED * p.speedMul * (p.inSlowZone ? 0.45 : 1);
       p.x = clamp(p.x + p.input.dx * speed * dt, PLAYER_RADIUS, ARENA_WIDTH - PLAYER_RADIUS);
       p.y = clamp(p.y + p.input.dy * speed * dt, PLAYER_RADIUS, ARENA_HEIGHT - PLAYER_RADIUS);
 
@@ -1856,8 +1879,8 @@ export default class GameServer implements Party.Server {
       // Unique roster boss — big feast
       for (let i = 0; i < 15; i++) this.dropGem(n.x, n.y, 5);
       for (let i = 0; i < 5; i++) this.dropGem(n.x, n.y, 10);
-      this.activeBossId = null;
-      // Cooldown + roster advance handled in maybeSpawnBoss() next tick
+      // Do NOT null activeBossId here — maybeSpawnBoss() detects the dead boss
+      // on next tick and handles cooldown + roster advance atomically.
     } else {
       const tier = MONSTER_BASES[n.kind].tier;
       if (tier === 'boss') {
@@ -2163,13 +2186,26 @@ export default class GameServer implements Party.Server {
     }
     if (!anyEligible || !anchorPlayer) return;
 
-    const kind = Math.random() < 0.5 ? 'fire_pool' : 'lightning_strike';
+    const roll = Math.random();
+    const kind = roll < 0.2 ? 'fire_pool'
+      : roll < 0.4 ? 'lightning_strike'
+      : roll < 0.6 ? 'poison_cloud'
+      : roll < 0.8 ? 'slow_zone'
+      : 'smoke_zone';
     const angle = Math.random() * Math.PI * 2;
     const dist = 100 + Math.random() * 200;
     const x = clamp(anchorPlayer.x + Math.cos(angle) * dist, 40, ARENA_WIDTH - 40);
     const y = clamp(anchorPlayer.y + Math.sin(angle) * dist, 40, ARENA_HEIGHT - 40);
-    const radius = kind === 'fire_pool' ? 70 : 80;
-    const duration = kind === 'fire_pool' ? 8000 : 0;
+    const radius = kind === 'fire_pool' ? 70
+      : kind === 'lightning_strike' ? 80
+      : kind === 'poison_cloud' ? 80
+      : kind === 'slow_zone' ? 90
+      : 120; // smoke_zone
+    const duration = kind === 'fire_pool' ? 8000
+      : kind === 'lightning_strike' ? 0
+      : kind === 'poison_cloud' ? 10000
+      : kind === 'slow_zone' ? 8000
+      : 12000; // smoke_zone
     const id = genId('hazard');
     this.hazards.set(id, {
       id, kind, x, y, radius,
@@ -2182,9 +2218,13 @@ export default class GameServer implements Party.Server {
   }
 
   updateHazards(now: number) {
+    // Reset slow_zone state — will be set below for each player in range
+    for (const p of this.players.values()) p.inSlowZone = false;
+
     for (const [id, h] of this.hazards) {
-      if (h.kind === 'fire_pool' && now >= h.warningUntilMs) {
-        // Damage players standing in the pool every 500ms
+      const active = now >= h.warningUntilMs;
+
+      if (h.kind === 'fire_pool' && active) {
         if (now - h.lastDamageAt > 500) {
           h.lastDamageAt = now;
           const r2 = h.radius * h.radius;
@@ -2196,9 +2236,8 @@ export default class GameServer implements Party.Server {
             }
           }
         }
-      } else if (h.kind === 'lightning_strike' && !h.lightningFired && now >= h.warningUntilMs) {
+      } else if (h.kind === 'lightning_strike' && !h.lightningFired && active) {
         h.lightningFired = true;
-        // Instant damage in radius
         const r2 = h.radius * h.radius;
         for (const p of this.players.values()) {
           if (!p.alive) continue;
@@ -2207,12 +2246,32 @@ export default class GameServer implements Party.Server {
             if (p.hp <= 0) this.killPlayer(p, '__hazard__');
           }
         }
-        // Trigger lightning visual on all clients
         const fx: ServerToClient = { type: 'effect', effect: 'lightning', x: h.x, y: h.y };
         this.room.broadcast(JSON.stringify(fx));
-        // Expire immediately after firing
         h.activeUntilMs = now;
+      } else if (h.kind === 'poison_cloud' && active) {
+        if (now - h.lastDamageAt > 500) {
+          h.lastDamageAt = now;
+          const r2 = h.radius * h.radius;
+          for (const p of this.players.values()) {
+            if (!p.alive) continue;
+            if ((p.x - h.x) ** 2 + (p.y - h.y) ** 2 < r2) {
+              p.hp -= 4; // 8/s at 500ms tick
+              if (p.hp <= 0) this.killPlayer(p, '__hazard__');
+            }
+          }
+        }
+      } else if (h.kind === 'slow_zone' && active) {
+        const r2 = h.radius * h.radius;
+        for (const p of this.players.values()) {
+          if (!p.alive) continue;
+          if ((p.x - h.x) ** 2 + (p.y - h.y) ** 2 < r2) {
+            p.inSlowZone = true;
+          }
+        }
+        // smoke_zone: no server effect, client handles visual
       }
+
       if (now > h.activeUntilMs) {
         this.hazards.delete(id);
       }
