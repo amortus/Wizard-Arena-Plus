@@ -1302,6 +1302,29 @@ button {
   text-overflow: ellipsis;
 }
 
+/* ── Buff Bar ──────────────────────────────────────────────── */
+.unit-frame-buffs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+.buff-pill {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 8px;
+  font-family: 'Press Start 2P', monospace;
+  padding: 2px 5px;
+  border-radius: 3px;
+  border: 1px solid;
+  white-space: nowrap;
+}
+.buff-pill-speed     { background: rgba(30,80,200,0.75);  border-color: #3399ff; color: #88ccff; }
+.buff-pill-damage    { background: rgba(180,30,20,0.75);  border-color: #ff6644; color: #ffaa88; }
+.buff-pill-berserker { background: rgba(120,0,0,0.85);    border-color: #cc0000; color: #ff6666; }
+.buff-pill-shield    { background: rgba(150,120,0,0.75);  border-color: #ffcc00; color: #ffe080; }
+
 /* ── Smoke Zone Overlay ────────────────────────────────────── */
 .smoke-overlay {
   position: fixed;

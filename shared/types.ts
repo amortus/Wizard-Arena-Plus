@@ -2,6 +2,15 @@ import type { CharacterKind, MonsterKind, WeaponKind } from './constants';
 
 export type HazardKind = 'fire_pool' | 'lightning_strike' | 'poison_cloud' | 'slow_zone' | 'smoke_zone';
 
+export type PickupKind = 'health' | 'speed' | 'damage' | 'shield' | 'cooldown' | 'berserker';
+
+export type PickupState = {
+  id: string;
+  kind: PickupKind;
+  x: number;
+  y: number;
+};
+
 export type HazardState = {
   id: string;
   kind: HazardKind;
@@ -94,6 +103,10 @@ export type PlayerState = {
   // Lightning Strike — multiplier on cooldown (lower = faster).
   lightningCooldownMul: number;
   pendingLevelUps: number;
+  // Pickup buffs — epoch ms timestamps (0 = inactive)
+  speedBoostUntil: number;
+  damageBoostUntil: number;
+  berserkerUntil: number;
 };
 
 export type NPCState = {
@@ -141,6 +154,7 @@ export type Snapshot = {
   projectiles: ProjectileState[];
   wolves?: WolfState[];
   hazards?: HazardState[];
+  pickups?: PickupState[];
 };
 
 export type LeaderboardEntry = {

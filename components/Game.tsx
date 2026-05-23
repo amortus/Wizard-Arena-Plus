@@ -254,6 +254,29 @@ export default function Game({ name, character, color, hue, room, country }: Pro
               {hud.self.weapons.join(' · ')}
               {hud.self.projectileBonus > 0 ? ` +${hud.self.projectileBonus}` : ''}
             </div>
+            {(() => {
+              const now = Date.now();
+              const buffs: { icon: string; cls: string; until: number }[] = [];
+              if (hud.self.speedBoostUntil > now)
+                buffs.push({ icon: '⚡', cls: 'speed', until: hud.self.speedBoostUntil });
+              if (hud.self.damageBoostUntil > now)
+                buffs.push({ icon: '🗡', cls: 'damage', until: hud.self.damageBoostUntil });
+              if (hud.self.berserkerUntil > now)
+                buffs.push({ icon: '💀', cls: 'berserker', until: hud.self.berserkerUntil });
+              if (hud.self.damageImmuneUntil > now)
+                buffs.push({ icon: '🛡', cls: 'shield', until: hud.self.damageImmuneUntil });
+              if (!buffs.length) return null;
+              return (
+                <div className="unit-frame-buffs">
+                  {buffs.map((b) => (
+                    <div key={b.cls} className={`buff-pill buff-pill-${b.cls}`}>
+                      <span>{b.icon}</span>
+                      <span>{Math.max(1, Math.ceil((b.until - now) / 1000))}s</span>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}

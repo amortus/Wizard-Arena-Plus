@@ -187,6 +187,7 @@ export class ArenaScene extends Phaser.Scene {
   trailPool: Phaser.GameObjects.Graphics[] = [];
   hazardVisuals = new Map<string, Phaser.GameObjects.Graphics>();
   hazardLabels = new Map<string, Phaser.GameObjects.Text>();
+  pickupVisuals = new Map<string, Phaser.GameObjects.Graphics>();
   bossAlertUntil = 0;
   bossAlertName = '';
   prevPlayerPos = new Map<string, { x: number; y: number; t: number }>();
@@ -1253,6 +1254,114 @@ export class ArenaScene extends Phaser.Scene {
     draw();
   }
 
+  renderPickups(pickups: import('../shared/types').PickupState[], clientNow: number) {
+    const seen = new Set<string>();
+    for (const pk of pickups) {
+      seen.add(pk.id);
+      let g = this.pickupVisuals.get(pk.id);
+      if (!g) {
+        g = this.add.graphics();
+        g.setDepth(8); // below gems but above ground
+        this.pickupVisuals.set(pk.id, g);
+      }
+      g.clear();
+      const bob = Math.sin(clientNow * 0.005 + pk.x * 0.01 + pk.y * 0.013) * 3;
+      const pulse = 1 + Math.sin(clientNow * 0.007) * 0.1;
+      g.setPosition(pk.x, pk.y + bob);
+
+      switch (pk.kind) {
+        case 'health': {
+          // Green cross
+          g.fillStyle(0x22cc44, 1);
+          g.fillRect(-10, -4, 20, 8);
+          g.fillRect(-4, -10, 8, 20);
+          g.lineStyle(2, 0xffffff, 0.9);
+          g.strokeRect(-10, -4, 20, 8);
+          g.strokeRect(-4, -10, 8, 20);
+          g.setScale(pulse);
+          break;
+        }
+        case 'speed': {
+          // Blue chevron arrow pointing right
+          g.fillStyle(0x3399ff, 1);
+          g.fillTriangle(-8, -10, 6, 0, -8, 10);
+          g.fillTriangle(-2, -10, 12, 0, -2, 10);
+          g.lineStyle(2, 0x88ddff, 0.8);
+          g.strokeTriangle(-8, -10, 6, 0, -8, 10);
+          g.setScale(pulse * 1.1);
+          break;
+        }
+        case 'damage': {
+          // Red 4-pointed star (2 rects rotated 45°)
+          const sz = 11 * pulse;
+          g.fillStyle(0xff4422, 1);
+          g.fillRect(-sz * 0.3, -sz, sz * 0.6, sz * 2);
+          g.fillRect(-sz, -sz * 0.3, sz * 2, sz * 0.6);
+          // diagonal arms (approximate with smaller rects at angle)
+          g.fillRect(-sz * 0.22, -sz * 0.22, sz * 0.44, sz * 0.44);
+          g.lineStyle(2, 0xff8866, 0.8);
+          g.strokeRect(-sz * 0.3, -sz, sz * 0.6, sz * 2);
+          g.setAngle((clientNow * 0.03) % 360);
+          break;
+        }
+        case 'shield': {
+          // Gold diamond (losango)
+          const r = 11 * pulse;
+          g.fillStyle(0xffcc00, 1);
+          g.fillTriangle(0, -r, r, 0, 0, r);
+          g.fillTriangle(0, -r, -r, 0, 0, r);
+          g.lineStyle(2, 0xfff0aa, 0.9);
+          g.strokeTriangle(0, -r, r, 0, 0, r);
+          g.strokeTriangle(0, -r, -r, 0, 0, r);
+          g.setScale(pulse);
+          break;
+        }
+        case 'cooldown': {
+          // Cyan circle with clock tick marks
+          const cr = 10 * pulse;
+          g.fillStyle(0x00bbdd, 0.85);
+          g.fillCircle(0, 0, cr);
+          g.lineStyle(2, 0x88ffff, 0.9);
+          g.strokeCircle(0, 0, cr);
+          g.lineStyle(2, 0xffffff, 0.8);
+          for (let i = 0; i < 4; i++) {
+            const a = (i / 4) * Math.PI * 2;
+            g.lineBetween(Math.cos(a) * (cr * 0.5), Math.sin(a) * (cr * 0.5), Math.cos(a) * (cr * 0.9), Math.sin(a) * (cr * 0.9));
+          }
+          g.setAngle(((clientNow * 0.05) % 360));
+          break;
+        }
+        case 'berserker': {
+          // Dark red spiked circle
+          const br = 9 * pulse;
+          g.fillStyle(0xaa0000, 1);
+          g.fillCircle(0, 0, br);
+          g.lineStyle(3, 0xff2222, 0.9);
+          g.strokeCircle(0, 0, br);
+          // Spikes
+          g.fillStyle(0xff3333, 1);
+          for (let i = 0; i < 6; i++) {
+            const a = (i / 6) * Math.PI * 2 + (clientNow * 0.001);
+            const ix = Math.cos(a) * (br + 6);
+            const iy = Math.sin(a) * (br + 6);
+            const la = a + 0.35;
+            const ra = a - 0.35;
+            g.fillTriangle(Math.cos(la) * br, Math.sin(la) * br, ix, iy, Math.cos(ra) * br, Math.sin(ra) * br);
+          }
+          g.setScale(pulse);
+          break;
+        }
+      }
+    }
+    // Clean up visuals for collected/expired pickups
+    for (const [id, g] of this.pickupVisuals) {
+      if (!seen.has(id)) {
+        g.destroy();
+        this.pickupVisuals.delete(id);
+      }
+    }
+  }
+
   renderHazards(hazards: import('../shared/types').HazardState[], serverNow: number) {
     const clientNow = performance.now();
     const seen = new Set<string>();
@@ -2162,6 +2271,9 @@ export class ArenaScene extends Phaser.Scene {
       this.prevSelfHp = self.hp;
       this.prevSelfAlive = self.alive;
     }
+
+    // Pickups: droppable items on the ground (health, speed boost, etc.)
+    this.renderPickups(snap.pickups ?? [], performance.now());
 
     // Hazards: warning ring + active fire/lightning visuals.
     // Hazard timestamps are server Date.now() — use snap.t (server time) for comparison.

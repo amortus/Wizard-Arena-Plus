@@ -5,6 +5,8 @@ import {
   CHARACTER_BASES,
   GEM_PICKUP_RADIUS,
   GEM_RADIUS,
+  PICKUP_RADIUS,
+  PICKUP_LIFETIME_MS,
   LEVEL_DAMAGE_CAP_LEVELS,
   LEVEL_DAMAGE_MUL,
   LEVEL_UP_INVULN_MS,
@@ -58,6 +60,8 @@ import type {
   HazardState,
   LeaderboardEntry,
   NPCState,
+  PickupKind,
+  PickupState,
   PlayerState,
   ProjectileState,
   ServerToClient,
@@ -110,6 +114,10 @@ type ServerPlayer = PlayerState & {
   pwAuraLastHits: Map<string, number>;
   // Set each tick by updateHazards — not part of PlayerState, server-only
   inSlowZone: boolean;
+  // Pickup buffs
+  speedBoostUntil: number;
+  damageBoostUntil: number;
+  berserkerUntil: number;
 };
 
 type ServerProjectile = ProjectileState & {
@@ -167,6 +175,10 @@ type ServerHazard = HazardState & {
   lightningFired?: boolean;
 };
 
+type ServerPickup = PickupState & {
+  expiresAt: number;
+};
+
 type ServerWolf = {
   id: string;
   ownerId: string;
@@ -215,6 +227,8 @@ export default class GameServer implements Party.Server {
   // Environmental hazards — fire pools and lightning strikes
   hazards = new Map<string, ServerHazard>();
   nextHazardAt = 0;
+  // Droppable pickups (health, speed boost, etc.)
+  pickups = new Map<string, ServerPickup>();
   lastTickAt = 0;
   tickHandle: ReturnType<typeof setInterval> | null = null;
   // Persistent all-time leaderboard (top 10 by score)
@@ -320,6 +334,7 @@ export default class GameServer implements Party.Server {
     this.blackHoles.clear();
     this.wolves.clear();
     this.hazards.clear();
+    this.pickups.clear();
     this.dragonId = null;
     this.nextDragonAllowedAt = 0;
     this.activeBossId = null;
@@ -485,6 +500,9 @@ export default class GameServer implements Party.Server {
       pwBonusRatLastAt: 0,
       pwAuraLastHits: new Map(),
       inSlowZone: false,
+      speedBoostUntil: 0,
+      damageBoostUntil: 0,
+      berserkerUntil: 0,
     };
     this.players.set(id, player);
     // Defensive: if a Durable Object woke from hibernation and lost the tick
@@ -552,6 +570,9 @@ export default class GameServer implements Party.Server {
     p.trailDurationMul = 1;
     p.frostNovaRadiusMul = 1;
     p.lightningCooldownMul = 1;
+    p.speedBoostUntil = 0;
+    p.damageBoostUntil = 0;
+    p.berserkerUntil = 0;
     // Despawn this player's wolves on death/respawn
     for (const [wid, w] of this.wolves) {
       if (w.ownerId === p.id) this.wolves.delete(wid);
@@ -734,6 +755,7 @@ export default class GameServer implements Party.Server {
     this.updateBlackHoles(now);
     this.updateWolves(dt, now);
     this.updateGems();
+    this.updatePickups(now);
     this.scheduleHazard(now);
     this.updateHazards(now);
 
@@ -767,7 +789,7 @@ export default class GameServer implements Party.Server {
     void now;
     for (const p of this.players.values()) {
       if (!p.alive) continue;
-      const speed = PLAYER_SPEED * p.speedMul * (p.inSlowZone ? 0.45 : 1);
+      const speed = PLAYER_SPEED * p.speedMul * (p.inSlowZone ? 0.45 : 1) * (wallNow < p.speedBoostUntil ? 1.7 : 1);
       p.x = clamp(p.x + p.input.dx * speed * dt, PLAYER_RADIUS, ARENA_WIDTH - PLAYER_RADIUS);
       p.y = clamp(p.y + p.input.dy * speed * dt, PLAYER_RADIUS, ARENA_HEIGHT - PLAYER_RADIUS);
 
@@ -1132,6 +1154,12 @@ export default class GameServer implements Party.Server {
     // Soul Harvest: each kill adds a 0.1% stack (capped at 500 = +50%).
     if (owner?.soulHarvestEnabled && owner.soulHarvestStacks > 0) {
       dmg *= 1 + Math.min(500, owner.soulHarvestStacks) * 0.001;
+    }
+    // Pickup buffs: berserker > damage boost (take highest; they don't stack).
+    if (owner) {
+      const now = Date.now();
+      if (now < owner.berserkerUntil) dmg *= 2.2;
+      else if (now < owner.damageBoostUntil) dmg *= 1.8;
     }
     const crit = owner?.critChance ?? 0;
     if (crit > 0 && Math.random() < crit) dmg *= 2;
@@ -1796,7 +1824,8 @@ export default class GameServer implements Party.Server {
         now >= target.damageImmuneUntil
       ) {
         const dmgMul = 1 + (target.waveNumber - 1) * 0.05;
-        target.hp -= NPC_DAMAGE * dmgMul;
+        const berserkerPenalty = now < target.berserkerUntil ? 1.5 : 1;
+        target.hp -= NPC_DAMAGE * dmgMul * berserkerPenalty;
         n.lastHitAt = now;
         if (target.hp <= 0) this.killPlayer(target, '__npc__');
       }
@@ -1899,6 +1928,9 @@ export default class GameServer implements Party.Server {
         this.dropGem(n.x, n.y, value);
       }
     }
+
+    // Chance to drop a pickup (health, speed boost, etc.)
+    this.tryDropPickup(n, Date.now());
 
     // Soul Harvest stack: each kill grants a permanent +0.1% damage stack
     // (capped at 500 = +50%). Counts every kind of kill, including chains.
@@ -2137,6 +2169,9 @@ export default class GameServer implements Party.Server {
         xpMul: p.xpMul,
         projectileLifeMul: p.projectileLifeMul,
         pendingLevelUps: p.pendingLevelUps,
+        speedBoostUntil: p.speedBoostUntil,
+        damageBoostUntil: p.damageBoostUntil,
+        berserkerUntil: p.berserkerUntil,
       });
     }
     const npcs = [];
@@ -2159,6 +2194,10 @@ export default class GameServer implements Party.Server {
     for (const h of this.hazards.values()) {
       hazards.push({ id: h.id, kind: h.kind, x: h.x, y: h.y, radius: h.radius, warningUntilMs: h.warningUntilMs, activeUntilMs: h.activeUntilMs });
     }
+    const pickups: PickupState[] = [];
+    for (const pk of this.pickups.values()) {
+      pickups.push({ id: pk.id, kind: pk.kind, x: pk.x, y: pk.y });
+    }
     const snap: Snapshot = {
       type: 'snapshot',
       t: now,
@@ -2171,6 +2210,7 @@ export default class GameServer implements Party.Server {
       projectiles,
       wolves,
       hazards,
+      pickups,
     };
     this.room.broadcast(JSON.stringify(snap));
   }
@@ -2274,6 +2314,66 @@ export default class GameServer implements Party.Server {
 
       if (now > h.activeUntilMs) {
         this.hazards.delete(id);
+      }
+    }
+  }
+
+  tryDropPickup(npc: ServerNpc, now: number) {
+    const tier = MONSTER_BASES[npc.kind].tier;
+    const dropChance = tier === 'boss' ? 0.85 : tier === 'elite' ? 0.35 : 0.05;
+    if (Math.random() > dropChance) return;
+
+    const pools: Record<string, PickupKind[]> = {
+      boss:  ['health', 'speed', 'damage', 'shield', 'cooldown', 'berserker'],
+      elite: ['health', 'speed', 'damage', 'shield', 'cooldown'],
+      minion: ['health', 'speed', 'damage'],
+    };
+    const pool = pools[tier] ?? pools['minion'];
+    const kind = pool[Math.floor(Math.random() * pool.length)];
+
+    const id = genId('pickup');
+    this.pickups.set(id, {
+      id, kind,
+      x: npc.x + (Math.random() - 0.5) * 20,
+      y: npc.y + (Math.random() - 0.5) * 20,
+      expiresAt: now + PICKUP_LIFETIME_MS,
+    });
+  }
+
+  applyPickup(p: ServerPlayer, pickup: ServerPickup, now: number) {
+    switch (pickup.kind) {
+      case 'health':
+        p.hp = Math.min(p.maxHp, p.hp + p.maxHp * 0.35);
+        break;
+      case 'speed':
+        p.speedBoostUntil = Math.max(p.speedBoostUntil, now + 6000);
+        break;
+      case 'damage':
+        p.damageBoostUntil = Math.max(p.damageBoostUntil, now + 7000);
+        break;
+      case 'shield':
+        p.damageImmuneUntil = Math.max(p.damageImmuneUntil, now + 3000);
+        break;
+      case 'cooldown':
+        for (const key of Object.keys(p.weaponCooldowns)) p.weaponCooldowns[key] = 0;
+        break;
+      case 'berserker':
+        p.berserkerUntil = Math.max(p.berserkerUntil, now + 8000);
+        break;
+    }
+  }
+
+  updatePickups(now: number) {
+    const r2 = PICKUP_RADIUS * PICKUP_RADIUS;
+    for (const [id, pk] of this.pickups) {
+      if (now > pk.expiresAt) { this.pickups.delete(id); continue; }
+      for (const p of this.players.values()) {
+        if (!p.alive) continue;
+        if ((p.x - pk.x) ** 2 + (p.y - pk.y) ** 2 < r2) {
+          this.applyPickup(p, pk, now);
+          this.pickups.delete(id);
+          break;
+        }
       }
     }
   }
