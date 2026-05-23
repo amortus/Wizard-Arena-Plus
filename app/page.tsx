@@ -200,7 +200,7 @@ export default function Page() {
         <p className="sub">WASD or mouse to move · Weapons strike automatically · Survive the arena</p>
 
         <div className="field">
-          <label>Choose Your Gladiator</label>
+          <label>Choose Your Wizard</label>
           <div className="char-grid characters">
             {CHAR_INFO.map((c) => (
               <button

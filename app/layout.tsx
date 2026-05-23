@@ -8,10 +8,10 @@ export const metadata: Metadata = {
       (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000'),
   ),
   title: 'Wizard Arena Plus',
-  description: 'Free multiplayer survivors-style game. Pick a gladiator, dodge hordes, stack powerups, top the leaderboard.',
+  description: 'Free multiplayer survivors-style game. Pick a wizard, dodge hordes, stack powerups, top the leaderboard.',
   openGraph: {
     title: 'Wizard Arena Plus',
-    description: 'Free multiplayer survivors-style game. Pick a gladiator, dodge hordes, stack powerups, top the leaderboard.',
+    description: 'Free multiplayer survivors-style game. Pick a wizard, dodge hordes, stack powerups, top the leaderboard.',
     type: 'website',
     images: ['/wizard_arena_plus_logo.png'],
   },
