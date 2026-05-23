@@ -197,6 +197,7 @@ export class ArenaScene extends Phaser.Scene {
     this.makeFallbackTextures();
     this.makeArenaBackground();
     this.registerAnimations();
+    this.warmPools();
 
     if (this.input.keyboard) {
       this.cursors = this.input.keyboard.createCursorKeys();
@@ -264,6 +265,82 @@ export class ArenaScene extends Phaser.Scene {
     if (stale && cooldown) {
       this.lastJoinResendAt = now;
       this.socket.send(JSON.stringify(this.joinPayload));
+    }
+  }
+
+  warmPools() {
+    // Pre-allocate NPC sprites so first wave spawns never create objects from scratch.
+    // Counts are tuned to typical wave sizes per kind.
+    const npcWarmCount: Record<string, number> = {
+      rat: 12, goblin: 10, goblin_scratcher: 10, feral_goblin: 10, wraith: 10,
+      skeleton: 8, skeleton_knight: 8, stalker_skeleton: 8, crawling_skeleton: 8,
+      zombie_v2: 8, zombie_b: 8, ghoul: 8, bloated_zombie: 8,
+      goblin_brute: 6, fat_goblin: 6, spider: 6, treant: 4, slime: 4, werewolf: 4,
+      zombie_bear: 3, dragon: 1,
+    };
+    for (const [kind, count] of Object.entries(npcWarmCount)) {
+      const tex = `${kind}_south`;
+      const npcScale = (NPC_SPRITE_SCALE[kind] ?? 1) * SPRITE_SHRINK;
+      const pool: Phaser.GameObjects.Sprite[] = [];
+      for (let i = 0; i < count; i++) {
+        const s = this.add.sprite(0, 0, this.textures.exists(tex) ? tex : 'skeleton_south');
+        s.setScale(npcScale).setData('baseScale', npcScale).setData('kind', kind);
+        s.setDepth(10).setVisible(false).setActive(false);
+        pool.push(s);
+      }
+      this.npcPool.set(kind, pool);
+    }
+
+    // Pre-allocate projectile sprites — 20 per element type.
+    const projElements = ['arcane', 'fire', 'lightning', 'earth', 'forest', 'shadow'];
+    for (const elem of projElements) {
+      for (let i = 0; i < 20; i++) {
+        const s = this.add.sprite(0, 0, `proj_${elem}`);
+        s.setBlendMode(elem === 'earth' ? Phaser.BlendModes.NORMAL : Phaser.BlendModes.ADD);
+        s.setVisible(false).setActive(false);
+        this.projPool.push(s);
+      }
+    }
+
+    // Pre-allocate gem sprites — more of common tiers.
+    for (const [tex, count] of [['gem_blue', 20], ['gem_green', 15], ['gem_gold', 10], ['gem_epic', 5]] as const) {
+      for (let i = 0; i < count; i++) {
+        const s = this.add.sprite(0, 0, tex);
+        s.setBlendMode(Phaser.BlendModes.NORMAL).setVisible(false).setActive(false);
+        this.gemPool.push(s);
+      }
+    }
+
+    // Pre-allocate damage number texts — high frequency, short lifetime.
+    for (let i = 0; i < 40; i++) {
+      const txt = this.add.text(0, 0, '0', {
+        fontFamily: 'monospace', fontSize: '12px', color: '#ffe080',
+        stroke: '#000000', strokeThickness: 3,
+      });
+      txt.setOrigin(0.5, 0.5).setDepth(50).setVisible(false).setActive(false);
+      this.dmgNumPool.push(txt);
+    }
+
+    // Pre-allocate spirit wolf containers.
+    for (let i = 0; i < 12; i++) {
+      const container = this.add.container(0, 0);
+      container.setDepth(20);
+      const glow = this.add.graphics().setName('glow').setBlendMode(Phaser.BlendModes.ADD);
+      container.add(glow);
+      if (this.textures.exists('icon_wolf')) {
+        const head = this.add.sprite(0, 0, 'icon_wolf').setName('head').setScale(0.55);
+        container.add(head);
+      }
+      container.setVisible(false).setActive(false);
+      this.wolfPool.push(container);
+    }
+
+    // Pre-allocate trail of fire puff graphics.
+    for (let i = 0; i < 24; i++) {
+      const g = this.add.graphics();
+      g.setDepth(8).setBlendMode(Phaser.BlendModes.ADD);
+      g.setVisible(false).setActive(false);
+      this.trailPool.push(g);
     }
   }
 
