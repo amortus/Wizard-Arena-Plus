@@ -1424,9 +1424,16 @@ button {
 .room-row-wave { color: #aaddaa; white-space: nowrap; max-width: 130px; overflow: hidden; text-overflow: ellipsis; }
 .room-row-full { color: rgba(255,100,100,0.7); }
 .room-empty { text-align: center; padding: 24px; color: rgba(200,190,160,0.5); font-family: 'Press Start 2P',monospace; font-size: 8px; }
-.room-browser-footer { margin-top: 14px; display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
-.room-create-section { flex: 1; }
+.room-browser-footer { margin-top: 14px; }
+.room-create-section { width: 100%; }
 .room-create-form { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+/* Hide Wave column on narrow screens */
+@media (max-width: 480px) {
+  .room-row-wave, .room-table th:nth-child(4) { display: none; }
+  .room-browser { padding: 0 2px; }
+  .room-table { font-size: 9px; }
+  .room-table td, .room-table th { padding: 6px 5px; }
+}
 .room-pass-row { display: flex; gap: 8px; align-items: center; }
 .room-pass-prompt { background: rgba(0,0,0,0.6); border: 1px solid rgba(200,160,60,0.4); border-radius: 4px; padding: 4px 8px; margin-top: 4px; display: inline-flex; gap: 6px; align-items: center; }
 
@@ -1596,11 +1603,70 @@ button {
   display: inline-block;
   letter-spacing: 0.5px;
 }
-/* Mode selector buttons in create room form */
-.room-mode-row {
-  display: flex;
+/* ── Mode selector cards ─────────────────────────────────────────────────── */
+.room-mode-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 8px;
+  margin: 10px 0 4px;
 }
+.room-mode-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 14px 8px 12px;
+  border: 2px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.18s, transform 0.1s, box-shadow 0.18s;
+  font-family: 'VT323', monospace;
+  text-align: center;
+  min-height: 90px;
+  position: relative;
+  overflow: hidden;
+}
+.room-mode-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 0.2s;
+  border-radius: 6px;
+}
+.room-mode-card.active::before { opacity: 1; }
+/* Per-mode colours */
+.room-mode-card--arena   { background: radial-gradient(ellipse at 50% 110%, #5a0a0a 0%, #1a0505 100%); }
+.room-mode-card--castle  { background: radial-gradient(ellipse at 50% 110%, #3b0e6b 0%, #110518 100%); }
+.room-mode-card--moba    { background: radial-gradient(ellipse at 50% 110%, #0b2e6e 0%, #020c1a 100%); }
+.room-mode-card--aram    { background: radial-gradient(ellipse at 50% 110%, #5a2e00 0%, #180d00 100%); }
+.room-mode-card--arena.active   { border-color: #e03333; box-shadow: 0 0 14px rgba(224,51,51,0.35); }
+.room-mode-card--castle.active  { border-color: #9944dd; box-shadow: 0 0 14px rgba(153,68,221,0.35); }
+.room-mode-card--moba.active    { border-color: #3399ff; box-shadow: 0 0 14px rgba(51,153,255,0.35); }
+.room-mode-card--aram.active    { border-color: #ff9900; box-shadow: 0 0 14px rgba(255,153,0,0.35); }
+.room-mode-card:hover:not(.active) { border-color: rgba(255,255,255,0.22); transform: translateY(-1px); }
+.rmc-glyph {
+  font-size: 30px;
+  line-height: 1;
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.6));
+}
+.rmc-label {
+  font-size: 13px;
+  letter-spacing: 1.5px;
+  color: #e8dcc0;
+  font-weight: bold;
+}
+.rmc-sub {
+  font-size: 11px;
+  color: rgba(224,216,192,0.5);
+  line-height: 1.2;
+}
+.room-mode-card.active .rmc-label { color: #fff; }
+.room-mode-card.active .rmc-sub   { color: rgba(255,255,255,0.75); }
+
+/* keep old selectors inert in case anything still references them */
+.room-mode-row { display: flex; gap: 8px; }
 .room-mode-btn {
   flex: 1;
   padding: 8px 10px;

@@ -338,46 +338,30 @@ export default function Page() {
                         style={{ fontSize: 12, letterSpacing: 1, flex: 1 }}
                       />
                     </div>
-                    <div className="room-mode-row">
-                      <button
-                        type="button"
-                        className={`room-mode-btn${createMode === 'arena' ? ' active' : ''}`}
-                        onClick={() => setCreateMode('arena')}
-                      >
-                        ⚔️ Arena
-                      </button>
-                      <button
-                        type="button"
-                        className={`room-mode-btn${createMode === 'castle' ? ' active' : ''}`}
-                        onClick={() => setCreateMode('castle')}
-                      >
-                        🏰 Castle Defender
-                      </button>
-                      <button
-                        type="button"
-                        className={`room-mode-btn${createMode === 'moba' ? ' active' : ''}`}
-                        onClick={() => setCreateMode('moba')}
-                      >
-                        🗡️ Crystal Rush
-                      </button>
-                      <button
-                        type="button"
-                        className={`room-mode-btn${createMode === 'aram' ? ' active' : ''}`}
-                        onClick={() => setCreateMode('aram')}
-                      >
-                        🎲 ARAM
-                      </button>
+                    <div className="room-mode-grid">
+                      {([
+                        { mode: 'arena',  label: 'ARENA',         sub: 'Survival · até 4 players', glyph: '⚔', clr: 'arena' },
+                        { mode: 'castle', label: 'CASTLE',        sub: 'Defenda a fortaleza · 4p',  glyph: '🏰', clr: 'castle' },
+                        { mode: 'moba',   label: 'CRYSTAL RUSH',  sub: '3v3 · 3 lanes · MOBA',      glyph: '💎', clr: 'moba' },
+                        { mode: 'aram',   label: 'A.R.A.M.',      sub: 'Aleatório · lane central',   glyph: '🎲', clr: 'aram' },
+                      ] as const).map(({ mode, label, sub, glyph, clr }) => (
+                        <button
+                          key={mode}
+                          type="button"
+                          className={`room-mode-card room-mode-card--${clr}${createMode === mode ? ' active' : ''}`}
+                          onClick={() => setCreateMode(mode)}
+                        >
+                          <span className="rmc-glyph">{glyph}</span>
+                          <span className="rmc-label">{label}</span>
+                          <span className="rmc-sub">{sub}</span>
+                        </button>
+                      ))}
                     </div>
                     <button className="start-btn" onClick={createRoom} type="button">
                       Create &amp; Play
                     </button>
                   </div>
                 )}
-              </div>
-              <div>
-                <Link href="/leaderboard" className="leaderboard-btn lb-link-btn" style={{ marginTop: 0, display: 'inline-block', padding: '12px 16px' }}>
-                  Leaderboard
-                </Link>
               </div>
             </div>
           </div>

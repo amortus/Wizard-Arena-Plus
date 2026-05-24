@@ -252,7 +252,7 @@ export default function Game({ name, character, color, hue, room, country, roomN
         </div>
       )}
 
-      <div className="top-bar">
+      {hud.gameMode !== 'moba' && hud.gameMode !== 'aram' && <div className="top-bar">
         <div className="top-bar-level">L{hud.self?.level ?? 1}</div>
         <div className="top-bar-xp">
           <div
@@ -280,7 +280,7 @@ export default function Game({ name, character, color, hue, room, country, roomN
             <div className="top-bar-wave-time">{Math.ceil(hud.waveTimeLeftMs / 1000)}s</div>
           )}
         </div>
-      </div>
+      </div>}
 
       {hud.castle && hud.gameMode === 'castle' && (
         <div className="castle-hp-bar-wrap">

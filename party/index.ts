@@ -638,6 +638,39 @@ export default class GameServer implements Party.Server {
     }
   }
 
+  updateMinionCombat(now: number) {
+    const dead = new Set<string>();
+    for (const [id, n] of this.npcs) {
+      if (n.ai !== 'moba_march') continue;
+      if (dead.has(id)) continue;
+      if (now < n.lastHitAt + NPC_TOUCH_COOLDOWN_MS) continue;
+      const r2 = (NPC_RADIUS * 3) * (NPC_RADIUS * 3);
+      let nearest: (typeof n) | null = null;
+      let nearestDist2 = Infinity;
+      for (const [eid, e] of this.npcs) {
+        if (eid === id) continue;
+        if (e.ai !== 'moba_march') continue;
+        if (e.ownerPlayerId === n.ownerPlayerId) continue;
+        if (dead.has(eid)) continue;
+        const dx = e.x - n.x;
+        const dy = e.y - n.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 <= r2 && d2 < nearestDist2) {
+          nearestDist2 = d2;
+          nearest = e;
+        }
+      }
+      if (!nearest) continue;
+      const dmg = this.gameMode === 'aram' ? ARAM_MINION_DAMAGE : MOBA_MINION_DAMAGE;
+      nearest.hp -= dmg;
+      n.lastHitAt = now;
+      if (nearest.hp <= 0) dead.add(nearest.id);
+    }
+    for (const id of dead) {
+      this.killNPC(id);
+    }
+  }
+
   updateTowers(now: number) {
     if (this.mobaWinner) return;
     const isAram = this.gameMode === 'aram';
@@ -1450,6 +1483,7 @@ export default class GameServer implements Party.Server {
       // Crystal Rush: lane minions, towers, team combat
       if (!this.mobaWinner) {
         this.runMobaMinions(now);
+        this.updateMinionCombat(now);
         this.updateNPCs(dt, now);
         this.updateTowers(now);
         this.checkMobaStructures();
@@ -1459,6 +1493,7 @@ export default class GameServer implements Party.Server {
       // ARAM: single mid-lane minions, towers, health relics, team combat
       if (!this.mobaWinner) {
         this.runAramMinions(now);
+        this.updateMinionCombat(now);
         this.updateNPCs(dt, now);
         this.updateTowers(now);
         this.checkMobaStructures();
