@@ -299,7 +299,7 @@ export default class GameServer implements Party.Server {
   }
 
   recordDeath(p: ServerPlayer) {
-    const score = p.level * 100 + p.waveNumber * 50;
+    const score = p.level * 100 + p.waveNumber * 50 + (p.bossKills ?? 0) * 500;
     if (score <= 0) return;
     const entry: LeaderboardEntry = {
       name: p.name,
@@ -499,6 +499,7 @@ export default class GameServer implements Party.Server {
       frostAuraRadius: 0,
       xpMul: 1,
       projectileLifeMul: 1,
+      bossKills: 0,
       timeShieldEnabled: false,
       damageImmuneUntil: 0,
       lightningStrikeEnabled: false,
@@ -590,6 +591,7 @@ export default class GameServer implements Party.Server {
     p.frostAuraRadius = 0;
     p.xpMul = 1;
     p.projectileLifeMul = 1;
+    p.bossKills = 0;
     p.timeShieldEnabled = false;
     p.damageImmuneUntil = 0;
     p.nextTimeShieldAt = 0;
@@ -838,6 +840,7 @@ export default class GameServer implements Party.Server {
     this.runWaves(now);
     this.maybeSpawnDragon(now);
     this.retargetDragon();
+    this.retargetBoss();
     this.maybeSpawnBoss(now);
     this.maybeSpawnMiniBoss(now);
     this.updateNPCs(dt, now);
@@ -913,7 +916,7 @@ export default class GameServer implements Party.Server {
       if (p.lightningStrikeEnabled && wallNow >= p.nextLightningAt) {
         const target = this.pickRandomNearbyNpc(p, 520);
         if (target) {
-          const baseDmg = 28 * p.damageMul * (1 + Math.min(LEVEL_DAMAGE_CAP_LEVELS, p.level - 1) * LEVEL_DAMAGE_MUL);
+          const baseDmg = this.passiveDmg(p, 28 * p.damageMul * (1 + Math.min(LEVEL_DAMAGE_CAP_LEVELS, p.level - 1) * LEVEL_DAMAGE_MUL));
           const r2 = 70 * 70;
           for (const n of this.npcs.values()) {
             const d2 = (n.x - target.x) ** 2 + (n.y - target.y) ** 2;
@@ -931,18 +934,18 @@ export default class GameServer implements Party.Server {
 
       // Meteor Shower — every 8s, 3 meteors fall on random nearby NPCs (staggered for screen impact).
       if (p.meteorShowerEnabled && wallNow >= p.nextMeteorAt) {
-        const baseDmg = 24 * p.damageMul * (1 + Math.min(LEVEL_DAMAGE_CAP_LEVELS, p.level - 1) * LEVEL_DAMAGE_MUL);
         const aoeR2 = 80 * 80;
         for (let i = 0; i < 3; i++) {
           const target = this.pickRandomNearbyNpc(p, 600);
           if (!target) break;
+          const meteorDmg = this.passiveDmg(p, 24 * p.damageMul * (1 + Math.min(LEVEL_DAMAGE_CAP_LEVELS, p.level - 1) * LEVEL_DAMAGE_MUL));
           // Slight stagger so meteors don't all explode the same tick visually
           setTimeout(() => {
             for (const n of this.npcs.values()) {
               const d2 = (n.x - target.x) ** 2 + (n.y - target.y) ** 2;
               if (d2 < aoeR2) {
-                n.hp -= baseDmg;
-                this.applyVampire(p, baseDmg);
+                n.hp -= meteorDmg;
+                this.applyVampire(p, meteorDmg);
                 if (n.hp <= 0) this.killNPC(n.id, p.id);
               }
             }
@@ -957,7 +960,7 @@ export default class GameServer implements Party.Server {
       if (p.frostNovaEnabled && wallNow >= p.nextFrostNovaAt) {
         const radius = 160 * (p.frostNovaRadiusMul || 1);
         const r2 = radius * radius;
-        const baseDmg = 16 * p.damageMul * (1 + Math.min(LEVEL_DAMAGE_CAP_LEVELS, p.level - 1) * LEVEL_DAMAGE_MUL);
+        const baseDmg = this.passiveDmg(p, 16 * p.damageMul * (1 + Math.min(LEVEL_DAMAGE_CAP_LEVELS, p.level - 1) * LEVEL_DAMAGE_MUL));
         for (const n of this.npcs.values()) {
           const d2 = (n.x - p.x) ** 2 + (n.y - p.y) ** 2;
           if (d2 < r2) {
@@ -978,7 +981,7 @@ export default class GameServer implements Party.Server {
       if (p.holySmiteEnabled && wallNow >= p.nextHolySmiteAt) {
         const target = this.pickRandomNearbyNpc(p, 480);
         if (target) {
-          const baseDmg = 60 * p.damageMul * (1 + Math.min(LEVEL_DAMAGE_CAP_LEVELS, p.level - 1) * LEVEL_DAMAGE_MUL);
+          const baseDmg = this.passiveDmg(p, 60 * p.damageMul * (1 + Math.min(LEVEL_DAMAGE_CAP_LEVELS, p.level - 1) * LEVEL_DAMAGE_MUL));
           target.hp -= baseDmg;
           this.applyVampire(p, baseDmg);
           if (target.hp <= 0) this.killNPC(target.id, p.id);
@@ -1001,7 +1004,7 @@ export default class GameServer implements Party.Server {
           x: cx, y: cy,
           spawnedAt: wallNow,
           expiresAt: wallNow + durationMs,
-          damage: 8 * p.damageMul * (1 + Math.min(LEVEL_DAMAGE_CAP_LEVELS, p.level - 1) * LEVEL_DAMAGE_MUL),
+          damage: this.passiveDmg(p, 8 * p.damageMul * (1 + Math.min(LEVEL_DAMAGE_CAP_LEVELS, p.level - 1) * LEVEL_DAMAGE_MUL)),
           pullRadius: 220,
           pullStrength: 220,
           damageRadius: 100,
@@ -1070,7 +1073,7 @@ export default class GameServer implements Party.Server {
         p.trailBreadcrumbs = p.trailBreadcrumbs.filter((b) => b.expiresAt > wallNow);
         // damage NPCs touching breadcrumbs
         if (p.trailBreadcrumbs.length > 0) {
-          const dmg = 10 * p.damageMul * (1 + Math.min(LEVEL_DAMAGE_CAP_LEVELS, p.level - 1) * LEVEL_DAMAGE_MUL);
+          const dmg = this.passiveDmg(p, 10 * p.damageMul * (1 + Math.min(LEVEL_DAMAGE_CAP_LEVELS, p.level - 1) * LEVEL_DAMAGE_MUL));
           const r2 = 28 * 28;
           for (const b of p.trailBreadcrumbs) {
             for (const n of this.npcs.values()) {
@@ -1091,7 +1094,7 @@ export default class GameServer implements Party.Server {
       if (p.earthquakeEnabled && wallNow >= p.nextEarthquakeAt) {
         const radius = 200;
         const r2 = radius * radius;
-        const baseDmg = 24 * p.damageMul * (1 + Math.min(LEVEL_DAMAGE_CAP_LEVELS, p.level - 1) * LEVEL_DAMAGE_MUL);
+        const baseDmg = this.passiveDmg(p, 24 * p.damageMul * (1 + Math.min(LEVEL_DAMAGE_CAP_LEVELS, p.level - 1) * LEVEL_DAMAGE_MUL));
         for (const n of this.npcs.values()) {
           const dx = n.x - p.x;
           const dy = n.y - p.y;
@@ -1174,7 +1177,7 @@ export default class GameServer implements Party.Server {
           if (--toEvict <= 0) break;
         }
       }
-      const lifetime = 4500; // orbits for 4.5s
+      const lifetime = PROJECTILE_LIFETIME_MS * p.projectileLifeMul;
       const orbitRadius = 80;
       const spinSpeed = 3; // rad/sec
       for (let i = 0; i < totalProjectiles; i++) {
@@ -1238,6 +1241,19 @@ export default class GameServer implements Party.Server {
       }
       this.projectiles.set(proj.id, proj);
     }
+  }
+
+  // Apply bloodbath / soul-harvest / berserker / crit to passive ability damage.
+  // baseDmg should already include damageMul * lvlMul.
+  passiveDmg(p: ServerPlayer, baseDmg: number): number {
+    let dmg = baseDmg;
+    if (p.bloodbathEnabled && p.maxHp > 0 && p.hp / p.maxHp < 0.3) dmg *= 1.3;
+    if (p.soulHarvestEnabled && p.soulHarvestStacks > 0) dmg *= 1 + Math.min(500, p.soulHarvestStacks) * 0.001;
+    const now = Date.now();
+    if (now < p.berserkerUntil) dmg *= 2.2;
+    else if (now < p.damageBoostUntil) dmg *= 1.8;
+    if (p.critChance > 0 && Math.random() < p.critChance) dmg *= 2;
+    return dmg;
   }
 
   computeDamage(owner: ServerPlayer | undefined, w: WeaponKind): number {
@@ -1599,10 +1615,27 @@ export default class GameServer implements Party.Server {
     let bestScore = -1;
     for (const p of this.players.values()) {
       if (!p.alive) continue;
-      const score = p.level * 100 + p.waveNumber * 50;
+      const score = p.level * 100 + p.waveNumber * 50 + (p.bossKills ?? 0) * 500;
       if (score > bestScore) { best = p; bestScore = score; }
     }
     if (best) dragon.ownerPlayerId = best.id;
+  }
+
+  // If the roster boss's target player has died, re-lock onto the best alive player.
+  retargetBoss() {
+    if (!this.activeBossId) return;
+    const boss = this.npcs.get(this.activeBossId);
+    if (!boss) return;
+    const owner = this.players.get(boss.ownerPlayerId);
+    if (owner?.alive) return; // target still alive, no change needed
+    let best: ServerPlayer | null = null;
+    let bestScore = -1;
+    for (const p of this.players.values()) {
+      if (!p.alive) continue;
+      const score = p.level * 100 + p.waveNumber * 50 + (p.bossKills ?? 0) * 500;
+      if (score > bestScore) { best = p; bestScore = score; }
+    }
+    if (best) boss.ownerPlayerId = best.id;
   }
 
   // Dragon-on-death loot: 12 golds + 4 epics scattered around the body.
@@ -1634,7 +1667,7 @@ export default class GameServer implements Party.Server {
     let bestScore = -1;
     for (const p of this.players.values()) {
       if (!p.alive || p.level < 13) continue;
-      const score = p.level * 100 + p.waveNumber * 50;
+      const score = p.level * 100 + p.waveNumber * 50 + (p.bossKills ?? 0) * 500;
       if (score > bestScore) { target = p; bestScore = score; }
     }
     if (!target) return;
@@ -1699,7 +1732,7 @@ export default class GameServer implements Party.Server {
     for (const p of this.players.values()) {
       if (!p.alive) continue;
       if (p.waveNumber > roomWave) roomWave = p.waveNumber;
-      const score = p.level * 100 + p.waveNumber * 50;
+      const score = p.level * 100 + p.waveNumber * 50 + (p.bossKills ?? 0) * 500;
       if (score > bestScore) { target = p; bestScore = score; }
     }
     // Spawn when any alive player has reached the next milestone wave
@@ -1715,7 +1748,7 @@ export default class GameServer implements Party.Server {
     const wMul = 1 + (target.waveNumber - 1) * 0.10
       + Math.pow(Math.max(0, target.waveNumber - 20), 1.4) * 0.015;
     const lMul = 1 + (target.level - 1) * 0.08;
-    const genMul = 1 + this.bossGeneration * 0.5;
+    const genMul = 1 + Math.min(8, this.bossGeneration) * 0.5;
     const hp = Math.round(NPC_BASE_HP * boss.hpMul * wMul * lMul * genMul);
     const speed = PLAYER_SPEED * boss.speedFrac;
 
@@ -2284,6 +2317,8 @@ export default class GameServer implements Party.Server {
       }
     } else if (n.id === this.activeBossId) {
       // Unique roster boss — big feast
+      const killer = killerId ? this.players.get(killerId) : undefined;
+      if (killer) killer.bossKills = (killer.bossKills ?? 0) + 1;
       for (let i = 0; i < 15; i++) this.dropGem(n.x, n.y, 5);
       for (let i = 0; i < 5; i++) this.dropGem(n.x, n.y, 10);
       // Drop the annihilate + a magnet pickup so the nova gems are collectable
@@ -2567,6 +2602,7 @@ export default class GameServer implements Party.Server {
         frostAuraRadius: p.frostAuraRadius,
         xpMul: p.xpMul,
         projectileLifeMul: p.projectileLifeMul,
+        bossKills: p.bossKills ?? 0,
         pendingLevelUps: p.pendingLevelUps,
         speedBoostUntil: p.speedBoostUntil,
         damageBoostUntil: p.damageBoostUntil,
@@ -2856,17 +2892,13 @@ export default class GameServer implements Party.Server {
     let best = -1;
     for (const p of this.players.values()) {
       if (!p.alive) continue;
-      const s = p.level * 100 + p.waveNumber * 50;
+      const s = p.level * 100 + p.waveNumber * 50 + (p.bossKills ?? 0) * 500;
       if (s > best) { best = s; target = p; }
     }
     if (!target || this.npcs.size >= NPC_MAX_COUNT) return;
 
     // Random elite-tier monster kind
-    const elites: MonsterKind[] = ['goblin', 'spider', 'zombie_bear', 'giant_rat' as MonsterKind];
-    // Filter to valid monster kinds
-    const validElites: MonsterKind[] = elites.filter((k) => MONSTER_BASES[k] !== undefined);
-    const fallbackElites: MonsterKind[] = ['goblin', 'spider', 'zombie_bear'];
-    const kindPool = validElites.length > 0 ? validElites : fallbackElites;
+    const kindPool: MonsterKind[] = ['goblin', 'spider', 'zombie_bear'];
     const kind = kindPool[Math.floor(Math.random() * kindPool.length)];
     const base = MONSTER_BASES[kind];
     const hp = Math.round(NPC_BASE_HP * (base.hpMul ?? 1) * 10 * (1 + wave * 0.08));
@@ -2992,14 +3024,21 @@ export default class GameServer implements Party.Server {
       case 'annihilate': {
         // Drop gems for every NPC on the board before wiping them
         for (const n of this.npcs.values()) {
-          const tier = MONSTER_BASES[n.kind]?.tier ?? 'minion';
-          if (tier === 'boss') {
-            for (let i = 0; i < 4; i++) this.dropGem(n.x, n.y, 3);
-            this.dropGem(n.x, n.y, 5);
-          } else if (tier === 'elite') {
-            for (let i = 0; i < 2; i++) this.dropGem(n.x, n.y, 3);
+          if (n.id === this.activeBossId) {
+            // Full roster boss feast — same reward as killing normally
+            for (let i = 0; i < 15; i++) this.dropGem(n.x, n.y, 5);
+            for (let i = 0; i < 5; i++) this.dropGem(n.x, n.y, 10);
+            p.bossKills = (p.bossKills ?? 0) + 1;
           } else {
-            this.dropGem(n.x, n.y, 1);
+            const tier = MONSTER_BASES[n.kind]?.tier ?? 'minion';
+            if (tier === 'boss') {
+              for (let i = 0; i < 4; i++) this.dropGem(n.x, n.y, 3);
+              this.dropGem(n.x, n.y, 5);
+            } else if (tier === 'elite') {
+              for (let i = 0; i < 2; i++) this.dropGem(n.x, n.y, 3);
+            } else {
+              this.dropGem(n.x, n.y, 1);
+            }
           }
         }
         this.npcs.clear();

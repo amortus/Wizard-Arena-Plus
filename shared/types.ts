@@ -62,6 +62,7 @@ export type PlayerState = {
   frostAuraRadius: number;
   xpMul: number;
   projectileLifeMul: number;
+  bossKills: number;
   // Time Shield — periodic 5s damage immunity
   timeShieldEnabled: boolean;
   damageImmuneUntil: number;

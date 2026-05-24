@@ -136,8 +136,8 @@ export const WEAPON_DEFS: Record<
   orb:            { name: 'Arcane Orb',      cooldownMs: 900,  damage: 16, speed: 240, range: 320, projectiles: 1 },
   dagger:         { name: 'Leaf Cutter',     cooldownMs: 450,  damage: 6,  speed: 340, range: 220, projectiles: 3 },
   fireball:       { name: 'Fireball',        cooldownMs: 1000, damage: 22, speed: 230, range: 320, projectiles: 1 },
-  lightning_bolt: { name: 'Lightning Bolt',  cooldownMs: 350,  damage: 6,  speed: 360, range: 260, projectiles: 3 },
-  shadow_bolt:    { name: 'Shadow Bolt',     cooldownMs: 1100, damage: 18, speed: 220, range: 360, projectiles: 1 },
+  lightning_bolt: { name: 'Lightning Bolt',  cooldownMs: 500,  damage: 6,  speed: 360, range: 260, projectiles: 3 },
+  shadow_bolt:    { name: 'Shadow Bolt',     cooldownMs: 750,  damage: 20, speed: 240, range: 380, projectiles: 1 },
   orbital_spark:  { name: 'Orbiting Sparks', cooldownMs: 5000, damage: 8,  speed: 0,   range: 0,   projectiles: 3 },
   aura_shield:    { name: 'Aura Shield',     cooldownMs: 0,    damage: 5,  speed: 0,   range: 70,  projectiles: 0 },
 };
@@ -298,6 +298,7 @@ export const MONSTER_GROUP_JITTER_OVERRIDE: Partial<Record<MonsterKind, number>>
 // Anything not listed here uses the standard WAVE_BASE_SIZE + growth formula.
 export const MONSTER_WAVE_SIZE_OVERRIDE: Partial<Record<MonsterKind, number>> = {
   zombie_bear: 3, zombie_bear_elite: 3, zombie_bear_black: 2,
+  treant: 6,  // hpMul=4 boss-tier — cap prevents 200+ spawning at once
   // Bosses always spawn alone
   rat_king: 1, bone_colossus: 1, plague_lord: 1, wraith_lord: 1,
   warchief: 1, ancient_treant: 1, alpha_wolf: 1, death_titan: 1,
