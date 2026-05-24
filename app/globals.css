@@ -1341,7 +1341,7 @@ button {
 .smoke-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(20, 20, 20, 0.72);
+  background: rgba(10, 10, 10, 0.88);
   pointer-events: none;
   z-index: 8;
 }

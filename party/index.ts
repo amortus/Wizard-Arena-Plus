@@ -2325,13 +2325,13 @@ export default class GameServer implements Party.Server {
     const radius = kind === 'fire_pool' ? 70
       : kind === 'lightning_strike' ? 80
       : kind === 'poison_cloud' ? 80
-      : kind === 'slow_zone' ? 90
-      : 120; // smoke_zone
+      : kind === 'slow_zone' ? 140
+      : 180; // smoke_zone
     const duration = kind === 'fire_pool' ? 8000
       : kind === 'lightning_strike' ? 0
       : kind === 'poison_cloud' ? 10000
       : kind === 'slow_zone' ? 8000
-      : 12000; // smoke_zone
+      : 16000; // smoke_zone
     const id = genId('hazard');
     this.hazards.set(id, {
       id, kind, x, y, radius,

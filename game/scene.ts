@@ -1518,21 +1518,57 @@ export class ArenaScene extends Phaser.Scene {
           g.strokeCircle(h.x, h.y, h.radius);
           g.setBlendMode(Phaser.BlendModes.ADD);
         } else if (h.kind === 'slow_zone') {
-          g.fillStyle(0x2255ff, 0.22);
+          // Icy concentric rings — visually distinct from fire's warm ADD glow
+          g.fillStyle(0x99eeff, 0.10);
           g.fillCircle(h.x, h.y, h.radius);
-          g.fillStyle(0x88ddff, 0.18);
-          g.fillCircle(h.x + Math.sin(t * 0.5) * 8, h.y + Math.cos(t * 0.7) * 8, h.radius * 0.55);
-          g.lineStyle(3, 0x44aaff, 0.55);
+          // Pulsing inner fill
+          const icePulse = 0.12 + Math.sin(t * 1.4) * 0.04;
+          g.fillStyle(0xaaddff, icePulse);
+          g.fillCircle(h.x, h.y, h.radius * 0.65);
+          // Three concentric ring strokes
+          g.lineStyle(2, 0xccf0ff, 0.70);
           g.strokeCircle(h.x, h.y, h.radius);
-          g.setBlendMode(Phaser.BlendModes.ADD);
+          g.lineStyle(2, 0x88ccee, 0.50);
+          g.strokeCircle(h.x, h.y, h.radius * 0.72);
+          g.lineStyle(1, 0x55aadd, 0.35);
+          g.strokeCircle(h.x, h.y, h.radius * 0.42);
+          // Rotating ice-crystal tick marks (6 lines around the edge)
+          g.lineStyle(2, 0xeef8ff, 0.55);
+          for (let i = 0; i < 6; i++) {
+            const a = (i / 6) * Math.PI * 2 + t * 0.4;
+            g.lineBetween(
+              h.x + Math.cos(a) * (h.radius * 0.82),
+              h.y + Math.sin(a) * (h.radius * 0.82),
+              h.x + Math.cos(a) * h.radius,
+              h.y + Math.sin(a) * h.radius,
+            );
+          }
+          // No ADD blend — keep it cold and translucent, not luminous
         } else if (h.kind === 'smoke_zone') {
-          g.fillStyle(0x333333, 0.55);
+          // Dark base fill
+          g.fillStyle(0x111111, 0.60);
           g.fillCircle(h.x, h.y, h.radius);
-          g.fillStyle(0x555555, 0.30);
-          g.fillCircle(h.x + Math.sin(t * 0.4) * 18, h.y + Math.cos(t * 0.6) * 16, h.radius * 0.7);
-          g.lineStyle(2, 0x666666, 0.4);
+          // Animated black smoke puffs — 8 blobs orbiting at different speeds/radii
+          const puffs = [
+            { r: h.radius * 0.50, a: t * 0.55,              size: h.radius * 0.38, alpha: 0.50 },
+            { r: h.radius * 0.35, a: t * 0.80 + 1.0,        size: h.radius * 0.28, alpha: 0.45 },
+            { r: h.radius * 0.62, a: t * 0.42 + 2.1,        size: h.radius * 0.32, alpha: 0.55 },
+            { r: h.radius * 0.25, a: t * 1.10 + 3.5,        size: h.radius * 0.22, alpha: 0.40 },
+            { r: h.radius * 0.70, a: t * 0.30 + 0.8,        size: h.radius * 0.42, alpha: 0.48 },
+            { r: h.radius * 0.45, a: t * 0.65 + 4.2,        size: h.radius * 0.25, alpha: 0.42 },
+            { r: h.radius * 0.58, a: t * 0.95 + 1.7,        size: h.radius * 0.35, alpha: 0.52 },
+            { r: h.radius * 0.20, a: t * 1.30 + 5.0,        size: h.radius * 0.18, alpha: 0.38 },
+          ];
+          for (const p of puffs) {
+            // Pulse alpha with sin so puffs fade in/out
+            const fade = p.alpha * (0.6 + Math.sin(t * 1.2 + p.a) * 0.4);
+            g.fillStyle(0x0a0a0a, fade);
+            g.fillCircle(h.x + Math.cos(p.a) * p.r, h.y + Math.sin(p.a) * p.r, p.size);
+          }
+          // Subtle dark edge ring
+          g.lineStyle(3, 0x222222, 0.55);
           g.strokeCircle(h.x, h.y, h.radius);
-          // no ADD blend — intentionally opaque
+          // no ADD blend — intentionally opaque / occlusive
           if (self) {
             const dx = self.x - h.x, dy = self.y - h.y;
             if (dx * dx + dy * dy < h.radius * h.radius) selfInSmoke = true;
