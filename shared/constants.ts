@@ -51,7 +51,8 @@ export const GEM_RADIUS = 8;
 export const GEM_PICKUP_RADIUS = 60;
 
 export const PICKUP_RADIUS = 30;
-export const PICKUP_LIFETIME_MS = 15_000;
+export const PICKUP_LIFETIME_MS = 30_000;
+export const MAGNET_RADIUS = 380;
 
 export const PROJECTILE_RADIUS = 6;
 export const PROJECTILE_LIFETIME_MS = 1500;

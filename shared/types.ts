@@ -4,7 +4,7 @@ export type HazardKind = 'fire_pool' | 'lightning_strike' | 'poison_cloud' | 'sl
 
 export type ArenaElement = 'normal' | 'lava' | 'ice' | 'fog';
 
-export type PickupKind = 'health' | 'speed' | 'damage' | 'shield' | 'cooldown' | 'berserker' | 'annihilate';
+export type PickupKind = 'health' | 'speed' | 'damage' | 'shield' | 'cooldown' | 'berserker' | 'annihilate' | 'magnet';
 
 export type PickupState = {
   id: string;

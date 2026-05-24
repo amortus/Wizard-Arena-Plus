@@ -7,6 +7,7 @@ import {
   GEM_RADIUS,
   PICKUP_RADIUS,
   PICKUP_LIFETIME_MS,
+  MAGNET_RADIUS,
   LEVEL_DAMAGE_CAP_LEVELS,
   LEVEL_DAMAGE_MUL,
   LEVEL_UP_INVULN_MS,
@@ -2276,13 +2277,20 @@ export default class GameServer implements Party.Server {
       // Unique roster boss — big feast
       for (let i = 0; i < 15; i++) this.dropGem(n.x, n.y, 5);
       for (let i = 0; i < 5; i++) this.dropGem(n.x, n.y, 10);
-      // Drop the annihilate pickup so players can clear the board
+      // Drop the annihilate + a magnet pickup so the nova gems are collectable
       const now2 = Date.now();
       const aid = genId('pickup');
       this.pickups.set(aid, {
         id: aid, kind: 'annihilate',
         x: n.x, y: n.y,
-        expiresAt: now2 + 25_000,
+        expiresAt: now2 + 50_000,
+      });
+      const mid = genId('pickup');
+      this.pickups.set(mid, {
+        id: mid, kind: 'magnet',
+        x: n.x + (Math.random() - 0.5) * 80,
+        y: n.y + (Math.random() - 0.5) * 80,
+        expiresAt: now2 + 50_000,
       });
       // Do NOT null activeBossId here — maybeSpawnBoss() detects the dead boss
       // on next tick and handles cooldown + roster advance atomically.
@@ -2971,12 +2979,44 @@ export default class GameServer implements Party.Server {
       case 'berserker':
         p.berserkerUntil = Math.max(p.berserkerUntil, now + 8000);
         break;
-      case 'annihilate':
-        // Instant board clear — all current NPCs vanish, no XP
+      case 'annihilate': {
+        // Drop gems for every NPC on the board before wiping them
+        for (const n of this.npcs.values()) {
+          const tier = MONSTER_BASES[n.kind]?.tier ?? 'minion';
+          if (tier === 'boss') {
+            for (let i = 0; i < 4; i++) this.dropGem(n.x, n.y, 3);
+            this.dropGem(n.x, n.y, 5);
+          } else if (tier === 'elite') {
+            for (let i = 0; i < 2; i++) this.dropGem(n.x, n.y, 3);
+          } else {
+            this.dropGem(n.x, n.y, 1);
+          }
+        }
         this.npcs.clear();
         this.bossProjectiles.clear();
         this.room.broadcast(JSON.stringify({ type: 'nova' } satisfies ServerToClient));
         break;
+      }
+      case 'magnet': {
+        // Pull and instantly collect all pickups + gems within MAGNET_RADIUS
+        const r2 = MAGNET_RADIUS * MAGNET_RADIUS;
+        const toCollect: string[] = [];
+        for (const [pid, pk] of this.pickups) {
+          if (pk.kind === 'magnet') continue; // no recursion
+          if ((p.x - pk.x) ** 2 + (p.y - pk.y) ** 2 < r2) toCollect.push(pid);
+        }
+        for (const pid of toCollect) {
+          const pk = this.pickups.get(pid);
+          if (pk) { this.applyPickup(p, pk, now); this.pickups.delete(pid); }
+        }
+        for (const [gid, gem] of this.gems) {
+          if ((p.x - gem.x) ** 2 + (p.y - gem.y) ** 2 < r2) {
+            p.xp += gem.value * p.xpMul;
+            this.gems.delete(gid);
+          }
+        }
+        break;
+      }
     }
   }
 
