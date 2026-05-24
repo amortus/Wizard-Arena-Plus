@@ -55,8 +55,10 @@ import {
 import { rollPowerupChoices, POWERUPS } from '../shared/powerups';
 import { isBlockedName } from '../shared/profanity';
 import type {
+  BossProjectileState,
   ClientToServer,
   GemState,
+  HazardKind,
   HazardState,
   LeaderboardEntry,
   NPCState,
@@ -169,6 +171,9 @@ type ServerNpc = NPCState & {
   bossSummonKind?: MonsterKind | null;
   bossSummonCount?: number;
   bossSummonIntervalMs?: number;
+  bossFireAt?: number;
+  bossSpellAt?: number;
+  bossFireAngle?: number;
 };
 
 type ServerHazard = HazardState & {
@@ -179,6 +184,8 @@ type ServerHazard = HazardState & {
 type ServerPickup = PickupState & {
   expiresAt: number;
 };
+
+type ServerBossProjectile = BossProjectileState & { expiresAt: number; damage: number };
 
 type ServerWolf = {
   id: string;
@@ -235,6 +242,7 @@ export default class GameServer implements Party.Server {
   nextHazardAt = 0;
   // Droppable pickups (health, speed boost, etc.)
   pickups = new Map<string, ServerPickup>();
+  bossProjectiles = new Map<string, ServerBossProjectile>();
   lastTickAt = 0;
   tickHandle: ReturnType<typeof setInterval> | null = null;
   // Persistent all-time leaderboard (top 10 by score)
@@ -344,6 +352,7 @@ export default class GameServer implements Party.Server {
     this.wolves.clear();
     this.hazards.clear();
     this.pickups.clear();
+    this.bossProjectiles.clear();
     this.dragonId = null;
     this.nextDragonAllowedAt = 0;
     this.activeBossId = null;
@@ -815,6 +824,7 @@ export default class GameServer implements Party.Server {
     this.updateWolves(dt, now);
     this.updateGems();
     this.updatePickups(now);
+    this.updateBossProjectiles(dt, now);
     this.scheduleHazard(now);
     this.updateHazards(now);
 
@@ -1691,9 +1701,90 @@ export default class GameServer implements Party.Server {
       bossSummonKind: boss.summonKind,
       bossSummonCount: boss.summonCount,
       bossSummonIntervalMs: boss.summonIntervalMs,
+      bossFireAt: this.bossGeneration >= 1 ? now + 2000 : undefined,
+      bossSpellAt: this.bossGeneration >= 3 ? now + 12000 + Math.random() * 6000 : undefined,
+      bossFireAngle: 0,
     });
 
     this.room.broadcast(JSON.stringify({ type: 'bossAlert', bossName: boss.name } satisfies ServerToClient));
+  }
+
+  fireBossProjectiles(boss: ServerNpc, target: ServerPlayer, now: number) {
+    const gen = this.bossGeneration;
+    const speed = 300;
+    const dx = target.x - boss.x, dy = target.y - boss.y;
+    const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+    void dist;
+    const baseAngle = Math.atan2(dy, dx);
+    let angles: number[];
+    let nextFire: number;
+    if (gen === 1) {
+      angles = [baseAngle];
+      nextFire = now + 3000;
+    } else if (gen === 2) {
+      const s = 0.38; // ~22°
+      angles = [baseAngle - s, baseAngle, baseAngle + s];
+      nextFire = now + 2500;
+    } else {
+      const count = 5;
+      angles = Array.from({ length: count }, (_, i) => baseAngle + (i / count) * Math.PI * 2);
+      nextFire = now + 2000;
+    }
+    const dmg = 15 + gen * 5;
+    for (const a of angles) {
+      const id = genId('bproj');
+      this.bossProjectiles.set(id, {
+        id, generation: gen,
+        x: boss.x, y: boss.y,
+        vx: Math.cos(a) * speed,
+        vy: Math.sin(a) * speed,
+        radius: 12,
+        expiresAt: now + 3000,
+        damage: dmg,
+      });
+    }
+    boss.bossFireAt = nextFire;
+  }
+
+  bossCastSpell(boss: ServerNpc, target: ServerPlayer, now: number) {
+    const spellKinds: HazardKind[] = ['fire_pool', 'poison_cloud', 'lightning_strike'];
+    const kind = spellKinds[Math.floor(Math.random() * spellKinds.length)];
+    const angle = Math.random() * Math.PI * 2;
+    const offset = Math.random() * 60;
+    const x = clamp(target.x + Math.cos(angle) * offset, 40, ARENA_WIDTH - 40);
+    const y = clamp(target.y + Math.sin(angle) * offset, 40, ARENA_HEIGHT - 40);
+    const radius = kind === 'lightning_strike' ? 80 : 70;
+    const duration = kind === 'fire_pool' ? 8000 : kind === 'lightning_strike' ? 0 : 10000;
+    const hid = genId('hazard');
+    this.hazards.set(hid, {
+      id: hid, kind, x, y, radius,
+      warningUntilMs: now + 2000,
+      activeUntilMs: now + 2000 + duration,
+      lastDamageAt: 0,
+      lightningFired: false,
+    });
+    boss.bossSpellAt = now + 12000 + Math.random() * 8000;
+  }
+
+  updateBossProjectiles(dt: number, now: number) {
+    for (const [id, proj] of this.bossProjectiles) {
+      if (now > proj.expiresAt) { this.bossProjectiles.delete(id); continue; }
+      proj.x += proj.vx * dt;
+      proj.y += proj.vy * dt;
+      if (proj.x < 0 || proj.x > ARENA_WIDTH || proj.y < 0 || proj.y > ARENA_HEIGHT) {
+        this.bossProjectiles.delete(id); continue;
+      }
+      const hitR2 = (proj.radius + 16) ** 2;
+      for (const p of this.players.values()) {
+        if (!p.alive || now < p.damageImmuneUntil || now < p.invulnerableUntil) continue;
+        if ((p.x - proj.x) ** 2 + (p.y - proj.y) ** 2 < hitR2) {
+          const incomingMul = now < p.berserkerUntil ? 1.5 : 1;
+          p.hp -= proj.damage * incomingMul;
+          this.bossProjectiles.delete(id);
+          break;
+        }
+      }
+    }
   }
 
   spawnBossMinions(boss: ServerNpc, now: number) {
@@ -1871,6 +1962,16 @@ export default class GameServer implements Party.Server {
           speedNow = n.baseSpeed;
         }
       }
+      // Boss projectile firing
+      if (n.bossFireAt !== undefined && now >= n.bossFireAt) {
+        const t = this.players.get(n.ownerPlayerId);
+        if (t?.alive) this.fireBossProjectiles(n, t, now);
+      }
+      // Boss spell casting (gen 3+)
+      if (n.bossSpellAt !== undefined && now >= n.bossSpellAt) {
+        const t = this.players.get(n.ownerPlayerId);
+        if (t?.alive) this.bossCastSpell(n, t, now);
+      }
       const dx = aimX - n.x;
       const dy = aimY - n.y;
       const dist = Math.hypot(dx, dy) || 1;
@@ -1983,6 +2084,14 @@ export default class GameServer implements Party.Server {
       // Unique roster boss — big feast
       for (let i = 0; i < 15; i++) this.dropGem(n.x, n.y, 5);
       for (let i = 0; i < 5; i++) this.dropGem(n.x, n.y, 10);
+      // Drop the annihilate pickup so players can clear the board
+      const now2 = Date.now();
+      const aid = genId('pickup');
+      this.pickups.set(aid, {
+        id: aid, kind: 'annihilate',
+        x: n.x, y: n.y,
+        expiresAt: now2 + 25_000,
+      });
       // Do NOT null activeBossId here — maybeSpawnBoss() detects the dead boss
       // on next tick and handles cooldown + roster advance atomically.
     } else {
@@ -2273,6 +2382,10 @@ export default class GameServer implements Party.Server {
     for (const pk of this.pickups.values()) {
       pickups.push({ id: pk.id, kind: pk.kind, x: pk.x, y: pk.y });
     }
+    const bossProjectiles: BossProjectileState[] = [];
+    for (const bp of this.bossProjectiles.values()) {
+      bossProjectiles.push({ id: bp.id, x: bp.x, y: bp.y, vx: bp.vx, vy: bp.vy, radius: bp.radius, generation: bp.generation });
+    }
     // Room wave = highest wave among alive players (drives the top-bar display)
     let roomWave = 0;
     let roomWaveName = '';
@@ -2298,6 +2411,7 @@ export default class GameServer implements Party.Server {
       wolves,
       hazards,
       pickups,
+      bossProjectiles,
     };
     this.room.broadcast(JSON.stringify(snap));
   }
@@ -2446,6 +2560,12 @@ export default class GameServer implements Party.Server {
         break;
       case 'berserker':
         p.berserkerUntil = Math.max(p.berserkerUntil, now + 8000);
+        break;
+      case 'annihilate':
+        // Instant board clear — all current NPCs vanish, no XP
+        this.npcs.clear();
+        this.bossProjectiles.clear();
+        this.room.broadcast(JSON.stringify({ type: 'nova' } satisfies ServerToClient));
         break;
     }
   }

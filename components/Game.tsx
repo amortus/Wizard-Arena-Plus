@@ -50,6 +50,7 @@ export default function Game({ name, character, color, hue, room, country, roomN
   const [authError, setAuthError] = useState<string | null>(null);
   const [bossAlert, setBossAlert] = useState<string | null>(null);
   const [inSmoke, setInSmoke] = useState(false);
+  const [novaFlash, setNovaFlash] = useState(false);
   // Track latest hud.self level/wave so the 'died' event handler can read them
   // synchronously (the bus.on closure would otherwise capture an empty hud).
   const lastSelfRef = useRef<{ level: number; wave: number } | null>(null);
@@ -99,6 +100,10 @@ export default function Game({ name, character, color, hue, room, country, roomN
       });
       result.scene.bus.on('smokeZone', (inside: boolean) => setInSmoke(inside));
       result.scene.bus.on('authError', (reason: string) => setAuthError(reason));
+      result.scene.bus.on('nova', () => {
+        setNovaFlash(true);
+        setTimeout(() => setNovaFlash(false), 700);
+      });
     })();
 
     return () => {
@@ -253,6 +258,7 @@ export default function Game({ name, character, color, hue, room, country, roomN
       </div>
 
       {inSmoke && <div className="smoke-overlay" />}
+      {novaFlash && <div className="nova-flash" />}
 
       {hud.self && (
         <div className="unit-frame">

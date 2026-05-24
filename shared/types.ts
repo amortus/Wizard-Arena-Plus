@@ -2,7 +2,7 @@ import type { CharacterKind, MonsterKind, WeaponKind } from './constants';
 
 export type HazardKind = 'fire_pool' | 'lightning_strike' | 'poison_cloud' | 'slow_zone' | 'smoke_zone';
 
-export type PickupKind = 'health' | 'speed' | 'damage' | 'shield' | 'cooldown' | 'berserker';
+export type PickupKind = 'health' | 'speed' | 'damage' | 'shield' | 'cooldown' | 'berserker' | 'annihilate';
 
 export type PickupState = {
   id: string;
@@ -134,6 +134,16 @@ export type ProjectileState = {
   weapon: WeaponKind;
 };
 
+export type BossProjectileState = {
+  id: string;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  radius: number;
+  generation: number;
+};
+
 export type WolfState = {
   id: string;
   ownerId: string;
@@ -155,6 +165,7 @@ export type Snapshot = {
   wolves?: WolfState[];
   hazards?: HazardState[];
   pickups?: PickupState[];
+  bossProjectiles?: BossProjectileState[];
 };
 
 export type LeaderboardEntry = {
@@ -213,4 +224,5 @@ export type ServerToClient =
   | { type: 'effect'; effect: 'earthquake'; x: number; y: number; radius: number }
   | { type: 'effect'; effect: 'timeStop'; x: number; y: number; radius: number }
   | { type: 'bossAlert'; bossName: string }
-  | { type: 'authError'; reason: string };
+  | { type: 'authError'; reason: string }
+  | { type: 'nova' };

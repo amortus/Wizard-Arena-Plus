@@ -11,7 +11,7 @@ import {
   WEAPON_ELEMENT,
   type CharacterKind,
 } from '../shared/constants';
-import type { ClientToServer, PlayerState, ServerToClient, Snapshot } from '../shared/types';
+import type { BossProjectileState, ClientToServer, PlayerState, ServerToClient, Snapshot } from '../shared/types';
 
 type SceneInit = {
   name: string;
@@ -190,6 +190,7 @@ export class ArenaScene extends Phaser.Scene {
   hazardVisuals = new Map<string, Phaser.GameObjects.Graphics>();
   hazardLabels = new Map<string, Phaser.GameObjects.Text>();
   pickupVisuals = new Map<string, Phaser.GameObjects.Graphics>();
+  bossProjectileVisuals = new Map<string, Phaser.GameObjects.Graphics>();
   bossAlertUntil = 0;
   bossAlertName = '';
   prevPlayerPos = new Map<string, { x: number; y: number; t: number }>();
@@ -948,6 +949,8 @@ export class ArenaScene extends Phaser.Scene {
       this.bossAlertName = msg.bossName;
       this.cameras.main.shake(300, 0.008);
       this.bus.emit('bossAlert', msg.bossName);
+    } else if (msg.type === 'nova') {
+      this.bus.emit('nova');
     } else if (msg.type === 'authError') {
       this.bus.emit('authError', (msg as any).reason);
     }
@@ -1436,6 +1439,38 @@ export class ArenaScene extends Phaser.Scene {
           g.setScale(pulse);
           break;
         }
+        case 'annihilate': {
+          // Large pulsing golden skull-ish orb — very distinct, hard to miss
+          const ar = 20 * pulse;
+          g.setBlendMode(Phaser.BlendModes.ADD);
+          // Outer glow
+          g.fillStyle(0xffcc00, 0.30);
+          g.fillCircle(0, 0, ar + 10);
+          // Mid ring
+          g.fillStyle(0xffdd44, 0.60);
+          g.fillCircle(0, 0, ar + 4);
+          // Core
+          g.fillStyle(0xfff080, 0.90);
+          g.fillCircle(0, 0, ar);
+          // Bright white center
+          g.fillStyle(0xffffff, 1.00);
+          g.fillCircle(0, 0, ar * 0.45);
+          // White outline
+          g.lineStyle(3, 0xffffff, 0.85);
+          g.strokeCircle(0, 0, ar);
+          // Rotating 8 starburst spikes
+          g.fillStyle(0xffee88, 0.95);
+          for (let i = 0; i < 8; i++) {
+            const a = (i / 8) * Math.PI * 2 + (clientNow * 0.0012);
+            const tipX = Math.cos(a) * (ar + 14);
+            const tipY = Math.sin(a) * (ar + 14);
+            const la = a + 0.25;
+            const ra = a - 0.25;
+            g.fillTriangle(Math.cos(la) * ar, Math.sin(la) * ar, tipX, tipY, Math.cos(ra) * ar, Math.sin(ra) * ar);
+          }
+          g.setAngle(((clientNow * 0.02) % 360));
+          break;
+        }
       }
     }
     // Clean up visuals for collected/expired pickups
@@ -1444,6 +1479,34 @@ export class ArenaScene extends Phaser.Scene {
         g.destroy();
         this.pickupVisuals.delete(id);
       }
+    }
+  }
+
+  renderBossProjectiles(bossProjs: BossProjectileState[], t: number) {
+    const seen = new Set<string>();
+    for (const bp of bossProjs) {
+      seen.add(bp.id);
+      let g = this.bossProjectileVisuals.get(bp.id);
+      if (!g) {
+        g = this.add.graphics().setDepth(55);
+        this.bossProjectileVisuals.set(bp.id, g);
+      }
+      g.clear();
+      const pulse = 1 + Math.sin(t * 0.012) * 0.15;
+      const r = bp.radius * pulse;
+      // Color by generation: gen 0=red, 1=purple, 2=cyan, 3+=gold
+      const colors = [0xff3300, 0xcc33ff, 0x00eeff, 0xffcc00];
+      const col = colors[Math.min(bp.generation, colors.length - 1)];
+      g.fillStyle(col, 0.90);
+      g.fillCircle(0, 0, r);
+      g.lineStyle(2, 0xffffff, 0.6);
+      g.strokeCircle(0, 0, r);
+      g.setPosition(bp.x, bp.y);
+      g.setBlendMode(Phaser.BlendModes.ADD);
+    }
+    // Remove expired visuals
+    for (const [id, g] of this.bossProjectileVisuals) {
+      if (!seen.has(id)) { g.destroy(); this.bossProjectileVisuals.delete(id); }
     }
   }
 
@@ -2425,6 +2488,9 @@ export class ArenaScene extends Phaser.Scene {
 
     // Pickups: droppable items on the ground (health, speed boost, etc.)
     this.renderPickups(snap.pickups ?? [], performance.now());
+
+    // Boss projectiles (generation-based bullet hell)
+    this.renderBossProjectiles(snap.bossProjectiles ?? [], performance.now());
 
     // Hazards: warning ring + active fire/lightning visuals.
     // Hazard timestamps are server Date.now() — use snap.t (server time) for comparison.
