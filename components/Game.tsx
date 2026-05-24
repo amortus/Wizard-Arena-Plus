@@ -52,9 +52,9 @@ export default function Game({ name, character, color, hue, room, country, roomN
   const [inSmoke, setInSmoke] = useState(false);
   const [novaFlash, setNovaFlash] = useState(false);
   const [arenaElement, setArenaElement] = useState<'normal' | 'lava' | 'ice' | 'fog'>('normal');
-  // Track latest hud.self level/wave so the 'died' event handler can read them
+  // Track latest hud.self level/wave/bossKills so the 'died' handler can read them
   // synchronously (the bus.on closure would otherwise capture an empty hud).
-  const lastSelfRef = useRef<{ level: number; wave: number } | null>(null);
+  const lastSelfRef = useRef<{ level: number; wave: number; bossKills: number } | null>(null);
 
   useEffect(() => {
     let game: any;
@@ -71,7 +71,7 @@ export default function Game({ name, character, color, hue, room, country, roomN
       result.scene.bus.on('hud', (h: any) => {
         setHud(h);
         if (h.self) {
-          lastSelfRef.current = { level: h.self.level, wave: h.self.waveNumber ?? 0 };
+          lastSelfRef.current = { level: h.self.level, wave: h.self.waveNumber ?? 0, bossKills: h.self.bossKills ?? 0 };
         }
       });
       result.scene.bus.on('levelUp', (data: LevelUpData) => {
@@ -85,7 +85,7 @@ export default function Game({ name, character, color, hue, room, country, roomN
           setDeathStats({
             level: stats.level,
             wave: stats.wave,
-            score: stats.level * 100 + stats.wave * 50,
+            score: stats.level * 100 + stats.wave * 50 + stats.bossKills * 500,
           });
         }
         setDead(true);
@@ -356,9 +356,8 @@ export default function Game({ name, character, color, hue, room, country, roomN
             // match what the leaderboard page shows. Server pushes an updated
             // leaderboard event right after recordDeath().
             const ranked = dedupeBestByName(leaderboard);
-            const myRank = ranked.findIndex(
-              (e) => e.name === name && e.score === deathStats.score,
-            );
+            // Find by name only — server is authoritative on score (includes bossKills).
+            const myRank = ranked.findIndex((e) => e.name === name);
             return (
               <div className="death-stats">
                 <div className="death-stat-row">

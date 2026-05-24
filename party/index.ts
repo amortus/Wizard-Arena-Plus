@@ -322,7 +322,8 @@ export default class GameServer implements Party.Server {
     this.room.broadcast(JSON.stringify(msg));
   }
 
-  onConnect(conn: Party.Connection) {
+  async onConnect(conn: Party.Connection) {
+    if (!this.leaderboardLoaded) await this.loadLeaderboard();
     // Reap stale entries before checking the cap, in case zombie players
     // are still occupying slots from a hibernation cycle.
     this.reapZombiePlayers();
