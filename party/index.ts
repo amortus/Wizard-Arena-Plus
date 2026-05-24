@@ -1488,6 +1488,12 @@ export default class GameServer implements Party.Server {
       const initial = Math.max(1, Math.floor(p.pwWaveTotal * WAVE_INITIAL_BURST_FRAC));
       for (let i = 0; i < initial; i++) this.spawnInWave(p);
     } else {
+      // Freeze wave progress while the roster boss is alive — resume after it dies.
+      // maybeSpawnBoss() deactivates the wave and resets the timer on boss death.
+      if (this.activeBossId) {
+        p.pwWaveLastTrickleAt = now; // avoid trickle burst on resume
+        return;
+      }
       if (now - p.pwWaveStartedAt >= WAVE_DURATION_MS) {
         p.pwWaveActive = false;
         return;
