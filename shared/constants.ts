@@ -510,3 +510,48 @@ export const CASTLE_DAMAGE_BY_TIER: Record<string, number> = {
   boss: 300,
   dragon: 500,
 };
+
+// ─── Crystal Rush (MOBA) Mode ─────────────────────────────────────────────────
+
+export const MOBA_PLAYER_MAX           = 6;
+export const MOBA_TOWER_HP             = 1200;
+export const MOBA_CRYSTAL_HP           = 3000;
+export const MOBA_TOWER_ATTACK_RANGE   = 220;
+export const MOBA_TOWER_ATTACK_DAMAGE  = 15;
+export const MOBA_TOWER_ATTACK_INTERVAL = 1200; // ms between shots
+export const MOBA_TOWER_T2_DAMAGE_MUL  = 1.5;  // T2 towers hit harder
+export const MOBA_TOWER_RADIUS         = 40;    // collision / rendering radius
+export const MOBA_CRYSTAL_RADIUS       = 60;    // collision radius
+export const MOBA_MINION_WAVE_INTERVAL = 30_000; // ms between minion waves
+export const MOBA_MINIONS_PER_LANE     = 6;
+export const MOBA_MINION_HP            = 80;
+export const MOBA_MINION_SPEED         = 60;    // px/s
+export const MOBA_MINION_DAMAGE        = 8;     // touch damage to players
+export const MOBA_MINION_TOWER_DAMAGE  = 15;    // damage minion deals to tower on contact
+export const MOBA_MINION_GOLD_REWARD   = 5;
+export const MOBA_RESPAWN_BASE_MS      = 8_000;
+export const MOBA_PLAYER_KILL_GOLD     = 50;
+export const MOBA_TOWER_KILL_GOLD      = 100;
+
+export const MOBA_BLUE_SPAWN   = { x: 400,  y: 2800 } as const;
+export const MOBA_RED_SPAWN    = { x: 2800, y: 400  } as const;
+export const MOBA_BLUE_CRYSTAL = { x: 400,  y: 2800 } as const;
+export const MOBA_RED_CRYSTAL  = { x: 2800, y: 400  } as const;
+
+// Tower definitions per lane: [T1 (outer), T2 (inner)] for each team
+export const MOBA_TOWERS: {
+  lane: 0 | 1 | 2;
+  blue: [{ x: number; y: number }, { x: number; y: number }];
+  red:  [{ x: number; y: number }, { x: number; y: number }];
+}[] = [
+  { lane: 0, blue: [{ x: 400,  y: 1600 }, { x: 400,  y: 700  }], red: [{ x: 1600, y: 400  }, { x: 2700, y: 400  }] },
+  { lane: 1, blue: [{ x: 900,  y: 2300 }, { x: 1300, y: 1900 }], red: [{ x: 1900, y: 1300 }, { x: 2300, y: 900  }] },
+  { lane: 2, blue: [{ x: 1600, y: 2800 }, { x: 2700, y: 2800 }], red: [{ x: 2800, y: 1600 }, { x: 2800, y: 700  }] },
+];
+
+// Minion lane waypoints: Blue follows in order; Red follows reversed
+export const MOBA_LANE_WAYPOINTS: { x: number; y: number }[][] = [
+  [{ x: 400, y: 2800 }, { x: 400,  y: 400  }, { x: 2800, y: 400  }], // top
+  [{ x: 400, y: 2800 }, { x: 1600, y: 1600 }, { x: 2800, y: 400  }], // mid
+  [{ x: 400, y: 2800 }, { x: 2800, y: 2800 }, { x: 2800, y: 400  }], // bot
+];

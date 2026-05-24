@@ -4,7 +4,30 @@ export type HazardKind = 'fire_pool' | 'lightning_strike' | 'poison_cloud' | 'sl
 
 export type ArenaElement = 'normal' | 'lava' | 'ice' | 'fog';
 
-export type GameMode = 'arena' | 'castle';
+export type GameMode = 'arena' | 'castle' | 'moba';
+
+export type MobaTeam = 'blue' | 'red';
+
+export type TowerState = {
+  id: string;
+  team: MobaTeam;
+  lane: 0 | 1 | 2;
+  tier: 1 | 2;
+  hp: number;
+  maxHp: number;
+  x: number;
+  y: number;
+  alive: boolean;
+};
+
+export type MobaCrystalState = {
+  team: MobaTeam;
+  hp: number;
+  maxHp: number;
+  x: number;
+  y: number;
+  alive: boolean;
+};
 
 export type CastleState = {
   hp: number;
@@ -120,6 +143,10 @@ export type PlayerState = {
   speedBoostUntil: number;
   damageBoostUntil: number;
   berserkerUntil: number;
+  // MOBA mode fields
+  mobaTeam?: MobaTeam;
+  mobaGold?: number;
+  mobaRespawnAt?: number; // epoch ms; 0 = alive / not in moba mode
 };
 
 export type NPCState = {
@@ -183,6 +210,8 @@ export type Snapshot = {
   gameMode?: GameMode;
   castle?: CastleState;
   roomWave?: number;
+  towers?: TowerState[];
+  mobaCrystals?: MobaCrystalState[];
 };
 
 export type LeaderboardEntry = {
@@ -242,6 +271,9 @@ export type ServerToClient =
   | { type: 'effect'; effect: 'earthquake'; x: number; y: number; radius: number }
   | { type: 'effect'; effect: 'timeStop'; x: number; y: number; radius: number }
   | { type: 'effect'; effect: 'castleDestroyed'; x: number; y: number }
+  | { type: 'effect'; effect: 'towerDestroyed'; x: number; y: number; team: MobaTeam }
+  | { type: 'effect'; effect: 'crystalDestroyed'; x: number; y: number; team: MobaTeam }
+  | { type: 'mobaVictory'; winnerTeam: MobaTeam }
   | { type: 'bossAlert'; bossName: string }
   | { type: 'authError'; reason: string }
   | { type: 'nova' };

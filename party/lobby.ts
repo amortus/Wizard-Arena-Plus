@@ -10,7 +10,7 @@ type RoomListing = {
   hasPassword: boolean;
   createdAt: number;
   lastSeen: number;
-  gameMode?: 'arena' | 'castle';
+  gameMode?: 'arena' | 'castle' | 'moba';
 };
 
 const STALE_MS = 45_000;

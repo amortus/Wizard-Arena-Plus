@@ -58,6 +58,31 @@ import {
   CASTLE_WAVE_DURATION_MS,
   CASTLE_WAVE_COOLDOWN_MS,
   CASTLE_DAMAGE_BY_TIER,
+  MOBA_PLAYER_MAX,
+  MOBA_TOWER_HP,
+  MOBA_CRYSTAL_HP,
+  MOBA_TOWER_ATTACK_RANGE,
+  MOBA_TOWER_ATTACK_DAMAGE,
+  MOBA_TOWER_ATTACK_INTERVAL,
+  MOBA_TOWER_T2_DAMAGE_MUL,
+  MOBA_TOWER_RADIUS,
+  MOBA_CRYSTAL_RADIUS,
+  MOBA_MINION_WAVE_INTERVAL,
+  MOBA_MINIONS_PER_LANE,
+  MOBA_MINION_HP,
+  MOBA_MINION_SPEED,
+  MOBA_MINION_DAMAGE,
+  MOBA_MINION_TOWER_DAMAGE,
+  MOBA_MINION_GOLD_REWARD,
+  MOBA_RESPAWN_BASE_MS,
+  MOBA_PLAYER_KILL_GOLD,
+  MOBA_TOWER_KILL_GOLD,
+  MOBA_BLUE_SPAWN,
+  MOBA_RED_SPAWN,
+  MOBA_BLUE_CRYSTAL,
+  MOBA_RED_CRYSTAL,
+  MOBA_TOWERS,
+  MOBA_LANE_WAYPOINTS,
   type BossAiKind,
   type CharacterKind,
   type MonsterKind,
@@ -75,6 +100,8 @@ import type {
   HazardKind,
   HazardState,
   LeaderboardEntry,
+  MobaCrystalState,
+  MobaTeam,
   NPCState,
   PickupKind,
   PickupState,
@@ -82,6 +109,7 @@ import type {
   ProjectileState,
   ServerToClient,
   Snapshot,
+  TowerState,
 } from '../shared/types';
 
 const LEADERBOARD_KEY = 'leaderboard:v1';
@@ -157,7 +185,9 @@ type ServerProjectile = ProjectileState & {
 let nextId = 1;
 const genId = (prefix: string) => `${prefix}_${nextId++}`;
 
-type NpcAi = 'chase' | 'regroup' | 'flank' | 'castle_march' | BossAiKind;
+type NpcAi = 'chase' | 'regroup' | 'flank' | 'castle_march' | 'moba_march' | BossAiKind;
+
+type ServerTower = TowerState & { lastAttackAt: number };
 
 type ServerNpc = NPCState & {
   speed: number;
@@ -287,6 +317,14 @@ export default class GameServer implements Party.Server {
   castleWaveLastTrickleAt = 0;
   castleWaveGateIdx = 0; // cycles through CASTLE_GATES for spawns
   castleDefeated = false;
+
+  // ── Crystal Rush (MOBA) mode state ───────────────────────────────────────
+  mobaTowers   = new Map<string, ServerTower>();
+  mobaCrystals = new Map<string, MobaCrystalState>();
+  mobaWinner: MobaTeam | null = null;
+  mobaLastWaveAt = 0;
+  // Parallel map: NPC id → waypoints (ServerNpc has no waypoints field)
+  mobaMinionWaypoints = new Map<string, { waypoints: { x: number; y: number }[]; waypointIdx: number }>();
 
   constructor(readonly room: Party.Room) {
     void this.loadLeaderboard();
@@ -499,6 +537,199 @@ export default class GameServer implements Party.Server {
     }
   }
 
+  // ── Crystal Rush (MOBA) helpers ────────────────────────────────────────────
+
+  initMoba() {
+    this.mobaTowers.clear();
+    this.mobaCrystals.clear();
+    this.mobaWinner = null;
+    this.mobaLastWaveAt = 0;
+    this.mobaMinionWaypoints.clear();
+
+    for (const laneDef of MOBA_TOWERS) {
+      for (const team of ['blue', 'red'] as const) {
+        const positions = team === 'blue' ? laneDef.blue : laneDef.red;
+        for (let tier = 1; tier <= 2; tier++) {
+          const pos = positions[tier - 1];
+          const laneNames = ['top', 'mid', 'bot'];
+          const id = `${team}_${laneNames[laneDef.lane]}_t${tier}`;
+          this.mobaTowers.set(id, {
+            id, team, lane: laneDef.lane as 0 | 1 | 2, tier: tier as 1 | 2,
+            hp: MOBA_TOWER_HP, maxHp: MOBA_TOWER_HP,
+            x: pos.x, y: pos.y,
+            alive: true,
+            lastAttackAt: 0,
+          });
+        }
+      }
+    }
+
+    for (const team of ['blue', 'red'] as const) {
+      const pos = team === 'blue' ? MOBA_BLUE_CRYSTAL : MOBA_RED_CRYSTAL;
+      this.mobaCrystals.set(team, {
+        team, hp: MOBA_CRYSTAL_HP, maxHp: MOBA_CRYSTAL_HP,
+        x: pos.x, y: pos.y, alive: true,
+      });
+    }
+  }
+
+  runMobaMinions(now: number) {
+    if (this.mobaWinner) return;
+    if (now - this.mobaLastWaveAt < MOBA_MINION_WAVE_INTERVAL) return;
+    // Budget check: 3 lanes × 6 minions × 2 teams = 36
+    if (this.npcs.size + MOBA_MINIONS_PER_LANE * 3 * 2 > NPC_MAX_COUNT) return;
+    this.mobaLastWaveAt = now;
+
+    for (const team of ['blue', 'red'] as const) {
+      for (let lane = 0; lane < 3; lane++) {
+        const raw = MOBA_LANE_WAYPOINTS[lane];
+        const waypoints = team === 'blue' ? raw : [...raw].reverse();
+        const origin = waypoints[0];
+
+        for (let i = 0; i < MOBA_MINIONS_PER_LANE; i++) {
+          if (this.npcs.size >= NPC_MAX_COUNT) break;
+          const angle = Math.random() * Math.PI * 2;
+          const r = 20 + Math.random() * 40;
+          const x = clamp(origin.x + Math.cos(angle) * r, 20, ARENA_WIDTH - 20);
+          const y = clamp(origin.y + Math.sin(angle) * r, 20, ARENA_HEIGHT - 20);
+          const id = genId(`mm_${team}_l${lane}`);
+          const npc: ServerNpc = {
+            id, kind: 'goblin',
+            x, y,
+            hp: MOBA_MINION_HP, baseHp: MOBA_MINION_HP,
+            speed: MOBA_MINION_SPEED, baseSpeed: MOBA_MINION_SPEED,
+            slowUntil: 0, slowMul: 1, freezeUntil: 0,
+            lastHitAt: 0,
+            ownerPlayerId: team,   // reuse field to store team identifier
+            retargetAt: Number.MAX_SAFE_INTEGER,
+            ai: 'moba_march',
+            aiPhase: 'pursue', aiPhaseEndsAt: 0, flankSide: 1,
+          };
+          this.npcs.set(id, npc);
+          this.mobaMinionWaypoints.set(id, { waypoints, waypointIdx: 1 });
+        }
+      }
+    }
+  }
+
+  updateTowers(now: number) {
+    if (this.mobaWinner) return;
+    const range2 = MOBA_TOWER_ATTACK_RANGE * MOBA_TOWER_ATTACK_RANGE;
+
+    for (const tower of this.mobaTowers.values()) {
+      if (!tower.alive) continue;
+      if (now - tower.lastAttackAt < MOBA_TOWER_ATTACK_INTERVAL) continue;
+
+      const enemyTeam: MobaTeam = tower.team === 'blue' ? 'red' : 'blue';
+      const damageMul = tower.tier === 2 ? MOBA_TOWER_T2_DAMAGE_MUL : 1;
+
+      // Check if T1 in same lane is still alive (guards T2 from targeting players)
+      const laneNames = ['top', 'mid', 'bot'];
+      const t1Id = `${tower.team}_${laneNames[tower.lane]}_t1`;
+      const t1Alive = this.mobaTowers.get(t1Id)?.alive ?? false;
+
+      // Priority 1: attack nearest enemy minion in range
+      let attacked = false;
+      let closestMinionD2 = range2;
+      let closestMinion: ServerNpc | null = null;
+      let closestMinionId = '';
+      for (const [nid, npc] of this.npcs) {
+        if (npc.ownerPlayerId !== enemyTeam || npc.ai !== 'moba_march') continue;
+        const d2 = (npc.x - tower.x) ** 2 + (npc.y - tower.y) ** 2;
+        if (d2 < closestMinionD2) { closestMinionD2 = d2; closestMinion = npc; closestMinionId = nid; }
+      }
+      if (closestMinion) {
+        const dmg = MOBA_TOWER_ATTACK_DAMAGE * damageMul;
+        closestMinion.hp -= dmg;
+        tower.lastAttackAt = now;
+        attacked = true;
+        if (closestMinion.hp <= 0) {
+          this.npcs.delete(closestMinionId);
+          this.mobaMinionWaypoints.delete(closestMinionId);
+        }
+      }
+
+      if (attacked) continue;
+
+      // Priority 2: attack nearest enemy player in range
+      // T2 only attacks players if T1 in same lane is already down
+      if (tower.tier === 2 && t1Alive) continue;
+
+      let closestPlayer: ServerPlayer | null = null;
+      let closestD2 = range2;
+      for (const p of this.players.values()) {
+        if (!p.alive || p.mobaTeam === tower.team) continue;
+        const d2 = (p.x - tower.x) ** 2 + (p.y - tower.y) ** 2;
+        if (d2 < closestD2) { closestD2 = d2; closestPlayer = p; }
+      }
+      if (closestPlayer) {
+        closestPlayer.hp -= MOBA_TOWER_ATTACK_DAMAGE * damageMul;
+        tower.lastAttackAt = now;
+        if (closestPlayer.hp <= 0) this.killPlayer(closestPlayer, tower.id);
+      }
+    }
+  }
+
+  checkMobaStructures() {
+    if (this.mobaWinner) return;
+
+    for (const tower of this.mobaTowers.values()) {
+      if (!tower.alive) continue;
+      const enemyTeam: MobaTeam = tower.team === 'blue' ? 'red' : 'blue';
+
+      for (const [nid, npc] of this.npcs) {
+        if (npc.ownerPlayerId !== enemyTeam || npc.ai !== 'moba_march') continue;
+        const d = Math.hypot(npc.x - tower.x, npc.y - tower.y);
+        if (d < MOBA_TOWER_RADIUS + NPC_RADIUS) {
+          tower.hp -= MOBA_MINION_TOWER_DAMAGE;
+          // Minion sacrifices itself on tower contact
+          this.npcs.delete(nid);
+          this.mobaMinionWaypoints.delete(nid);
+
+          if (tower.hp <= 0) {
+            tower.hp = 0;
+            tower.alive = false;
+            const fx: ServerToClient = { type: 'effect', effect: 'towerDestroyed', x: tower.x, y: tower.y, team: tower.team };
+            this.room.broadcast(JSON.stringify(fx));
+            // Award gold to enemy team
+            for (const p of this.players.values()) {
+              if (p.mobaTeam === enemyTeam) {
+                p.mobaGold = (p.mobaGold ?? 0) + MOBA_TOWER_KILL_GOLD;
+              }
+            }
+          }
+          break;
+        }
+      }
+    }
+  }
+
+  tickMobaRespawns(now: number) {
+    for (const p of this.players.values()) {
+      if (p.alive || !p.mobaRespawnAt || p.mobaRespawnAt === 0) continue;
+      if (now >= p.mobaRespawnAt) {
+        this.respawnPlayer(p);
+        // Override position AFTER respawnPlayer (it sets center arena)
+        const spawn = p.mobaTeam === 'blue' ? MOBA_BLUE_SPAWN : MOBA_RED_SPAWN;
+        p.x = spawn.x + (Math.random() - 0.5) * 100;
+        p.y = spawn.y + (Math.random() - 0.5) * 100;
+        p.mobaRespawnAt = 0;
+      }
+    }
+  }
+
+  broadcastMobaVictory(winner: MobaTeam) {
+    this.mobaWinner = winner;
+    const msg: ServerToClient = { type: 'mobaVictory', winnerTeam: winner };
+    this.room.broadcast(JSON.stringify(msg));
+    const loserTeam: MobaTeam = winner === 'blue' ? 'red' : 'blue';
+    const loserCrystal = this.mobaCrystals.get(loserTeam);
+    if (loserCrystal) {
+      const fx: ServerToClient = { type: 'effect', effect: 'crystalDestroyed', x: loserCrystal.x, y: loserCrystal.y, team: loserTeam };
+      this.room.broadcast(JSON.stringify(fx));
+    }
+  }
+
   recordDeath(p: ServerPlayer) {
     const score = p.level * 100 + p.waveNumber * 50 + (p.bossKills ?? 0) * 500;
     if (score <= 0) return;
@@ -528,9 +759,10 @@ export default class GameServer implements Party.Server {
     // Reap stale entries before checking the cap, in case zombie players
     // are still occupying slots from a hibernation cycle.
     this.reapZombiePlayers();
-    // Public 'main' room is more permissive (6) since it's first-come-first-served
-    // for everyone on the site. Private friend rooms stay tight at 4 for chaos.
-    const cap = this.room.id === 'main' ? 6 : PLAYER_MAX_PER_ROOM;
+    // Public 'main' room is more permissive. MOBA needs 6 (3v3).
+    const cap = this.room.id === 'main' ? 6
+      : this.gameMode === 'moba' ? MOBA_PLAYER_MAX
+      : PLAYER_MAX_PER_ROOM;
     if (this.players.size >= cap) {
       conn.send(JSON.stringify({ type: 'full' }));
       conn.close();
@@ -597,6 +829,12 @@ export default class GameServer implements Party.Server {
     this.castleWaveLastTrickleAt = 0;
     this.castleWaveGateIdx = 0;
     this.castleDefeated = false;
+    // MOBA mode reset
+    this.mobaTowers.clear();
+    this.mobaCrystals.clear();
+    this.mobaWinner = null;
+    this.mobaLastWaveAt = 0;
+    this.mobaMinionWaypoints.clear();
   }
 
   onMessage(message: string, sender: Party.Connection) {
@@ -629,8 +867,22 @@ export default class GameServer implements Party.Server {
         this.roomCreatedAt = Date.now();
         this.gameMode = msg.gameMode ?? 'arena';
         if (this.gameMode === 'castle') this.initCastle();
+        if (this.gameMode === 'moba') this.initMoba();
       }
       this.spawnPlayer(sender.id, msg.name, msg.character, msg.color, msg.hue ?? 0, msg.country);
+      // MOBA: assign team and move player to team spawn
+      if (this.gameMode === 'moba') {
+        const p = this.players.get(sender.id)!;
+        const blueCount = [...this.players.values()].filter(q => q.mobaTeam === 'blue').length;
+        p.mobaTeam = blueCount <= 3 ? 'blue' : 'red';
+        p.mobaGold = 0;
+        p.mobaRespawnAt = 0;
+        const spawn = p.mobaTeam === 'blue' ? MOBA_BLUE_SPAWN : MOBA_RED_SPAWN;
+        p.x = spawn.x + (Math.random() - 0.5) * 120;
+        p.y = spawn.y + (Math.random() - 0.5) * 120;
+        // Override hue: blue team gets blue hue, red team keeps original (warm)
+        if (p.mobaTeam === 'blue') p.hue = 4.2;
+      }
       this.reportToLobby();
     } else if (msg.type === 'input') {
       const p = this.players.get(sender.id);
@@ -668,7 +920,7 @@ export default class GameServer implements Party.Server {
       }
     } else if (msg.type === 'respawn') {
       const p = this.players.get(sender.id);
-      if (p && !p.alive) {
+      if (p && !p.alive && this.gameMode !== 'moba') {
         this.respawnPlayer(p);
       }
     }
@@ -1016,7 +1268,9 @@ export default class GameServer implements Party.Server {
     for (const p of this.players.values()) {
       if (p.waveNumber > wave) { wave = p.waveNumber; waveName = p.waveName; }
     }
-    const cap = this.room.id === 'main' ? 6 : PLAYER_MAX_PER_ROOM;
+    const cap = this.room.id === 'main' ? 6
+      : this.gameMode === 'moba' ? MOBA_PLAYER_MAX
+      : PLAYER_MAX_PER_ROOM;
     const data = {
       id: this.room.id,
       name: this.roomName || (this.room.id === 'main' ? 'Public Arena' : `Room ${this.room.id}`),
@@ -1061,6 +1315,15 @@ export default class GameServer implements Party.Server {
         this.updateNPCs(dt, now);
         this.checkCastleNpcs(now);
       }
+    } else if (this.gameMode === 'moba') {
+      // Crystal Rush: lane minions, towers, team combat
+      if (!this.mobaWinner) {
+        this.runMobaMinions(now);
+        this.updateNPCs(dt, now);
+        this.updateTowers(now);
+        this.checkMobaStructures();
+      }
+      this.tickMobaRespawns(now);
     } else {
       // Arena: per-player waves + dragon/boss roster
       this.runWaves(now);
@@ -1544,17 +1807,22 @@ export default class GameServer implements Party.Server {
   }
 
   findNearestTarget(from: ServerPlayer, range: number): { x: number; y: number } | null {
-    // Co-op mode: only target NPCs, never other players
     let best: { x: number; y: number } | null = null;
     let bestD2 = range * range;
     for (const n of this.npcs.values()) {
+      // In MOBA, skip friendly minions
+      if (this.gameMode === 'moba' && n.ownerPlayerId === from.mobaTeam) continue;
       const d2 = (n.x - from.x) ** 2 + (n.y - from.y) ** 2;
-      if (d2 < bestD2) {
-        bestD2 = d2;
-        best = { x: n.x, y: n.y };
+      if (d2 < bestD2) { bestD2 = d2; best = { x: n.x, y: n.y }; }
+    }
+    // In MOBA: also consider enemy players as targets
+    if (this.gameMode === 'moba' && from.mobaTeam) {
+      for (const p of this.players.values()) {
+        if (!p.alive || p.mobaTeam === from.mobaTeam) continue;
+        const d2 = (p.x - from.x) ** 2 + (p.y - from.y) ** 2;
+        if (d2 < bestD2) { bestD2 = d2; best = { x: p.x, y: p.y }; }
       }
     }
-    void from;
     return best;
   }
 
@@ -1653,13 +1921,35 @@ export default class GameServer implements Party.Server {
         this.projectiles.delete(proj.id);
         continue;
       }
-      // Co-op: friendly fire is disabled. Projectiles pass through other players.
+
+      // MOBA: projectiles also hit enemy players
+      if (this.gameMode === 'moba' && owner0?.mobaTeam && proj.pattern !== 'orbital') {
+        const pCollR = PLAYER_RADIUS + PROJECTILE_RADIUS * (owner0.bigHitMul ?? 1);
+        const pCollR2 = pCollR * pCollR;
+        for (const p of this.players.values()) {
+          if (!p.alive || p.mobaTeam === owner0.mobaTeam) continue;
+          if (now < p.invulnerableUntil || now < p.damageImmuneUntil) continue;
+          if ((p.x - proj.x) ** 2 + (p.y - proj.y) ** 2 < pCollR2) {
+            const dmg = this.computeDamage(owner0, proj.weapon);
+            p.hp -= dmg;
+            if (p.hp <= 0) this.killPlayer(p, owner0.id);
+            if (proj.piercesLeft > 0) {
+              proj.piercesLeft -= 1;
+            } else {
+              consumed = true;
+            }
+            break;
+          }
+        }
+      }
+
       if (consumed) this.projectiles.delete(proj.id);
     }
   }
 
   // Per-player wave system: each player has their own horde scaled to their level.
   runWaves(now: number) {
+    if (this.gameMode === 'moba') return;
     if (this.npcs.size >= NPC_MAX_COUNT) return;
     for (const p of this.players.values()) {
       this.runWaveForPlayer(p, now);
@@ -2321,6 +2611,69 @@ export default class GameServer implements Party.Server {
     const alivePlayers = [...this.players.values()].filter((p) => p.alive);
 
     for (const n of this.npcs.values()) {
+      // MOBA minions follow lane waypoints toward the enemy crystal.
+      if (n.ai === 'moba_march') {
+        const frozen = now < n.freezeUntil;
+        const slowed = now < n.slowUntil;
+        const spd = frozen ? 0 : (slowed ? n.baseSpeed * n.slowMul : n.baseSpeed);
+        n.speed = spd;
+
+        if (!frozen) {
+          const minionTeam = n.ownerPlayerId as MobaTeam;
+          const enemyTeam: MobaTeam = minionTeam === 'blue' ? 'red' : 'blue';
+          const wpData = this.mobaMinionWaypoints.get(n.id);
+
+          if (wpData) {
+            const wp = wpData.waypoints[wpData.waypointIdx];
+            const dx = wp.x - n.x;
+            const dy = wp.y - n.y;
+            const dist = Math.hypot(dx, dy) || 1;
+
+            if (dist < 30) {
+              if (wpData.waypointIdx < wpData.waypoints.length - 1) {
+                wpData.waypointIdx++;
+              } else {
+                // Reached enemy crystal
+                const crystal = this.mobaCrystals.get(enemyTeam);
+                if (crystal && crystal.alive) {
+                  crystal.hp = Math.max(0, crystal.hp - MOBA_MINION_TOWER_DAMAGE);
+                  if (crystal.hp <= 0) {
+                    crystal.alive = false;
+                    this.broadcastMobaVictory(minionTeam);
+                  }
+                }
+                this.npcs.delete(n.id);
+                this.mobaMinionWaypoints.delete(n.id);
+                continue;
+              }
+            } else {
+              const capped = Math.min(spd, PLAYER_SPEED * NPC_SPEED_CAP_FRAC);
+              n.x += (dx / dist) * capped * dt;
+              n.y += (dy / dist) * capped * dt;
+              n.x = clamp(n.x, 20, ARENA_WIDTH - 20);
+              n.y = clamp(n.y, 20, ARENA_HEIGHT - 20);
+            }
+          }
+
+          // Touch damage to enemy players only
+          if (now >= n.lastHitAt + NPC_TOUCH_COOLDOWN_MS) {
+            for (const p of this.players.values()) {
+              if (!p.alive || p.mobaTeam === minionTeam) continue;
+              if (now < p.invulnerableUntil || now < p.damageImmuneUntil) continue;
+              const pd = Math.hypot(p.x - n.x, p.y - n.y);
+              if (pd < PLAYER_RADIUS + NPC_RADIUS) {
+                const berserkerPenalty = now < p.berserkerUntil ? 1.5 : 1;
+                p.hp -= MOBA_MINION_DAMAGE * berserkerPenalty;
+                n.lastHitAt = now;
+                if (p.hp <= 0) this.killPlayer(p, n.id);
+                break;
+              }
+            }
+          }
+        }
+        continue;
+      }
+
       // Castle-march NPCs always aim at the castle — skip player targeting.
       if (n.ai === 'castle_march') {
         const frozen = now < n.freezeUntil;
@@ -2554,6 +2907,18 @@ export default class GameServer implements Party.Server {
   // If everyone is invuln, returns null and the NPC stands still.
   targetForNpc(n: { x: number; y: number; ownerPlayerId: string }): ServerPlayer | null {
     const wallNow = Date.now();
+    // MOBA minions: ownerPlayerId stores team string, not a player id
+    if (n.ownerPlayerId === 'blue' || n.ownerPlayerId === 'red') {
+      const enemyTeam: MobaTeam = n.ownerPlayerId === 'blue' ? 'red' : 'blue';
+      let best: ServerPlayer | null = null;
+      let bestD2 = Infinity;
+      for (const p of this.players.values()) {
+        if (!p.alive || p.mobaTeam !== enemyTeam) continue;
+        const d2 = (p.x - n.x) ** 2 + (p.y - n.y) ** 2;
+        if (d2 < bestD2) { bestD2 = d2; best = p; }
+      }
+      return best;
+    }
     const owner = this.players.get(n.ownerPlayerId);
     if (owner && owner.alive && wallNow >= owner.invulnerableUntil) return owner;
     let best: ServerPlayer | null = null;
@@ -2574,6 +2939,18 @@ export default class GameServer implements Party.Server {
     const n = this.npcs.get(id);
     if (!n) return;
     this.npcs.delete(id);
+    // Always clean up MOBA waypoints (no-op if not a minion)
+    this.mobaMinionWaypoints.delete(id);
+
+    // MOBA: minions drop gold for the killer, no gems/XP/chain
+    if (this.gameMode === 'moba' && n.ai === 'moba_march') {
+      if (killerId) {
+        const killer = this.players.get(killerId);
+        if (killer) killer.mobaGold = (killer.mobaGold ?? 0) + MOBA_MINION_GOLD_REWARD;
+      }
+      return;
+    }
+
     if (n.kind === 'dragon') {
       // Dragon defeated by players — feast! Plus reset cooldown so a new
       // dragon doesn't spawn immediately, giving the room a victory lap.
@@ -2683,6 +3060,23 @@ export default class GameServer implements Party.Server {
 
   killPlayer(p: ServerPlayer, killerId: string) {
     if (!p.alive) return;
+
+    // MOBA: set a respawn timer instead of permanent death
+    if (this.gameMode === 'moba') {
+      p.alive = false;
+      p.hp = 0;
+      p.mobaRespawnAt = Date.now() + MOBA_RESPAWN_BASE_MS;
+      // Award gold to the killer
+      if (killerId && killerId !== '__npc__' && killerId !== '__hazard__' && killerId !== '__castle__') {
+        const killer = this.players.get(killerId) ?? [...this.players.values()].find(q => q.mobaTeam !== p.mobaTeam);
+        if (killer && killer.mobaTeam && killer.mobaTeam !== p.mobaTeam) {
+          killer.mobaGold = (killer.mobaGold ?? 0) + MOBA_PLAYER_KILL_GOLD;
+        }
+      }
+      const msg: ServerToClient = { type: 'died', playerId: p.id };
+      this.room.broadcast(JSON.stringify(msg));
+      return;
+    }
 
     // Phoenix Rebirth — once per life, ignore the kill, full-heal, and detonate
     // a fire AOE around the player. Sets phoenixUsed so subsequent deaths land.
@@ -2874,7 +3268,23 @@ export default class GameServer implements Party.Server {
         speedBoostUntil: p.speedBoostUntil,
         damageBoostUntil: p.damageBoostUntil,
         berserkerUntil: p.berserkerUntil,
+        mobaTeam: p.mobaTeam,
+        mobaGold: p.mobaGold,
+        mobaRespawnAt: p.mobaRespawnAt,
       });
+    }
+    // MOBA structures
+    const towers: TowerState[] = [];
+    if (this.gameMode === 'moba') {
+      for (const t of this.mobaTowers.values()) {
+        towers.push({ id: t.id, team: t.team, lane: t.lane, tier: t.tier, hp: t.hp, maxHp: t.maxHp, x: t.x, y: t.y, alive: t.alive });
+      }
+    }
+    const mobaCrystals: import('../shared/types').MobaCrystalState[] = [];
+    if (this.gameMode === 'moba') {
+      for (const c of this.mobaCrystals.values()) {
+        mobaCrystals.push({ team: c.team, hp: c.hp, maxHp: c.maxHp, x: c.x, y: c.y, alive: c.alive });
+      }
     }
     const npcs = [];
     for (const n of this.npcs.values()) {
@@ -2943,6 +3353,8 @@ export default class GameServer implements Party.Server {
       gameMode: this.gameMode,
       castle: this.castle ?? undefined,
       roomWave: this.gameMode === 'castle' ? this.castleWave : undefined,
+      towers: this.gameMode === 'moba' ? towers : undefined,
+      mobaCrystals: this.gameMode === 'moba' ? mobaCrystals : undefined,
     };
     this.room.broadcast(JSON.stringify(snap));
   }

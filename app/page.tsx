@@ -252,8 +252,8 @@ export default function Page() {
                       <tr key={r.id}>
                         <td className="room-row-lock">{r.hasPassword ? '🔒' : ''}</td>
                         <td className="room-row-name">
-                          <span title={r.gameMode === 'castle' ? 'Castle Defender' : 'Arena'} style={{ marginRight: 4 }}>
-                            {r.gameMode === 'castle' ? '🏰' : '⚔️'}
+                          <span title={r.gameMode === 'castle' ? 'Castle Defender' : r.gameMode === 'moba' ? 'Crystal Rush' : 'Arena'} style={{ marginRight: 4 }}>
+                            {r.gameMode === 'castle' ? '🏰' : r.gameMode === 'moba' ? '🗡️' : '⚔️'}
                           </span>
                           {r.name}
                         </td>
@@ -352,6 +352,13 @@ export default function Page() {
                         onClick={() => setCreateMode('castle')}
                       >
                         🏰 Castle Defender
+                      </button>
+                      <button
+                        type="button"
+                        className={`room-mode-btn${createMode === 'moba' ? ' active' : ''}`}
+                        onClick={() => setCreateMode('moba')}
+                      >
+                        🗡️ Crystal Rush
                       </button>
                     </div>
                     <button className="start-btn" onClick={createRoom} type="button">

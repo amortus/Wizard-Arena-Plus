@@ -11,7 +11,7 @@ import {
   WEAPON_ELEMENT,
   type CharacterKind,
 } from '../shared/constants';
-import type { BossProjectileState, CastleState, ClientToServer, GameMode, PlayerState, ServerToClient, Snapshot } from '../shared/types';
+import type { BossProjectileState, CastleState, ClientToServer, GameMode, MobaCrystalState, MobaTeam, PlayerState, ServerToClient, Snapshot, TowerState } from '../shared/types';
 
 type SceneInit = {
   name: string;
@@ -199,6 +199,12 @@ export class ArenaScene extends Phaser.Scene {
   castleGraphic: Phaser.GameObjects.Graphics | null = null;
   castleHpBar: Phaser.GameObjects.Graphics | null = null;
   castleGateMarkers: Phaser.GameObjects.Graphics[] = [];
+  // Crystal Rush (MOBA) graphics
+  mobaTowerGraphics   = new Map<string, Phaser.GameObjects.Graphics>();
+  mobaTowerHpBars     = new Map<string, Phaser.GameObjects.Graphics>();
+  mobaCrystalGraphics = new Map<string, Phaser.GameObjects.Graphics>();
+  mobaCrystalHpBars   = new Map<string, Phaser.GameObjects.Graphics>();
+  mobaLanePaths: Phaser.GameObjects.Graphics | null = null;
   prevPlayerPos = new Map<string, { x: number; y: number; t: number }>();
   // hit-flash tracking: playerId -> { lastHp, flashUntilMs }
   playerHpTrack = new Map<string, { lastHp: number; flashUntilMs: number }>();
@@ -955,7 +961,16 @@ export class ArenaScene extends Phaser.Scene {
         this.cameras.main.shake(1200, 0.025);
         this.spawnCastleDestroyedEffect(msg.x, msg.y);
         this.bus.emit('castleDestroyed');
+      } else if (msg.effect === 'towerDestroyed') {
+        this.cameras.main.shake(400, 0.01);
+        this.spawnCastleDestroyedEffect(msg.x, msg.y);
+      } else if (msg.effect === 'crystalDestroyed') {
+        this.cameras.main.shake(1500, 0.03);
+        this.spawnCastleDestroyedEffect(msg.x, msg.y);
+        this.bus.emit('crystalDestroyed', msg.team);
       }
+    } else if (msg.type === 'mobaVictory') {
+      this.bus.emit('mobaVictory', msg.winnerTeam);
     } else if (msg.type === 'bossAlert') {
       this.bossAlertUntil = performance.now() + 3500;
       this.bossAlertName = msg.bossName;
@@ -2624,6 +2639,12 @@ export class ArenaScene extends Phaser.Scene {
       this.updateCastleGraphics(snap.castle);
     }
 
+    // Crystal Rush (MOBA) — lane background + tower/crystal graphics
+    if (snap.gameMode === 'moba') {
+      if (!this.mobaLanePaths) this.initMobaBackground();
+      this.updateMobaGraphics(snap);
+    }
+
     // emit HUD update — top-bar wave is the room's global wave; survivalWave tracks this player's personal progression
     this.bus.emit('hud', {
       self,
@@ -2636,6 +2657,8 @@ export class ArenaScene extends Phaser.Scene {
       gems: snap.gems.length,
       castle: snap.castle,
       gameMode: snap.gameMode,
+      towers: snap.towers,
+      mobaCrystals: snap.mobaCrystals,
     });
   }
 
@@ -2742,6 +2765,122 @@ export class ArenaScene extends Phaser.Scene {
         duration: 800,
         ease: 'Power2',
       });
+    }
+  }
+
+  initMobaBackground() {
+    const g = this.add.graphics().setDepth(0.1);
+    this.mobaLanePaths = g;
+    // Lane paths (wide dirt tracks)
+    const lanes = [
+      [{ x: 400, y: 2800 }, { x: 400, y: 400 }, { x: 2800, y: 400 }],
+      [{ x: 400, y: 2800 }, { x: 1600, y: 1600 }, { x: 2800, y: 400 }],
+      [{ x: 400, y: 2800 }, { x: 2800, y: 2800 }, { x: 2800, y: 400 }],
+    ];
+    g.lineStyle(80, 0x3a2a1a, 0.5);
+    for (const lane of lanes) {
+      g.beginPath();
+      g.moveTo(lane[0].x, lane[0].y);
+      for (let i = 1; i < lane.length; i++) g.lineTo(lane[i].x, lane[i].y);
+      g.strokePath();
+    }
+    // Team bases
+    g.fillStyle(0x2244aa, 0.2);
+    g.fillCircle(400, 2800, 300);
+    g.fillStyle(0xaa2222, 0.2);
+    g.fillCircle(2800, 400, 300);
+  }
+
+  updateMobaGraphics(snap: Snapshot) {
+    const towers = snap.towers ?? [];
+    const crystals = snap.mobaCrystals ?? [];
+
+    for (const tower of towers) {
+      // Tower body
+      if (!this.mobaTowerGraphics.has(tower.id)) {
+        const color = tower.team === 'blue' ? 0x4488ff : 0xff4444;
+        const tg = this.add.graphics().setDepth(1);
+        tg.fillStyle(color, 1);
+        tg.fillRect(-20, -20, 40, 40);
+        tg.lineStyle(2, 0xffffff, 0.8);
+        tg.strokeRect(-20, -20, 40, 40);
+        // Range ring
+        tg.lineStyle(1, color, 0.15);
+        tg.strokeCircle(0, 0, 220);
+        tg.setPosition(tower.x, tower.y);
+        this.mobaTowerGraphics.set(tower.id, tg);
+        this.mobaTowerHpBars.set(tower.id, this.add.graphics().setDepth(1.5));
+      }
+
+      const tg = this.mobaTowerGraphics.get(tower.id)!;
+      const hb = this.mobaTowerHpBars.get(tower.id)!;
+
+      if (!tower.alive) {
+        tg.setVisible(false);
+        hb.clear();
+        continue;
+      }
+
+      // HP bar above tower
+      hb.clear();
+      const pct = tower.hp / tower.maxHp;
+      const W = 50, H = 6;
+      const bx = tower.x - W / 2;
+      const by = tower.y - 32;
+      hb.fillStyle(0x333333, 0.8);
+      hb.fillRect(bx, by, W, H);
+      const r = Math.round((1 - pct) * 255);
+      const gr = Math.round(pct * 255);
+      hb.fillStyle(Phaser.Display.Color.GetColor(r, gr, 0), 1);
+      hb.fillRect(bx, by, Math.round(W * pct), H);
+    }
+
+    for (const crystal of crystals) {
+      const key = crystal.team;
+      if (!this.mobaCrystalGraphics.has(key)) {
+        const color = crystal.team === 'blue' ? 0x44aaff : 0xff4444;
+        const cg = this.add.graphics().setDepth(1);
+        // Octagon crystal shape
+        const pts: { x: number; y: number }[] = [];
+        for (let i = 0; i < 8; i++) {
+          const a = (Math.PI / 8) + i * (Math.PI / 4);
+          pts.push({ x: Math.cos(a) * 30, y: Math.sin(a) * 30 });
+        }
+        cg.fillStyle(color, 0.9);
+        cg.fillPoints(pts, true);
+        cg.lineStyle(3, 0xffffff, 0.9);
+        cg.strokePoints(pts, true);
+        cg.setPosition(crystal.x, crystal.y);
+        this.mobaCrystalGraphics.set(key, cg);
+        this.mobaCrystalHpBars.set(key, this.add.graphics().setDepth(1.5));
+      }
+
+      const cg = this.mobaCrystalGraphics.get(key)!;
+      const hb = this.mobaCrystalHpBars.get(key)!;
+
+      if (!crystal.alive) {
+        cg.setVisible(false);
+        hb.clear();
+        continue;
+      }
+
+      // Pulse when low HP
+      const pct = crystal.hp / crystal.maxHp;
+      cg.setAlpha(pct < 0.3 ? 0.6 + 0.4 * Math.sin(Date.now() / 120) : 1);
+
+      // HP bar
+      hb.clear();
+      const W = 80, H = 10;
+      const bx = crystal.x - W / 2;
+      const by = crystal.y - 50;
+      hb.fillStyle(0x333333, 0.8);
+      hb.fillRect(bx, by, W, H);
+      const r = Math.round((1 - pct) * 255);
+      const gr = Math.round(pct * 255);
+      hb.fillStyle(Phaser.Display.Color.GetColor(r, gr, 0), 1);
+      hb.fillRect(bx, by, Math.round(W * pct), H);
+      hb.lineStyle(1, 0xffffff, 0.6);
+      hb.strokeRect(bx, by, W, H);
     }
   }
 

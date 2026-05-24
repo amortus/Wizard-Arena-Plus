@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import type { CharacterKind } from '../shared/constants';
-import type { CastleState, GameMode, LeaderboardEntry, PlayerState } from '../shared/types';
+import type { CastleState, GameMode, LeaderboardEntry, MobaCrystalState, MobaTeam, PlayerState, TowerState } from '../shared/types';
 import { dedupeBestByName } from '../shared/leaderboard';
 
 type Props = {
@@ -41,8 +41,12 @@ export default function Game({ name, character, color, hue, room, country, roomN
     gems?: number;
     castle?: CastleState;
     gameMode?: GameMode;
+    towers?: TowerState[];
+    mobaCrystals?: MobaCrystalState[];
   }>({ players: [] });
   const [castleDestroyed, setCastleDestroyed] = useState(false);
+  const [mobaVictory, setMobaVictory] = useState<MobaTeam | null>(null);
+  const [mobaRespawnMs, setMobaRespawnMs] = useState(0);
   const [levelUp, setLevelUp] = useState<LevelUpData | null>(null);
   const [levelUpFocus, setLevelUpFocus] = useState(0);
   const [dead, setDead] = useState(false);
@@ -112,6 +116,8 @@ export default function Game({ name, character, color, hue, room, country, roomN
         setTimeout(() => setNovaFlash(false), 700);
       });
       result.scene.bus.on('castleDestroyed', () => setCastleDestroyed(true));
+      result.scene.bus.on('mobaVictory', (team: MobaTeam) => setMobaVictory(team));
+      result.scene.bus.on('crystalDestroyed', () => {});
     })();
 
     return () => {
@@ -142,6 +148,17 @@ export default function Game({ name, character, color, hue, room, country, roomN
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [dead]);
+
+  // MOBA respawn countdown ticker
+  useEffect(() => {
+    if (!dead || hud.gameMode !== 'moba') return;
+    const iv = setInterval(() => {
+      const at = hud.self?.mobaRespawnAt ?? 0;
+      const ms = Math.max(0, at - Date.now());
+      setMobaRespawnMs(ms);
+    }, 100);
+    return () => clearInterval(iv);
+  }, [dead, hud.gameMode, hud.self?.mobaRespawnAt]);
 
   // Keyboard nav while level-up modal is open: ←/→ to move focus, Enter/Space to confirm.
   useEffect(() => {
@@ -287,6 +304,36 @@ export default function Game({ name, character, color, hue, room, country, roomN
         </div>
       )}
 
+      {hud.gameMode === 'moba' && hud.mobaCrystals && (
+        <div className="moba-crystal-bars">
+          {(['blue', 'red'] as MobaTeam[]).map((team) => {
+            const crystal = hud.mobaCrystals!.find((c) => c.team === team);
+            const pct = crystal ? crystal.hp / crystal.maxHp : 1;
+            return (
+              <div key={team} className={`moba-crystal-bar ${team}`}>
+                <span className="moba-crystal-icon">{team === 'blue' ? '💎' : '💢'}</span>
+                <div className="moba-crystal-track">
+                  <div className="moba-crystal-fill" style={{ width: `${Math.max(0, pct * 100)}%`, background: team === 'blue' ? '#4488ff' : '#ff4444' }} />
+                </div>
+                <span className="moba-crystal-hp">{crystal ? Math.max(0, Math.round(crystal.hp)) : 0}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {hud.gameMode === 'moba' && hud.towers && (
+        <div className="moba-tower-status">
+          {(['blue', 'red'] as MobaTeam[]).map((team) => (
+            <div key={team} className={`moba-tower-row ${team}`}>
+              {hud.towers!.filter((t) => t.team === team).sort((a, b) => a.lane - b.lane || a.tier - b.tier).map((t) => (
+                <div key={t.id} className={`moba-tower-dot ${t.alive ? 'alive' : 'dead'}`} title={`${team} lane${t.lane + 1} T${t.tier}`} />
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+
       {inSmoke && <div className="smoke-overlay" />}
       {novaFlash && <div className="nova-flash" />}
       {arenaElement === 'lava' && <div className="arena-lava-overlay" />}
@@ -398,7 +445,30 @@ export default function Game({ name, character, color, hue, room, country, roomN
         </div>
       )}
 
-      {dead && (
+      {dead && hud.gameMode === 'moba' && (
+        <div className="moba-respawn-overlay">
+          <h2>DEFEATED</h2>
+          <div className="moba-respawn-timer">{mobaRespawnMs > 0 ? `${Math.ceil(mobaRespawnMs / 1000)}` : '...'}</div>
+          <div className="moba-respawn-label">Respawning at base</div>
+        </div>
+      )}
+
+      {mobaVictory && (
+        <div className="moba-victory-overlay">
+          <h2>{mobaVictory === hud.self?.mobaTeam ? '⚔ VICTORY' : '💀 DEFEAT'}</h2>
+          <p style={{ color: mobaVictory === 'blue' ? '#4488ff' : '#ff4444' }}>
+            {mobaVictory === 'blue' ? 'Blue' : 'Red'} team destroyed the enemy Crystal!
+          </p>
+          <button className="start-btn" style={{ maxWidth: 240 }} onClick={() => { if (typeof window !== 'undefined') window.location.reload(); }}>
+            Play Again
+          </button>
+          <button className="leaderboard-btn" style={{ maxWidth: 200, marginTop: 8, fontSize: 8 }} onClick={() => { if (typeof window !== 'undefined') window.location.href = '/'; }}>
+            Back to Menu
+          </button>
+        </div>
+      )}
+
+      {dead && hud.gameMode !== 'moba' && (
         <div className="death-overlay">
           <h2>YOU DIED</h2>
           {deathStats && (() => {
