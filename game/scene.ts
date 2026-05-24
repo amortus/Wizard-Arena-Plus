@@ -292,6 +292,64 @@ export class ArenaScene extends Phaser.Scene {
     });
   }
 
+  // ── Procedural ground tile generation ─────────────────────────────────
+  buildGroundTextures() {
+    const make = (key: string, w: number, h: number, fn: (ctx: CanvasRenderingContext2D) => void) => {
+      if (this.textures.exists(key)) return;
+      const ct = this.textures.createCanvas(key, w, h) as Phaser.Textures.CanvasTexture;
+      const ctx = ct.getCanvas().getContext('2d');
+      if (!ctx) return;
+      fn(ctx);
+      ct.refresh();
+    };
+
+    // Dark jungle grass — base color + random noise strips + grass blades + shadow patches
+    make('tile_grass', 64, 64, (ctx) => {
+      ctx.fillStyle = '#1c4209';
+      ctx.fillRect(0, 0, 64, 64);
+      for (let i = 0; i < 130; i++) {
+        const x = Math.random() * 64, y = Math.random() * 64;
+        const l = 0.55 + Math.random() * 0.65;
+        ctx.fillStyle = `rgba(${(26*l)|0},${(82*l)|0},${(10*l)|0},0.55)`;
+        ctx.fillRect(x, y, 1 + Math.random() * 3, 1);
+      }
+      for (let i = 0; i < 14; i++) {
+        const bx = (Math.random() * 60 + 2) | 0, by = (Math.random() * 57 + 5) | 0;
+        ctx.fillStyle = 'rgba(55,132,22,0.82)';
+        ctx.fillRect(bx, by - 3, 1, 4);
+        ctx.fillStyle = 'rgba(82,168,36,0.55)';
+        ctx.fillRect(bx + 1, by - 4, 1, 4);
+      }
+      for (let i = 0; i < 8; i++) {
+        ctx.fillStyle = 'rgba(0,0,0,0.13)';
+        ctx.fillRect(Math.random() * 56, Math.random() * 56, 5 + Math.random() * 8, 3 + Math.random() * 5);
+      }
+    });
+
+    // Sandy dirt path — warm brown base + pebbles + scuff marks
+    make('tile_dirt', 64, 64, (ctx) => {
+      ctx.fillStyle = '#7a5a1e';
+      ctx.fillRect(0, 0, 64, 64);
+      for (let i = 0; i < 110; i++) {
+        const x = Math.random() * 64, y = Math.random() * 64;
+        const l = 0.62 + Math.random() * 0.58;
+        ctx.fillStyle = `rgba(${(132*l)|0},${(96*l)|0},${(30*l)|0},0.46)`;
+        ctx.fillRect(x, y, 1 + Math.random() * 3, 1);
+      }
+      for (let i = 0; i < 9; i++) {
+        const x = 2 + Math.random() * 60, y = 2 + Math.random() * 60;
+        ctx.fillStyle = 'rgba(178,148,92,0.62)';
+        ctx.beginPath();
+        ctx.arc(x, y, 1 + Math.random() * 1.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      for (let i = 0; i < 6; i++) {
+        ctx.fillStyle = 'rgba(88,60,12,0.38)';
+        ctx.fillRect(Math.random() * 52, Math.random() * 62, 4 + Math.random() * 10, 1);
+      }
+    });
+  }
+
   create() {
     this.makeFallbackTextures();
     this.makeArenaBackground();
@@ -2833,25 +2891,34 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   initAramBackground() {
-    const g = this.add.graphics().setDepth(0.1);
-    this.mobaLanePaths = g;
-    // Single wide horizontal corridor
-    g.lineStyle(500, 0x3a2a1a, 0.45);
-    g.beginPath();
-    g.moveTo(200, 1600);
-    g.lineTo(3000, 1600);
-    g.strokePath();
-    // Lane edge lines
-    g.lineStyle(4, 0x6a4a2a, 0.5);
-    g.beginPath();
-    g.moveTo(200, 1350); g.lineTo(3000, 1350); g.strokePath();
-    g.beginPath();
-    g.moveTo(200, 1850); g.lineTo(3000, 1850); g.strokePath();
-    // Team bases
-    g.fillStyle(0x2244aa, 0.25);
-    g.fillCircle(400, 1600, 260);
-    g.fillStyle(0xaa2222, 0.25);
-    g.fillCircle(2800, 1600, 260);
+    this.buildGroundTextures();
+
+    // Grass covers full map
+    this.add.tileSprite(1600, 1600, 3200, 3200, 'tile_grass').setDepth(0);
+
+    // Single dirt corridor (500px tall, full width)
+    this.add.tileSprite(1600, 1600, 2800, 500, 'tile_dirt').setDepth(0.05);
+
+    // Subtle edge darkening strips above and below the corridor
+    const g = this.add.graphics().setDepth(0.06);
+    g.fillStyle(0x000000, 0.18);
+    g.fillRect(200, 1340, 2800, 15);  // top edge shadow
+    g.fillRect(200, 1845, 2800, 15);  // bottom edge shadow
+
+    // Base glows
+    const addBase = (cx: number, cy: number, color: number) => {
+      const bg = this.add.graphics().setDepth(0.08);
+      bg.fillStyle(color, 0.22);
+      bg.fillCircle(cx, cy, 290);
+      bg.lineStyle(5, color, 0.40);
+      bg.strokeCircle(cx, cy, 205);
+      bg.lineStyle(3, color, 0.25);
+      bg.strokeCircle(cx, cy, 115);
+    };
+    addBase(400, 1600, 0x2266ff);
+    addBase(2800, 1600, 0xff3322);
+
+    this.mobaLanePaths = this.add.graphics(); // sentinel so init only runs once
     this.placeAramSceneObjects();
   }
 
@@ -2905,26 +2972,38 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   initMobaBackground() {
-    const g = this.add.graphics().setDepth(0.1);
-    this.mobaLanePaths = g;
-    // Lane paths (wide dirt tracks)
-    const lanes = [
-      [{ x: 400, y: 2800 }, { x: 400, y: 400 }, { x: 2800, y: 400 }],
-      [{ x: 400, y: 2800 }, { x: 1600, y: 1600 }, { x: 2800, y: 400 }],
-      [{ x: 400, y: 2800 }, { x: 2800, y: 2800 }, { x: 2800, y: 400 }],
-    ];
-    g.lineStyle(80, 0x3a2a1a, 0.5);
-    for (const lane of lanes) {
-      g.beginPath();
-      g.moveTo(lane[0].x, lane[0].y);
-      for (let i = 1; i < lane.length; i++) g.lineTo(lane[i].x, lane[i].y);
-      g.strokePath();
-    }
-    // Team bases
-    g.fillStyle(0x2244aa, 0.2);
-    g.fillCircle(400, 2800, 300);
-    g.fillStyle(0xaa2222, 0.2);
-    g.fillCircle(2800, 400, 300);
+    this.buildGroundTextures();
+
+    // Grass covers full map
+    this.add.tileSprite(1600, 1600, 3200, 3200, 'tile_grass').setDepth(0);
+
+    // Straight lane segments (TileSprite dirt)
+    const LW = 90;
+    this.add.tileSprite(400,  1600, LW,   2400, 'tile_dirt').setDepth(0.05); // top-lane left side (vertical)
+    this.add.tileSprite(1600, 400,  2400, LW,   'tile_dirt').setDepth(0.05); // top-lane top side (horizontal)
+    this.add.tileSprite(1600, 2800, 2400, LW,   'tile_dirt').setDepth(0.05); // bot-lane bottom side
+    this.add.tileSprite(2800, 1600, LW,   2400, 'tile_dirt').setDepth(0.05); // bot-lane right side
+
+    // Mid lane diagonal — 2400√2 ≈ 3394 long, rotated 45° CW from vertical
+    this.add.tileSprite(1600, 1600, LW, 3394, 'tile_dirt')
+      .setDepth(0.05).setRotation(Math.PI / 4);
+
+    // Base glows with concentric rings
+    const addBase = (cx: number, cy: number, color: number) => {
+      const g = this.add.graphics().setDepth(0.08);
+      g.fillStyle(color, 0.22);
+      g.fillCircle(cx, cy, 330);
+      g.lineStyle(5, color, 0.40);
+      g.strokeCircle(cx, cy, 230);
+      g.lineStyle(3, color, 0.25);
+      g.strokeCircle(cx, cy, 130);
+      g.lineStyle(2, color, 0.15);
+      g.strokeCircle(cx, cy, 60);
+    };
+    addBase(400, 2800, 0x2266ff);
+    addBase(2800, 400, 0xff3322);
+
+    this.mobaLanePaths = this.add.graphics(); // sentinel so init only runs once
     this.placeMobaSceneObjects();
   }
 
