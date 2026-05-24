@@ -222,7 +222,7 @@ export default class GameServer implements Party.Server {
   nextDragonAllowedAt = 0;
   // Boss roster system — cycles through 8 unique bosses as the game progresses
   activeBossId: string | null = null;
-  nextBossAllowedAt = 0;
+  nextBossWave = 10;   // next wave milestone that triggers a boss
   bossRosterIdx = 0;
   bossGeneration = 0;
   // Lobby registry fields
@@ -347,7 +347,7 @@ export default class GameServer implements Party.Server {
     this.dragonId = null;
     this.nextDragonAllowedAt = 0;
     this.activeBossId = null;
-    this.nextBossAllowedAt = 0;
+    this.nextBossWave = 10;
     this.bossRosterIdx = 0;
     this.bossGeneration = 0;
     this.nextHazardAt = 0;
@@ -1631,11 +1631,10 @@ export default class GameServer implements Party.Server {
   }
 
   maybeSpawnBoss(now: number) {
-    // Clear stale handle
+    // Boss just died — advance to next 10-wave milestone
     if (this.activeBossId && !this.npcs.has(this.activeBossId)) {
       this.activeBossId = null;
-      this.nextBossAllowedAt = now + 90_000;
-      // Advance roster
+      this.nextBossWave += 10;
       this.bossRosterIdx++;
       if (this.bossRosterIdx >= BOSS_ROSTER.length) {
         this.bossRosterIdx = 0;
@@ -1643,16 +1642,18 @@ export default class GameServer implements Party.Server {
       }
     }
     if (this.activeBossId) return;
-    if (now < this.nextBossAllowedAt) return;
-    // Find top-scoring player at L10+ to anchor the boss
+    // Compute current room wave (max waveNumber among alive players)
+    let roomWave = 0;
     let target: ServerPlayer | null = null;
     let bestScore = -1;
     for (const p of this.players.values()) {
-      if (!p.alive || p.level < 10) continue;
+      if (!p.alive) continue;
+      if (p.waveNumber > roomWave) roomWave = p.waveNumber;
       const score = p.level * 100 + p.waveNumber * 50;
       if (score > bestScore) { target = p; bestScore = score; }
     }
-    if (!target) return;
+    // Spawn when any alive player has reached the next milestone wave
+    if (!target || roomWave < this.nextBossWave) return;
     if (this.npcs.size >= NPC_MAX_COUNT) return;
 
     const boss = BOSS_ROSTER[this.bossRosterIdx];
