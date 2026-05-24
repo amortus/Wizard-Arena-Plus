@@ -1427,6 +1427,8 @@ export default class GameServer implements Party.Server {
     if (!p.alive) return;
 
     if (!p.pwWaveActive) {
+      // Block next wave while roster boss is alive — prevents skipping milestones
+      if (this.activeBossId) return;
       const cooldownDone =
         p.waveNumber === 0 || now - p.pwWaveStartedAt >= WAVE_DURATION_MS + WAVE_COOLDOWN_MS;
       if (!cooldownDone) return;
@@ -1680,6 +1682,13 @@ export default class GameServer implements Party.Server {
       if (this.bossRosterIdx >= BOSS_ROSTER.length) {
         this.bossRosterIdx = 0;
         this.bossGeneration++;
+      }
+      // Give all alive players a fresh wave cooldown so the next wave
+      // doesn't rip immediately after boss dies
+      for (const p of this.players.values()) {
+        if (!p.alive) continue;
+        p.pwWaveActive = false;
+        p.pwWaveStartedAt = now;
       }
     }
     if (this.activeBossId) return;
