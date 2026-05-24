@@ -479,3 +479,34 @@ export const BOSS_ROSTER: {
   { kind: 'alpha_wolf',     name: 'Alpha Wolf',      hpMul: 65,  speedFrac: 0.90, ai: 'boss_enrage', summonKind: null,     summonCount: 0,  summonIntervalMs: 0     },
   { kind: 'death_titan',    name: 'Death Titan',     hpMul: 95,  speedFrac: 0.65, ai: 'boss_charge', summonKind: null,     summonCount: 0,  summonIntervalMs: 0     },
 ];
+
+// ─── Castle Defender Mode ────────────────────────────────────────────────────
+
+export const CASTLE_HP = 3000;
+export const CASTLE_X = ARENA_WIDTH / 2;
+export const CASTLE_Y = ARENA_HEIGHT / 2;
+export const CASTLE_RADIUS = 64; // NPCs within this range "reach" the castle
+
+// Spawn gates for castle mode (one per cardinal direction, near arena edges)
+export const CASTLE_GATES: { x: number; y: number }[] = [
+  { x: ARENA_WIDTH / 2, y: 80 },               // North
+  { x: ARENA_WIDTH / 2, y: ARENA_HEIGHT - 80 }, // South
+  { x: ARENA_WIDTH - 80, y: ARENA_HEIGHT / 2 }, // East
+  { x: 80, y: ARENA_HEIGHT / 2 },              // West
+];
+
+// Castle mode uses a single room-wide wave (not per-player)
+export const CASTLE_WAVE_BASE_SIZE = 48;
+export const CASTLE_WAVE_GROWTH = 14;
+export const CASTLE_WAVE_DURATION_MS = 20_000;
+export const CASTLE_WAVE_COOLDOWN_MS = 3_000;
+
+// HP drained from the castle when an NPC reaches it
+export const CASTLE_DAMAGE_BY_TIER: Record<string, number> = {
+  common: 10,
+  elite: 25,
+  veteran: 50,
+  miniboss: 150,
+  boss: 300,
+  dragon: 500,
+};

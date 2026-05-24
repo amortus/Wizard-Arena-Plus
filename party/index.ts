@@ -48,6 +48,16 @@ import {
   WAVE_ANCHORS_AT,
   themeForWave,
   BOSS_ROSTER,
+  CASTLE_HP,
+  CASTLE_X,
+  CASTLE_Y,
+  CASTLE_RADIUS,
+  CASTLE_GATES,
+  CASTLE_WAVE_BASE_SIZE,
+  CASTLE_WAVE_GROWTH,
+  CASTLE_WAVE_DURATION_MS,
+  CASTLE_WAVE_COOLDOWN_MS,
+  CASTLE_DAMAGE_BY_TIER,
   type BossAiKind,
   type CharacterKind,
   type MonsterKind,
@@ -58,7 +68,9 @@ import { isBlockedName } from '../shared/profanity';
 import type {
   ArenaElement,
   BossProjectileState,
+  CastleState,
   ClientToServer,
+  GameMode,
   GemState,
   HazardKind,
   HazardState,
@@ -145,7 +157,7 @@ type ServerProjectile = ProjectileState & {
 let nextId = 1;
 const genId = (prefix: string) => `${prefix}_${nextId++}`;
 
-type NpcAi = 'chase' | 'regroup' | 'flank' | BossAiKind;
+type NpcAi = 'chase' | 'regroup' | 'flank' | 'castle_march' | BossAiKind;
 
 type ServerNpc = NPCState & {
   speed: number;
@@ -263,6 +275,19 @@ export default class GameServer implements Party.Server {
   allTimeLeaderboard: LeaderboardEntry[] = [];
   leaderboardLoaded = false;
 
+  // ── Castle Defender mode state ────────────────────────────────────────────
+  gameMode: GameMode = 'arena';
+  castle: CastleState | null = null;
+  // Room-wide wave engine (castle mode — replaces per-player waves)
+  castleWave = 0;
+  castleWaveActive = false;
+  castleWaveStartedAt = 0;
+  castleWaveTotal = 0;
+  castleWaveSpawned = 0;
+  castleWaveLastTrickleAt = 0;
+  castleWaveGateIdx = 0; // cycles through CASTLE_GATES for spawns
+  castleDefeated = false;
+
   constructor(readonly room: Party.Room) {
     void this.loadLeaderboard();
   }
@@ -296,6 +321,182 @@ export default class GameServer implements Party.Server {
     try {
       await this.room.storage.put(LEADERBOARD_KEY, this.allTimeLeaderboard);
     } catch (e) { void e; }
+  }
+
+  // ── Castle Defender helpers ─────────────────────────────────────────────
+
+  initCastle() {
+    this.castle = { hp: CASTLE_HP, maxHp: CASTLE_HP, x: CASTLE_X, y: CASTLE_Y };
+    this.castleWave = 0;
+    this.castleWaveActive = false;
+    this.castleDefeated = false;
+  }
+
+  runCastleWave(now: number) {
+    if (this.castleDefeated) return;
+    const castle = this.castle!;
+
+    if (!this.castleWaveActive) {
+      // Wait for cooldown between waves
+      const cooldownDone =
+        this.castleWave === 0 || now - this.castleWaveStartedAt >= CASTLE_WAVE_DURATION_MS + CASTLE_WAVE_COOLDOWN_MS;
+      if (!cooldownDone) return;
+
+      this.castleWave += 1;
+      this.castleWaveTotal = CASTLE_WAVE_BASE_SIZE + CASTLE_WAVE_GROWTH * (this.castleWave - 1);
+      this.castleWaveSpawned = 0;
+      this.castleWaveActive = true;
+      this.castleWaveStartedAt = now;
+      this.castleWaveLastTrickleAt = now;
+
+      // Determine how many gates to use (scale with wave)
+      const gatesUsed = this.castleWave <= 1 ? 2 : this.castleWave <= 2 ? 3 : 4;
+      this.castleWaveGateIdx = 0; // reset round-robin
+
+      // Initial burst: 60% of the wave
+      const burst = Math.floor(this.castleWaveTotal * 0.60);
+      for (let i = 0; i < burst; i++) {
+        const gate = CASTLE_GATES[i % gatesUsed];
+        this.spawnCastleNpc(gate.x, gate.y, this.castleWave);
+        this.castleWaveSpawned++;
+      }
+
+      // Trigger boss spawn on every 5th castle wave
+      if (this.castleWave % 5 === 0) {
+        this.triggerCastleBoss();
+      }
+      return;
+    }
+
+    // Trickle remaining enemies
+    const remaining = this.castleWaveTotal - this.castleWaveSpawned;
+    if (remaining > 0 && now - this.castleWaveLastTrickleAt >= 600) {
+      const gatesUsed = this.castleWave <= 1 ? 2 : this.castleWave <= 2 ? 3 : 4;
+      const batch = Math.min(remaining, 6);
+      for (let i = 0; i < batch; i++) {
+        const gate = CASTLE_GATES[(this.castleWaveGateIdx + i) % gatesUsed];
+        this.spawnCastleNpc(gate.x, gate.y, this.castleWave);
+        this.castleWaveSpawned++;
+      }
+      this.castleWaveGateIdx = (this.castleWaveGateIdx + batch) % gatesUsed;
+      this.castleWaveLastTrickleAt = now;
+    }
+
+    // Wave ends when all spawned and enough time passed
+    if (remaining <= 0 && now - this.castleWaveStartedAt >= CASTLE_WAVE_DURATION_MS) {
+      this.castleWaveActive = false;
+      this.castleWaveStartedAt = now; // reuse as cooldown reference
+    }
+  }
+
+  spawnCastleNpc(gateX: number, gateY: number, wave: number) {
+    if (this.npcs.size >= NPC_MAX_COUNT) return;
+
+    // Pick monster kind based on wave progression
+    const theme = themeForWave(wave);
+    const kind = theme.kind;
+    const base = MONSTER_BASES[kind];
+
+    // Jitter spawn position around gate
+    const angle = Math.random() * Math.PI * 2;
+    const r = 20 + Math.random() * 60;
+    const x = gateX + Math.cos(angle) * r;
+    const y = gateY + Math.sin(angle) * r;
+
+    const waveMul = 1 + (wave - 1) * 0.12;
+    const hp = NPC_BASE_HP * (base?.hpMul ?? 1) * waveMul;
+    const spd = Math.min(NPC_BASE_SPEED * (base?.speedMul ?? 1), PLAYER_SPEED * NPC_SPEED_CAP_FRAC);
+
+    const id = `cn_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const npc: ServerNpc = {
+      id,
+      kind,
+      x, y,
+      hp, baseHp: hp,
+      speed: spd,
+      baseSpeed: spd,
+      slowUntil: 0, slowMul: 1,
+      freezeUntil: 0,
+      lastHitAt: 0,
+      ownerPlayerId: '',       // castle NPCs have no player owner
+      retargetAt: Number.MAX_SAFE_INTEGER,
+      ai: 'castle_march',
+      aiPhase: 'pursue',
+      aiPhaseEndsAt: 0,
+      flankSide: 1,
+    };
+    this.npcs.set(id, npc);
+  }
+
+  triggerCastleBoss() {
+    // Spawn a roster boss that marches toward the castle
+    if (this.activeBossId) return; // one boss at a time
+    const bossEntry = BOSS_ROSTER[this.bossRosterIdx % BOSS_ROSTER.length];
+    this.bossRosterIdx++;
+    this.bossGeneration++;
+    const gate = CASTLE_GATES[Math.floor(Math.random() * CASTLE_GATES.length)];
+    const genMul = 1 + (this.bossGeneration - 1) * 0.25;
+    const hp = NPC_BASE_HP * bossEntry.hpMul * genMul;
+    const id = `cb_${Date.now()}`;
+    const npc: ServerNpc = {
+      id,
+      kind: bossEntry.kind,
+      x: gate.x, y: gate.y,
+      hp, baseHp: hp,
+      speed: PLAYER_SPEED * bossEntry.speedFrac,
+      baseSpeed: PLAYER_SPEED * bossEntry.speedFrac,
+      slowUntil: 0, slowMul: 1,
+      freezeUntil: 0,
+      lastHitAt: 0,
+      ownerPlayerId: '',
+      retargetAt: Number.MAX_SAFE_INTEGER,
+      ai: 'castle_march',  // override boss AI — marches to castle
+      aiPhase: 'pursue',
+      aiPhaseEndsAt: 0,
+      flankSide: 1,
+    };
+    this.npcs.set(id, npc);
+    this.activeBossId = id;
+    const alertMsg: ServerToClient = { type: 'bossAlert', bossName: bossEntry.name };
+    this.room.broadcast(JSON.stringify(alertMsg));
+  }
+
+  checkCastleNpcs(now: number) {
+    if (!this.castle || this.castleDefeated) return;
+    const castle = this.castle;
+    for (const npc of this.npcs.values()) {
+      if (npc.ownerPlayerId !== '' && npc.ai !== 'castle_march') continue;
+      const dist = Math.hypot(npc.x - castle.x, npc.y - castle.y);
+      if (dist > CASTLE_RADIUS) continue;
+
+      // Determine tier for damage lookup
+      let tier = 'common';
+      if (npc.id.startsWith('cb_')) {
+        tier = 'boss';
+      } else {
+        const base = MONSTER_BASES[npc.kind];
+        const hpMul = base?.hpMul ?? 1;
+        if (hpMul >= 5) tier = 'veteran';
+        else if (hpMul >= 2.5) tier = 'elite';
+      }
+      const dmg = CASTLE_DAMAGE_BY_TIER[tier] ?? 10;
+      castle.hp = Math.max(0, castle.hp - dmg);
+
+      // Remove NPC (it has reached the castle)
+      this.npcs.delete(npc.id);
+      if (this.activeBossId === npc.id) this.activeBossId = null;
+
+      if (castle.hp <= 0) {
+        this.castleDefeated = true;
+        const fx: ServerToClient = { type: 'effect', effect: 'castleDestroyed', x: castle.x, y: castle.y };
+        this.room.broadcast(JSON.stringify(fx));
+        // Kill all players to trigger game-over flow
+        for (const p of this.players.values()) {
+          if (p.alive) this.killPlayer(p, '__castle__');
+        }
+        return;
+      }
+    }
   }
 
   recordDeath(p: ServerPlayer) {
@@ -385,6 +586,17 @@ export default class GameServer implements Party.Server {
     this.nextMiniBossWave = 5;
     this.arenaElement = 'normal';
     this.nextArenaElementWave = 100;
+    // Castle mode reset
+    this.gameMode = 'arena';
+    this.castle = null;
+    this.castleWave = 0;
+    this.castleWaveActive = false;
+    this.castleWaveStartedAt = 0;
+    this.castleWaveTotal = 0;
+    this.castleWaveSpawned = 0;
+    this.castleWaveLastTrickleAt = 0;
+    this.castleWaveGateIdx = 0;
+    this.castleDefeated = false;
   }
 
   onMessage(message: string, sender: Party.Connection) {
@@ -410,11 +622,13 @@ export default class GameServer implements Party.Server {
         sender.close();
         return;
       }
-      // First player to join sets the room name and password
+      // First player to join sets the room name, password, and game mode
       if (this.players.size === 0) {
         this.roomName = msg.roomName || (this.room.id === 'main' ? 'Public Arena' : `Room ${this.room.id}`);
         this.roomPassword = msg.roomPassword || '';
         this.roomCreatedAt = Date.now();
+        this.gameMode = msg.gameMode ?? 'arena';
+        if (this.gameMode === 'castle') this.initCastle();
       }
       this.spawnPlayer(sender.id, msg.name, msg.character, msg.color, msg.hue ?? 0, msg.country);
       this.reportToLobby();
@@ -812,6 +1026,7 @@ export default class GameServer implements Party.Server {
       waveName,
       hasPassword: !!this.roomPassword,
       createdAt: this.roomCreatedAt || Date.now(),
+      gameMode: this.gameMode,
     };
     try {
       const lobby = (this.room.context.parties as any).lobby?.get('main');
@@ -838,23 +1053,35 @@ export default class GameServer implements Party.Server {
     this.reapZombiePlayers();
     this.updatePlayers(dt, now);
     this.updateProjectiles(dt);
-    this.runWaves(now);
-    this.maybeSpawnDragon(now);
-    this.retargetDragon();
-    this.retargetBoss();
-    this.maybeSpawnBoss(now);
-    this.maybeSpawnMiniBoss(now);
-    this.updateNPCs(dt, now);
+
+    if (this.gameMode === 'castle') {
+      // Castle Defender: shared room-wide wave, NPCs march to castle
+      if (!this.castleDefeated) {
+        this.runCastleWave(now);
+        this.updateNPCs(dt, now);
+        this.checkCastleNpcs(now);
+      }
+    } else {
+      // Arena: per-player waves + dragon/boss roster
+      this.runWaves(now);
+      this.maybeSpawnDragon(now);
+      this.retargetDragon();
+      this.retargetBoss();
+      this.maybeSpawnBoss(now);
+      this.maybeSpawnMiniBoss(now);
+      this.updateNPCs(dt, now);
+      this.scheduleHazard(now);
+      this.scheduleBeams(now);
+      this.scheduleBeamCurtain(now);
+      this.updateHazards(now);
+      this.checkArenaElement();
+    }
+
     this.updateBlackHoles(now);
     this.updateWolves(dt, now);
     this.updateGems();
     this.updatePickups(now);
     this.updateBossProjectiles(dt, now);
-    this.scheduleHazard(now);
-    this.scheduleBeams(now);
-    this.scheduleBeamCurtain(now);
-    this.updateHazards(now);
-    this.checkArenaElement();
 
     this.broadcastSnapshot(now);
   }
@@ -2094,6 +2321,39 @@ export default class GameServer implements Party.Server {
     const alivePlayers = [...this.players.values()].filter((p) => p.alive);
 
     for (const n of this.npcs.values()) {
+      // Castle-march NPCs always aim at the castle — skip player targeting.
+      if (n.ai === 'castle_march') {
+        const frozen = now < n.freezeUntil;
+        const slowed = now < n.slowUntil;
+        let spd = frozen ? 0 : (slowed ? n.baseSpeed * n.slowMul : n.baseSpeed);
+        n.speed = spd;
+        if (!frozen && this.castle) {
+          const dx = this.castle.x - n.x;
+          const dy = this.castle.y - n.y;
+          const dist = Math.hypot(dx, dy) || 1;
+          spd = Math.min(spd, PLAYER_SPEED * NPC_SPEED_CAP_FRAC);
+          n.x += (dx / dist) * spd * dt;
+          n.y += (dy / dist) * spd * dt;
+          n.x = clamp(n.x, 20, ARENA_WIDTH - 20);
+          n.y = clamp(n.y, 20, ARENA_HEIGHT - 20);
+        }
+        // Touch damage to players in the path
+        if (now >= n.lastHitAt + NPC_TOUCH_COOLDOWN_MS) {
+          for (const p of this.players.values()) {
+            if (!p.alive || now < p.invulnerableUntil || now < p.damageImmuneUntil) continue;
+            const pdist = Math.hypot(p.x - n.x, p.y - n.y);
+            if (pdist < PLAYER_RADIUS + NPC_RADIUS) {
+              const berserkerPenalty = now < p.berserkerUntil ? 1.5 : 1;
+              p.hp -= NPC_DAMAGE * berserkerPenalty;
+              n.lastHitAt = now;
+              if (p.hp <= 0) this.killPlayer(p, '__npc__');
+              break;
+            }
+          }
+        }
+        continue;
+      }
+
       // Random retarget: every 30-90s each NPC re-rolls which player it chases.
       // Dragon and unique bosses use MAX_SAFE_INTEGER so this never fires for them.
       if (now >= n.retargetAt && alivePlayers.length > 0) {
@@ -2644,15 +2904,23 @@ export default class GameServer implements Party.Server {
     for (const bp of this.bossProjectiles.values()) {
       bossProjectiles.push({ id: bp.id, x: bp.x, y: bp.y, vx: bp.vx, vy: bp.vy, radius: bp.radius, generation: bp.generation });
     }
-    // Room wave = highest wave among alive players (drives the top-bar display)
+    // Room wave = castle wave (castle mode) or highest alive-player wave (arena mode)
     let roomWave = 0;
     let roomWaveName = '';
     let roomWaveTimeLeftMs = 0;
-    for (const p of this.players.values()) {
-      if (p.alive && p.waveNumber > roomWave) {
-        roomWave = p.waveNumber;
-        roomWaveName = p.waveName;
-        roomWaveTimeLeftMs = p.waveTimeLeftMs;
+    if (this.gameMode === 'castle') {
+      roomWave = this.castleWave;
+      roomWaveName = `Wave ${this.castleWave}`;
+      roomWaveTimeLeftMs = this.castleWaveActive
+        ? Math.max(0, CASTLE_WAVE_DURATION_MS - (now - this.castleWaveStartedAt))
+        : 0;
+    } else {
+      for (const p of this.players.values()) {
+        if (p.alive && p.waveNumber > roomWave) {
+          roomWave = p.waveNumber;
+          roomWaveName = p.waveName;
+          roomWaveTimeLeftMs = p.waveTimeLeftMs;
+        }
       }
     }
     this.currentRoomWave = roomWave;
@@ -2672,6 +2940,9 @@ export default class GameServer implements Party.Server {
       pickups,
       bossProjectiles,
       arenaElement: this.arenaElement,
+      gameMode: this.gameMode,
+      castle: this.castle ?? undefined,
+      roomWave: this.gameMode === 'castle' ? this.castleWave : undefined,
     };
     this.room.broadcast(JSON.stringify(snap));
   }

@@ -11,7 +11,7 @@ import {
   WEAPON_ELEMENT,
   type CharacterKind,
 } from '../shared/constants';
-import type { BossProjectileState, ClientToServer, PlayerState, ServerToClient, Snapshot } from '../shared/types';
+import type { BossProjectileState, CastleState, ClientToServer, GameMode, PlayerState, ServerToClient, Snapshot } from '../shared/types';
 
 type SceneInit = {
   name: string;
@@ -22,6 +22,7 @@ type SceneInit = {
   country?: string;
   roomName?: string;
   roomPassword?: string;
+  gameMode?: GameMode;
 };
 
 function countryFlag(code?: string): string {
@@ -194,6 +195,10 @@ export class ArenaScene extends Phaser.Scene {
   bossAlertUntil = 0;
   bossAlertName = '';
   lastArenaElement: string = 'normal';
+  // Castle Defender graphics
+  castleGraphic: Phaser.GameObjects.Graphics | null = null;
+  castleHpBar: Phaser.GameObjects.Graphics | null = null;
+  castleGateMarkers: Phaser.GameObjects.Graphics[] = [];
   prevPlayerPos = new Map<string, { x: number; y: number; t: number }>();
   // hit-flash tracking: playerId -> { lastHp, flashUntilMs }
   playerHpTrack = new Map<string, { lastHp: number; flashUntilMs: number }>();
@@ -834,6 +839,7 @@ export class ArenaScene extends Phaser.Scene {
       country,
       roomName,
       roomPassword,
+      gameMode: this.init_.gameMode,
     };
 
     // Re-send join on every open (initial + reconnects after server HMR/restart)
@@ -944,6 +950,11 @@ export class ArenaScene extends Phaser.Scene {
         this.spawnEarthquakeEffect(msg.x, msg.y, msg.radius);
       } else if (msg.effect === 'timeStop') {
         this.spawnTimeStopEffect(msg.x, msg.y, msg.radius);
+      } else if (msg.effect === 'castleDestroyed') {
+        // Big shockwave + screen shake when castle falls
+        this.cameras.main.shake(1200, 0.025);
+        this.spawnCastleDestroyedEffect(msg.x, msg.y);
+        this.bus.emit('castleDestroyed');
       }
     } else if (msg.type === 'bossAlert') {
       this.bossAlertUntil = performance.now() + 3500;
@@ -2608,6 +2619,11 @@ export class ArenaScene extends Phaser.Scene {
       this.bus.emit('arenaElement', snapElement);
     }
 
+    // Castle Defender — render castle and emit castle state
+    if (snap.gameMode === 'castle' && snap.castle) {
+      this.updateCastleGraphics(snap.castle);
+    }
+
     // emit HUD update — top-bar wave is the room's global wave; survivalWave tracks this player's personal progression
     this.bus.emit('hud', {
       self,
@@ -2618,7 +2634,115 @@ export class ArenaScene extends Phaser.Scene {
       survivalWave: self?.waveNumber ?? 0,
       npcs: snap.npcs.length,
       gems: snap.gems.length,
+      castle: snap.castle,
+      gameMode: snap.gameMode,
     });
+  }
+
+  updateCastleGraphics(castle: { hp: number; maxHp: number; x: number; y: number }) {
+    // Draw castle body on first call
+    if (!this.castleGraphic) {
+      this.castleGraphic = this.add.graphics().setDepth(0.5);
+      // Base structure
+      this.castleGraphic.fillStyle(0x8855aa, 1);
+      this.castleGraphic.fillRect(-40, -40, 80, 80);
+      // Battlements (4 corners)
+      this.castleGraphic.fillStyle(0x6633aa, 1);
+      this.castleGraphic.fillRect(-50, -50, 20, 20);
+      this.castleGraphic.fillRect(30, -50, 20, 20);
+      this.castleGraphic.fillRect(-50, 30, 20, 20);
+      this.castleGraphic.fillRect(30, 30, 20, 20);
+      // Gate archway
+      this.castleGraphic.fillStyle(0x220033, 1);
+      this.castleGraphic.fillRect(-10, 5, 20, 35);
+      // Castle border
+      this.castleGraphic.lineStyle(3, 0xddaaff, 1);
+      this.castleGraphic.strokeRect(-40, -40, 80, 80);
+      this.castleGraphic.setPosition(castle.x, castle.y);
+
+      // HP bar (world-space, above castle)
+      this.castleHpBar = this.add.graphics().setDepth(1);
+
+      // Gate markers at arena edges
+      const gates = [
+        { x: castle.x, y: 80 },
+        { x: castle.x, y: 3120 },
+        { x: 3120, y: castle.y },
+        { x: 80, y: castle.y },
+      ];
+      for (const g of gates) {
+        const marker = this.add.graphics().setDepth(0.5);
+        marker.fillStyle(0xff3300, 0.7);
+        marker.fillTriangle(-16, 0, 16, 0, 0, 28);
+        marker.lineStyle(2, 0xff6600, 1);
+        marker.strokeTriangle(-16, 0, 16, 0, 0, 28);
+        marker.setPosition(g.x, g.y);
+        this.castleGateMarkers.push(marker);
+      }
+    }
+
+    // Update HP bar
+    if (this.castleHpBar) {
+      const bar = this.castleHpBar;
+      bar.clear();
+      const pct = castle.hp / castle.maxHp;
+      const W = 120, H = 10;
+      const bx = castle.x - W / 2;
+      const by = castle.y - 70;
+      // Background
+      bar.fillStyle(0x330000, 0.9);
+      bar.fillRect(bx, by, W, H);
+      // HP fill — red to green based on HP%
+      const r = Math.round((1 - pct) * 255);
+      const g = Math.round(pct * 255);
+      bar.fillStyle(Phaser.Display.Color.GetColor(r, g, 0), 1);
+      bar.fillRect(bx, by, Math.round(W * pct), H);
+      // Border
+      bar.lineStyle(1, 0xffffff, 0.6);
+      bar.strokeRect(bx, by, W, H);
+    }
+
+    // Pulse alpha when HP is critical
+    if (this.castleGraphic) {
+      const pct = castle.hp / castle.maxHp;
+      this.castleGraphic.setAlpha(pct < 0.25 ? 0.7 + 0.3 * Math.sin(Date.now() / 150) : 1);
+    }
+  }
+
+  spawnCastleDestroyedEffect(cx: number, cy: number) {
+    const g = this.add.graphics().setDepth(10);
+    let t = 0;
+    const maxT = 1200;
+    const timer = this.time.addEvent({
+      delay: 16,
+      repeat: Math.ceil(maxT / 16),
+      callback: () => {
+        t += 16;
+        g.clear();
+        const progress = t / maxT;
+        const radius = 20 + progress * 260;
+        const alpha = Math.max(0, 1 - progress);
+        g.fillStyle(0xff4400, alpha * 0.5);
+        g.fillCircle(cx, cy, radius);
+        g.lineStyle(4, 0xffaa00, alpha);
+        g.strokeCircle(cx, cy, radius);
+        if (t >= maxT) {
+          g.destroy();
+          timer.remove();
+        }
+      },
+    });
+    // Collapse the castle graphic
+    if (this.castleGraphic) {
+      this.tweens.add({
+        targets: this.castleGraphic,
+        alpha: 0,
+        scaleX: 2,
+        scaleY: 2,
+        duration: 800,
+        ease: 'Power2',
+      });
+    }
   }
 
   makePlayerContainer(p: PlayerState) {

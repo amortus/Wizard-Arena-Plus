@@ -4,6 +4,15 @@ export type HazardKind = 'fire_pool' | 'lightning_strike' | 'poison_cloud' | 'sl
 
 export type ArenaElement = 'normal' | 'lava' | 'ice' | 'fog';
 
+export type GameMode = 'arena' | 'castle';
+
+export type CastleState = {
+  hp: number;
+  maxHp: number;
+  x: number;
+  y: number;
+};
+
 export type PickupKind = 'health' | 'speed' | 'damage' | 'shield' | 'cooldown' | 'berserker' | 'annihilate' | 'magnet';
 
 export type PickupState = {
@@ -171,6 +180,9 @@ export type Snapshot = {
   pickups?: PickupState[];
   bossProjectiles?: BossProjectileState[];
   arenaElement?: ArenaElement;
+  gameMode?: GameMode;
+  castle?: CastleState;
+  roomWave?: number;
 };
 
 export type LeaderboardEntry = {
@@ -192,10 +204,11 @@ export type RoomInfo = {
   waveName: string;
   hasPassword: boolean;
   createdAt: number;
+  gameMode?: GameMode;
 };
 
 export type ClientToServer =
-  | { type: 'join'; name: string; character: CharacterKind; color: number; hue: number; country?: string; roomName?: string; roomPassword?: string }
+  | { type: 'join'; name: string; character: CharacterKind; color: number; hue: number; country?: string; roomName?: string; roomPassword?: string; gameMode?: GameMode }
   | { type: 'input'; dx: number; dy: number }
   | { type: 'pickPowerup'; choiceIdx: number }
   | { type: 'respawn' };
@@ -228,6 +241,7 @@ export type ServerToClient =
   | { type: 'effect'; effect: 'phoenixRevive'; x: number; y: number }
   | { type: 'effect'; effect: 'earthquake'; x: number; y: number; radius: number }
   | { type: 'effect'; effect: 'timeStop'; x: number; y: number; radius: number }
+  | { type: 'effect'; effect: 'castleDestroyed'; x: number; y: number }
   | { type: 'bossAlert'; bossName: string }
   | { type: 'authError'; reason: string }
   | { type: 'nova' };

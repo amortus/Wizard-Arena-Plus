@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import type { CharacterKind } from '../shared/constants';
-import type { LeaderboardEntry, PlayerState } from '../shared/types';
+import type { CastleState, GameMode, LeaderboardEntry, PlayerState } from '../shared/types';
 import { dedupeBestByName } from '../shared/leaderboard';
 
 type Props = {
@@ -13,6 +13,7 @@ type Props = {
   country?: string;
   roomName?: string;
   roomPassword?: string;
+  gameMode?: GameMode;
 };
 
 type LevelUpData = {
@@ -26,7 +27,7 @@ function flag(code?: string): string {
   return String.fromCodePoint(...cps);
 }
 
-export default function Game({ name, character, color, hue, room, country, roomName, roomPassword }: Props) {
+export default function Game({ name, character, color, hue, room, country, roomName, roomPassword, gameMode }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<any>(null);
   const [hud, setHud] = useState<{
@@ -38,7 +39,10 @@ export default function Game({ name, character, color, hue, room, country, roomN
     survivalWave?: number;
     npcs?: number;
     gems?: number;
+    castle?: CastleState;
+    gameMode?: GameMode;
   }>({ players: [] });
+  const [castleDestroyed, setCastleDestroyed] = useState(false);
   const [levelUp, setLevelUp] = useState<LevelUpData | null>(null);
   const [levelUpFocus, setLevelUpFocus] = useState(0);
   const [dead, setDead] = useState(false);
@@ -64,7 +68,7 @@ export default function Game({ name, character, color, hue, room, country, roomN
       const { createGame } = await import('../game/scene');
       if (cancelled || !containerRef.current) return;
 
-      const result = createGame(containerRef.current, { name, character, color, hue, room, country, roomName, roomPassword });
+      const result = createGame(containerRef.current, { name, character, color, hue, room, country, roomName, roomPassword, gameMode });
       sceneRef.current = result.scene;
       game = result.game;
 
@@ -107,6 +111,7 @@ export default function Game({ name, character, color, hue, room, country, roomN
         setNovaFlash(true);
         setTimeout(() => setNovaFlash(false), 700);
       });
+      result.scene.bus.on('castleDestroyed', () => setCastleDestroyed(true));
     })();
 
     return () => {
@@ -260,6 +265,28 @@ export default function Game({ name, character, color, hue, room, country, roomN
         </div>
       </div>
 
+      {hud.castle && hud.gameMode === 'castle' && (
+        <div className="castle-hp-bar-wrap">
+          <span className="castle-hp-icon">🏰</span>
+          <div className="castle-hp-track">
+            <div
+              className="castle-hp-fill"
+              style={{
+                width: `${Math.max(0, (hud.castle.hp / hud.castle.maxHp) * 100)}%`,
+                background: hud.castle.hp / hud.castle.maxHp > 0.5
+                  ? '#44cc22'
+                  : hud.castle.hp / hud.castle.maxHp > 0.25
+                    ? '#ddaa22'
+                    : '#cc2222',
+              }}
+            />
+          </div>
+          <span className="castle-hp-text">
+            {Math.max(0, Math.round(hud.castle.hp))}/{hud.castle.maxHp}
+          </span>
+        </div>
+      )}
+
       {inSmoke && <div className="smoke-overlay" />}
       {novaFlash && <div className="nova-flash" />}
       {arenaElement === 'lava' && <div className="arena-lava-overlay" />}
@@ -345,6 +372,29 @@ export default function Game({ name, character, color, hue, room, country, roomN
               })}
             </div>
           </div>
+        </div>
+      )}
+
+      {castleDestroyed && (
+        <div className="death-overlay castle-destroyed-overlay">
+          <h2>🏰 CASTLE DESTROYED</h2>
+          <p style={{ color: '#cc4444', marginBottom: 16 }}>The castle has fallen. The realm is lost.</p>
+          <div className="death-stats">
+            <div className="death-stat-row">
+              <span className="death-stat-label">Waves Survived</span>
+              <span className="death-stat-value">{hud.wave ?? 0}</span>
+            </div>
+          </div>
+          <button className="start-btn" style={{ maxWidth: 240 }} onClick={() => { if (typeof window !== 'undefined') window.location.reload(); }}>
+            Play Again
+          </button>
+          <button
+            className="leaderboard-btn"
+            style={{ maxWidth: 200, marginTop: 8, fontSize: 8 }}
+            onClick={() => { if (typeof window !== 'undefined') window.location.href = '/'; }}
+          >
+            Back to Menu
+          </button>
         </div>
       )}
 

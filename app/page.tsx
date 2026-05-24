@@ -4,7 +4,7 @@ import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import type { CharacterKind } from '../shared/constants';
 import { isBlockedName } from '../shared/profanity';
-import type { RoomInfo } from '../shared/types';
+import type { GameMode, RoomInfo } from '../shared/types';
 
 // Tiny synth chime played whenever a gladiator is picked. Lazily creates an
 // AudioContext on first click so the browser allows playback.
@@ -91,6 +91,8 @@ export default function Page() {
   const [showCreate, setShowCreate] = useState(false);
   const [createName, setCreateName] = useState('');
   const [createPass, setCreatePass] = useState('');
+  const [createMode, setCreateMode] = useState<GameMode>('arena');
+  const [selectedGameMode, setSelectedGameMode] = useState<GameMode>('arena');
   const [joinPassFor, setJoinPassFor] = useState<string | null>(null);
   const [joinPassInput, setJoinPassInput] = useState('');
   const [showSupportPopup, setShowSupportPopup] = useState(false);
@@ -148,10 +150,11 @@ export default function Page() {
     setLoadingRooms(false);
   };
 
-  const enterGame = (id: string, displayName: string, password: string) => {
+  const enterGame = (id: string, displayName: string, password: string, mode?: GameMode) => {
     setRoomId(id);
     setRoomDisplayName(displayName);
     setRoomPassword(password);
+    setSelectedGameMode(mode ?? 'arena');
     setScreen('game');
   };
 
@@ -160,13 +163,13 @@ export default function Page() {
       setJoinPassFor(room.id);
       setJoinPassInput('');
     } else {
-      enterGame(room.id, room.name, '');
+      enterGame(room.id, room.name, '', room.gameMode ?? 'arena');
     }
   };
 
   const createRoom = () => {
     const id = generateRoomCode();
-    enterGame(id, createName.trim() || `${name}'s Room`, createPass);
+    enterGame(id, createName.trim() || `${name}'s Room`, createPass, createMode);
   };
 
   useEffect(() => {
@@ -204,6 +207,7 @@ export default function Page() {
         country={country}
         roomName={roomDisplayName}
         roomPassword={roomPassword}
+        gameMode={selectedGameMode}
       />
     );
   }
@@ -247,7 +251,12 @@ export default function Page() {
                     return (
                       <tr key={r.id}>
                         <td className="room-row-lock">{r.hasPassword ? '🔒' : ''}</td>
-                        <td className="room-row-name">{r.name}</td>
+                        <td className="room-row-name">
+                          <span title={r.gameMode === 'castle' ? 'Castle Defender' : 'Arena'} style={{ marginRight: 4 }}>
+                            {r.gameMode === 'castle' ? '🏰' : '⚔️'}
+                          </span>
+                          {r.name}
+                        </td>
                         <td className={`room-row-players${isFull ? ' room-row-full' : ''}`}>
                           {r.playerCount}/{r.maxPlayers}
                         </td>
@@ -264,14 +273,14 @@ export default function Page() {
                                 placeholder="Password"
                                 value={joinPassInput}
                                 onChange={(e) => setJoinPassInput(e.target.value)}
-                                onKeyDown={(e) => { if (e.key === 'Enter') enterGame(r.id, r.name, joinPassInput); }}
+                                onKeyDown={(e) => { if (e.key === 'Enter') enterGame(r.id, r.name, joinPassInput, r.gameMode); }}
                                 style={{ background: 'transparent', border: 'none', color: '#e0d8c0', fontFamily: "'VT323', monospace", fontSize: 16, outline: 'none', width: 80 }}
                                 autoFocus
                               />
                               <button
                                 className="leaderboard-btn"
                                 style={{ marginTop: 0, padding: '2px 8px', fontSize: 8, letterSpacing: 1 }}
-                                onClick={() => enterGame(r.id, r.name, joinPassInput)}
+                                onClick={() => enterGame(r.id, r.name, joinPassInput, r.gameMode)}
                                 type="button"
                               >Go</button>
                               <button
@@ -328,6 +337,22 @@ export default function Page() {
                         className="room-input"
                         style={{ fontSize: 12, letterSpacing: 1, flex: 1 }}
                       />
+                    </div>
+                    <div className="room-mode-row">
+                      <button
+                        type="button"
+                        className={`room-mode-btn${createMode === 'arena' ? ' active' : ''}`}
+                        onClick={() => setCreateMode('arena')}
+                      >
+                        ⚔️ Arena
+                      </button>
+                      <button
+                        type="button"
+                        className={`room-mode-btn${createMode === 'castle' ? ' active' : ''}`}
+                        onClick={() => setCreateMode('castle')}
+                      >
+                        🏰 Castle Defender
+                      </button>
                     </div>
                     <button className="start-btn" onClick={createRoom} type="button">
                       Create &amp; Play

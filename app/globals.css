@@ -1429,3 +1429,71 @@ button {
 .room-create-form { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
 .room-pass-row { display: flex; gap: 8px; align-items: center; }
 .room-pass-prompt { background: rgba(0,0,0,0.6); border: 1px solid rgba(200,160,60,0.4); border-radius: 4px; padding: 4px 8px; margin-top: 4px; display: inline-flex; gap: 6px; align-items: center; }
+
+
+/* ── Castle Defender Mode ─────────────────────────────────────── */
+.castle-hp-bar-wrap {
+  position: fixed;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(0,0,0,0.75);
+  border: 2px solid rgba(200,140,60,0.5);
+  border-radius: 6px;
+  padding: 6px 12px;
+  z-index: 20;
+  min-width: 240px;
+}
+.castle-hp-icon { font-size: 18px; }
+.castle-hp-track {
+  flex: 1;
+  height: 12px;
+  background: rgba(255,255,255,0.1);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.castle-hp-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s ease, background 0.5s ease;
+}
+.castle-hp-text {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 7px;
+  color: #e0d8c0;
+  white-space: nowrap;
+  min-width: 64px;
+  text-align: right;
+}
+.castle-destroyed-overlay {
+  border-color: rgba(200,50,50,0.8) !important;
+}
+/* Mode selector buttons in create room form */
+.room-mode-row {
+  display: flex;
+  gap: 8px;
+}
+.room-mode-btn {
+  flex: 1;
+  padding: 8px 10px;
+  background: rgba(0,0,0,0.4);
+  border: 2px solid rgba(200,160,60,0.3);
+  border-radius: 4px;
+  color: #a0906a;
+  font-family: 'Press Start 2P', monospace;
+  font-size: 7px;
+  cursor: pointer;
+  transition: border-color 0.2s, color 0.2s, background 0.2s;
+}
+.room-mode-btn.active {
+  border-color: #c8a46e;
+  color: #ffe0a0;
+  background: rgba(200,160,60,0.15);
+}
+.room-mode-btn:hover:not(.active) {
+  border-color: rgba(200,160,60,0.6);
+  color: #c8a46e;
+}
