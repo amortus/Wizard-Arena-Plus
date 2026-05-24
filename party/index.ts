@@ -2292,14 +2292,14 @@ export default class GameServer implements Party.Server {
       this.pickups.set(aid, {
         id: aid, kind: 'annihilate',
         x: n.x, y: n.y,
-        expiresAt: now2 + 50_000,
+        expiresAt: now2 + 15_000,
       });
       const mid = genId('pickup');
       this.pickups.set(mid, {
         id: mid, kind: 'magnet',
         x: n.x + (Math.random() - 0.5) * 80,
         y: n.y + (Math.random() - 0.5) * 80,
-        expiresAt: now2 + 50_000,
+        expiresAt: now2 + 15_000,
       });
       // Do NOT null activeBossId here — maybeSpawnBoss() detects the dead boss
       // on next tick and handles cooldown + roster advance atomically.
