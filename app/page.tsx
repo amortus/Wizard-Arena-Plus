@@ -407,15 +407,26 @@ export default function Page() {
           </Link>
         </div>
 
-        <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
-          <span style={{ fontFamily: "'Press Start 2P', monospace", fontSize: 8, color: 'var(--cream-dim)', letterSpacing: 1 }}>
-            PIX — donate instantly
-          </span>
-          <img
-            src="/QRcode.jpeg"
-            alt="PIX QR Code"
-            style={{ width: 80, height: 80, border: '1px solid var(--gold-dim)', borderRadius: 2, opacity: 0.85 }}
-          />
+        <div style={{ marginTop: 20, display: 'flex', gap: 20, justifyContent: 'center', flexWrap: 'wrap', alignItems: 'flex-start' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+            <span style={{ fontFamily: "'Press Start 2P', monospace", fontSize: 7, color: 'var(--cream-dim)', letterSpacing: 1 }}>PIX</span>
+            <img src="/QRcode.jpeg" alt="PIX QR Code" style={{ width: 80, height: 80, border: '1px solid var(--gold-dim)', borderRadius: 2, opacity: 0.85 }} />
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+            <span style={{ fontFamily: "'Press Start 2P', monospace", fontSize: 7, color: 'var(--cream-dim)', letterSpacing: 1 }}>WISE</span>
+            <img src="/wise_qr.jpeg" alt="Wise QR Code" style={{ width: 80, height: 80, border: '1px solid var(--gold-dim)', borderRadius: 2, opacity: 0.85 }} />
+            <span style={{ fontFamily: "'VT323', monospace", fontSize: 13, color: 'var(--cream-dim)' }}>@alyssong10</span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4, height: 80, marginTop: 18 }}>
+            <a
+              href="https://ko-fi.com/wizardarenaplus"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ background: '#ff6b35', color: '#fff', fontFamily: "'Cinzel', serif", fontWeight: 700, fontSize: 11, textDecoration: 'none', padding: '8px 14px', borderRadius: 4, whiteSpace: 'nowrap' }}
+            >
+              ☕ Ko-fi
+            </a>
+          </div>
         </div>
       </div>
     </div>
