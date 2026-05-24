@@ -93,7 +93,18 @@ export default function Page() {
   const [createPass, setCreatePass] = useState('');
   const [joinPassFor, setJoinPassFor] = useState<string | null>(null);
   const [joinPassInput, setJoinPassInput] = useState('');
+  const [showSupportPopup, setShowSupportPopup] = useState(false);
   const playSelectSfx = useSelectSfx();
+
+  useEffect(() => {
+    if (!sessionStorage.getItem('support_popup_shown')) {
+      const t = setTimeout(() => {
+        setShowSupportPopup(true);
+        sessionStorage.setItem('support_popup_shown', '1');
+      }, 1500);
+      return () => clearTimeout(t);
+    }
+  }, []);
 
   const triggerNameError = (msg: string) => {
     setNameError(msg);
@@ -339,6 +350,40 @@ export default function Page() {
   return (
     <div className="menu-root">
       <div className="scanlines" />
+
+      {showSupportPopup && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.82)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+          <div style={{ background: 'linear-gradient(180deg, #2d1010 0%, #1a0808 100%)', border: '3px solid #c8a46e', borderRadius: 6, padding: '28px 28px 24px', maxWidth: 320, width: '100%', textAlign: 'center', boxShadow: '0 8px 40px rgba(0,0,0,0.8), 0 0 60px rgba(255,204,68,0.1)' }}>
+            <p style={{ fontFamily: "'Press Start 2P', monospace", fontSize: 9, color: '#c8a46e', letterSpacing: 1, marginBottom: 6 }}>SUPPORT THE ARENA</p>
+            <p style={{ fontFamily: "'VT323', monospace", fontSize: 18, color: '#ecddd0', margin: '0 0 16px', lineHeight: 1.3 }}>
+              This game is free & made with passion.<br />
+              A coffee goes a long way! ☕
+            </p>
+            <img
+              src="/QRcode.jpeg"
+              alt="PIX QR Code"
+              style={{ width: 160, height: 160, border: '2px solid #c8a46e', borderRadius: 4, marginBottom: 10 }}
+            />
+            <p style={{ fontFamily: "'Press Start 2P', monospace", fontSize: 7, color: '#9a8878', marginBottom: 20, letterSpacing: 1 }}>PIX — scan with any bank app</p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+              <Link
+                href="/donate"
+                onClick={() => setShowSupportPopup(false)}
+                style={{ background: '#ff6b35', color: '#fff', fontFamily: "'Cinzel', serif", fontWeight: 700, fontSize: 11, textDecoration: 'none', padding: '9px 14px', borderRadius: 4 }}
+              >
+                More options
+              </Link>
+              <button
+                onClick={() => setShowSupportPopup(false)}
+                style={{ border: '2px solid #6b3a1a', color: '#9a8878', fontFamily: "'Cinzel', serif", fontSize: 11, padding: '9px 14px', borderRadius: 4, cursor: 'pointer', background: 'transparent' }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="menu-card">
         <img
           src="/wizard_arena_plus_logo.png"
