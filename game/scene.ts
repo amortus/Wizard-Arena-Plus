@@ -1989,6 +1989,11 @@ export class ArenaScene extends Phaser.Scene {
     this.bus.emit('respawned');
   }
 
+  buyItem(itemId: string) {
+    const m: ClientToServer = { type: 'buyItem', itemId };
+    this.socket?.send(JSON.stringify(m));
+  }
+
   clearMovement() {
     this.joystickPointer = null;
     this.joystickDx = 0;

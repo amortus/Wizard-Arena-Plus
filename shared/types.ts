@@ -147,6 +147,7 @@ export type PlayerState = {
   mobaTeam?: MobaTeam;
   mobaGold?: number;
   mobaRespawnAt?: number; // epoch ms; 0 = alive / not in moba mode
+  mobaItems?: string[];   // owned item IDs (max 6 slots)
 };
 
 export type NPCState = {
@@ -241,6 +242,7 @@ export type ClientToServer =
   | { type: 'join'; name: string; character: CharacterKind; color: number; hue: number; country?: string; roomName?: string; roomPassword?: string; gameMode?: GameMode }
   | { type: 'input'; dx: number; dy: number }
   | { type: 'pickPowerup'; choiceIdx: number }
+  | { type: 'buyItem'; itemId: string }
   | { type: 'respawn' };
 
 export type ServerToClient =

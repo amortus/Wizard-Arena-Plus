@@ -74,9 +74,14 @@ import {
   MOBA_MINION_DAMAGE,
   MOBA_MINION_TOWER_DAMAGE,
   MOBA_MINION_GOLD_REWARD,
+  MOBA_MINION_XP_REWARD,
   MOBA_RESPAWN_BASE_MS,
   MOBA_PLAYER_KILL_GOLD,
+  MOBA_PLAYER_KILL_XP,
   MOBA_TOWER_KILL_GOLD,
+  MOBA_PASSIVE_GOLD_RATE,
+  MOBA_PASSIVE_GOLD_INTERVAL_MS,
+  MOBA_ITEM_SLOTS,
   MOBA_BLUE_SPAWN,
   MOBA_RED_SPAWN,
   MOBA_BLUE_CRYSTAL,
@@ -97,8 +102,10 @@ import {
   ARAM_MINION_DAMAGE,
   ARAM_MINION_TOWER_DAMAGE,
   ARAM_MINION_GOLD_REWARD,
+  ARAM_MINION_XP_REWARD,
   ARAM_RESPAWN_BASE_MS,
   ARAM_PLAYER_KILL_GOLD,
+  ARAM_PLAYER_KILL_XP,
   ARAM_TOWER_KILL_GOLD,
   ARAM_HEALTH_RELIC_INTERVAL,
   ARAM_BLUE_SPAWN,
@@ -113,6 +120,7 @@ import {
   type WeaponKind,
 } from '../shared/constants';
 import { rollPowerupChoices, POWERUPS } from '../shared/powerups';
+import { MOBA_ITEMS_MAP } from '../shared/items';
 import { isBlockedName } from '../shared/profanity';
 import type {
   ArenaElement,
@@ -351,6 +359,8 @@ export default class GameServer implements Party.Server {
   mobaMinionWaypoints = new Map<string, { waypoints: { x: number; y: number }[]; waypointIdx: number }>();
   // ARAM: health relic spawn timer
   aramLastHealthRelicAt = 0;
+  // MOBA/ARAM: passive gold tick
+  mobaPassiveGoldAt = 0;
 
   constructor(readonly room: Party.Room) {
     void this.loadLeaderboard();
@@ -784,6 +794,7 @@ export default class GameServer implements Party.Server {
     for (const p of this.players.values()) {
       if (p.alive || !p.mobaRespawnAt || p.mobaRespawnAt === 0) continue;
       if (now >= p.mobaRespawnAt) {
+        const savedItems = p.mobaItems ?? [];
         this.respawnPlayer(p);
         // Override position AFTER respawnPlayer (it sets center arena)
         const spawnTable = this.gameMode === 'aram'
@@ -793,7 +804,18 @@ export default class GameServer implements Party.Server {
         p.x = spawn.x + (Math.random() - 0.5) * 100;
         p.y = spawn.y + (Math.random() - 0.5) * 100;
         p.mobaRespawnAt = 0;
+        // Re-apply all purchased items (respawnPlayer resets all stats)
+        p.mobaItems = savedItems;
+        for (const id of savedItems) MOBA_ITEMS_MAP.get(id)?.apply(p);
       }
+    }
+  }
+
+  tickPassiveGold(now: number) {
+    if (now - this.mobaPassiveGoldAt < MOBA_PASSIVE_GOLD_INTERVAL_MS) return;
+    this.mobaPassiveGoldAt = now;
+    for (const p of this.players.values()) {
+      if (p.alive) p.mobaGold = (p.mobaGold ?? 0) + MOBA_PASSIVE_GOLD_RATE;
     }
   }
 
@@ -992,6 +1014,7 @@ export default class GameServer implements Party.Server {
     this.mobaLastWaveAt = 0;
     this.mobaMinionWaypoints.clear();
     this.aramLastHealthRelicAt = 0;
+    this.mobaPassiveGoldAt = 0;
   }
 
   onMessage(message: string, sender: Party.Connection) {
@@ -1039,6 +1062,7 @@ export default class GameServer implements Party.Server {
         p.mobaTeam = blueCount <= 3 ? 'blue' : 'red';
         p.mobaGold = 0;
         p.mobaRespawnAt = 0;
+        p.mobaItems = [];
         const spawn = p.mobaTeam === 'blue' ? MOBA_BLUE_SPAWN : MOBA_RED_SPAWN;
         p.x = spawn.x + (Math.random() - 0.5) * 120;
         p.y = spawn.y + (Math.random() - 0.5) * 120;
@@ -1052,6 +1076,7 @@ export default class GameServer implements Party.Server {
         p.mobaTeam = blueCount < 3 ? 'blue' : 'red';
         p.mobaGold = 0;
         p.mobaRespawnAt = 0;
+        p.mobaItems = [];
         const spawn = p.mobaTeam === 'blue' ? ARAM_BLUE_SPAWN : ARAM_RED_SPAWN;
         p.x = spawn.x + (Math.random() - 0.5) * 100;
         p.y = spawn.y + (Math.random() - 0.5) * 100;
@@ -1096,6 +1121,22 @@ export default class GameServer implements Party.Server {
       const p = this.players.get(sender.id);
       if (p && !p.alive && this.gameMode !== 'moba' && this.gameMode !== 'aram') {
         this.respawnPlayer(p);
+      }
+    } else if (msg.type === 'buyItem') {
+      const p = this.players.get(sender.id);
+      if (
+        p && p.alive &&
+        (this.gameMode === 'moba' || this.gameMode === 'aram')
+      ) {
+        const item = MOBA_ITEMS_MAP.get(msg.itemId);
+        if (!item) return;
+        if ((p.mobaGold ?? 0) < item.cost) return;
+        const owned = p.mobaItems ?? [];
+        if (owned.length >= MOBA_ITEM_SLOTS) return;
+        if (item.unique && owned.includes(item.id)) return;
+        p.mobaGold = (p.mobaGold ?? 0) - item.cost;
+        p.mobaItems = [...owned, item.id];
+        item.apply(p);
       }
     }
   }
@@ -1499,6 +1540,7 @@ export default class GameServer implements Party.Server {
         this.checkMobaStructures();
       }
       this.tickMobaRespawns(now);
+      this.tickPassiveGold(now);
     } else if (this.gameMode === 'aram') {
       // ARAM: single mid-lane minions, towers, health relics, team combat
       if (!this.mobaWinner) {
@@ -1510,6 +1552,7 @@ export default class GameServer implements Party.Server {
         this.spawnAramHealthRelics(now);
       }
       this.tickMobaRespawns(now);
+      this.tickPassiveGold(now);
     } else {
       // Arena: per-player waves + dragon/boss roster
       this.runWaves(now);
@@ -3130,12 +3173,22 @@ export default class GameServer implements Party.Server {
     // Always clean up MOBA waypoints (no-op if not a minion)
     this.mobaMinionWaypoints.delete(id);
 
-    // MOBA/ARAM: minions drop gold for the killer, no gems/XP/chain
+    // MOBA/ARAM: minions drop gold + XP for the killer
     if ((this.gameMode === 'moba' || this.gameMode === 'aram') && n.ai === 'moba_march') {
       const minionGold = this.gameMode === 'aram' ? ARAM_MINION_GOLD_REWARD : MOBA_MINION_GOLD_REWARD;
+      const minionXp   = this.gameMode === 'aram' ? ARAM_MINION_XP_REWARD   : MOBA_MINION_XP_REWARD;
       if (killerId) {
         const killer = this.players.get(killerId);
-        if (killer) killer.mobaGold = (killer.mobaGold ?? 0) + minionGold;
+        if (killer) {
+          killer.mobaGold = (killer.mobaGold ?? 0) + minionGold;
+          killer.xp += minionXp;
+          while (killer.xp >= killer.xpToNext) {
+            killer.xp -= killer.xpToNext;
+            killer.level += 1;
+            killer.xpToNext = XP_FOR_LEVEL(killer.level);
+            this.queueLevelUp(killer);
+          }
+        }
       }
       return;
     }
@@ -3255,12 +3308,20 @@ export default class GameServer implements Party.Server {
       p.alive = false;
       p.hp = 0;
       p.mobaRespawnAt = Date.now() + (this.gameMode === 'aram' ? ARAM_RESPAWN_BASE_MS : MOBA_RESPAWN_BASE_MS);
-      // Award gold to the killer
+      // Award gold + XP to the killer
       const killGold = this.gameMode === 'aram' ? ARAM_PLAYER_KILL_GOLD : MOBA_PLAYER_KILL_GOLD;
+      const killXp   = this.gameMode === 'aram' ? ARAM_PLAYER_KILL_XP   : MOBA_PLAYER_KILL_XP;
       if (killerId && killerId !== '__npc__' && killerId !== '__hazard__' && killerId !== '__castle__') {
         const killer = this.players.get(killerId) ?? [...this.players.values()].find(q => q.mobaTeam !== p.mobaTeam);
         if (killer && killer.mobaTeam && killer.mobaTeam !== p.mobaTeam) {
           killer.mobaGold = (killer.mobaGold ?? 0) + killGold;
+          killer.xp += killXp;
+          while (killer.xp >= killer.xpToNext) {
+            killer.xp -= killer.xpToNext;
+            killer.level += 1;
+            killer.xpToNext = XP_FOR_LEVEL(killer.level);
+            this.queueLevelUp(killer);
+          }
         }
       }
       const msg: ServerToClient = { type: 'died', playerId: p.id };
@@ -3364,6 +3425,13 @@ export default class GameServer implements Party.Server {
   }
 
   queueLevelUp(p: ServerPlayer) {
+    // MOBA/ARAM: auto-apply a small passive bonus per level, no choice popup
+    if (this.gameMode === 'moba' || this.gameMode === 'aram') {
+      p.damageMul *= 1.04;
+      p.maxHp += 8;
+      p.hp = Math.min(p.hp + 8, p.maxHp);
+      return;
+    }
     const choices = rollPowerupChoices(p, 3).map((c) => ({
       id: c.id,
       name: c.name,
@@ -3461,6 +3529,7 @@ export default class GameServer implements Party.Server {
         mobaTeam: p.mobaTeam,
         mobaGold: p.mobaGold,
         mobaRespawnAt: p.mobaRespawnAt,
+        mobaItems: p.mobaItems,
       });
     }
     // MOBA/ARAM structures

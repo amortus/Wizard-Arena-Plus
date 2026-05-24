@@ -2,7 +2,17 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CharacterKind } from '../shared/constants';
 import type { CastleState, GameMode, LeaderboardEntry, MobaCrystalState, MobaTeam, PlayerState, TowerState } from '../shared/types';
+import { MOBA_ITEMS } from '../shared/items';
 import { dedupeBestByName } from '../shared/leaderboard';
+
+const SHOP_CATEGORIES = [
+  { key: 'damage',    label: '⚔️ Damage' },
+  { key: 'magic',     label: '🔮 Magic' },
+  { key: 'lifesteal', label: '🩸 Lifesteal' },
+  { key: 'defense',   label: '🛡️ Defense' },
+  { key: 'speed',     label: '👟 Speed' },
+  { key: 'legendary', label: '✨ Legendary' },
+] as const;
 
 type Props = {
   name: string;
@@ -49,6 +59,8 @@ export default function Game({ name, character, color, hue, room, country, roomN
   const [mobaRespawnMs, setMobaRespawnMs] = useState(0);
   const [levelUp, setLevelUp] = useState<LevelUpData | null>(null);
   const [levelUpFocus, setLevelUpFocus] = useState(0);
+  const [shopOpen, setShopOpen] = useState(false);
+  const [shopTab, setShopTab] = useState<string>('damage');
   const [dead, setDead] = useState(false);
   // Captured at moment of death so the death screen still shows them after
   // the server has reset the player's HUD state for respawn.
@@ -136,6 +148,10 @@ export default function Game({ name, character, color, hue, room, country, roomN
     sceneRef.current?.respawn();
   };
 
+  const buyItem = (itemId: string) => {
+    sceneRef.current?.buyItem(itemId);
+  };
+
   // Press Enter (or Space) on the death screen to respawn instantly.
   useEffect(() => {
     if (!dead) return;
@@ -148,6 +164,20 @@ export default function Game({ name, character, color, hue, room, country, roomN
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [dead]);
+
+  // B key toggles shop in moba/aram
+  useEffect(() => {
+    if (hud.gameMode !== 'moba' && hud.gameMode !== 'aram') return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.key === 'b' || e.key === 'B') && !levelUp) {
+        e.preventDefault();
+        setShopOpen((v) => !v);
+      }
+      if (e.key === 'Escape') setShopOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [hud.gameMode, levelUp]);
 
   // MOBA respawn countdown ticker
   useEffect(() => {
@@ -334,6 +364,98 @@ export default function Game({ name, character, color, hue, room, country, roomN
         </div>
       )}
 
+      {/* MOBA/ARAM: gold display + shop button + item slots */}
+      {(hud.gameMode === 'moba' || hud.gameMode === 'aram') && hud.self && (
+        <div className="moba-bottom-hud">
+          <div className="moba-gold-display">
+            <span className="moba-gold-icon">🪙</span>
+            <span className="moba-gold-value">{hud.self.mobaGold ?? 0}</span>
+          </div>
+          <div className="moba-item-slots">
+            {Array.from({ length: 6 }, (_, i) => {
+              const itemId = (hud.self!.mobaItems ?? [])[i];
+              const item = itemId ? MOBA_ITEMS.find((x) => x.id === itemId) : null;
+              return (
+                <div key={i} className={`moba-item-slot ${item ? 'filled' : 'empty'}`} title={item?.name ?? ''}>
+                  {item ? item.icon : ''}
+                </div>
+              );
+            })}
+          </div>
+          <button className="moba-shop-btn" onClick={() => setShopOpen((v) => !v)} title="Shop (B)">
+            🛒
+          </button>
+        </div>
+      )}
+
+      {/* MOBA/ARAM: item shop overlay */}
+      {shopOpen && (hud.gameMode === 'moba' || hud.gameMode === 'aram') && (
+        <div className="moba-shop-overlay" onClick={() => setShopOpen(false)}>
+          <div className="moba-shop-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="moba-shop-header">
+              <span className="moba-shop-title">🛒 Shop</span>
+              <span className="moba-shop-gold">🪙 {hud.self?.mobaGold ?? 0}</span>
+              <button className="moba-shop-close" onClick={() => setShopOpen(false)}>✕</button>
+            </div>
+            <div className="moba-shop-tabs">
+              {SHOP_CATEGORIES.map((cat) => (
+                <button
+                  key={cat.key}
+                  className={`moba-shop-tab ${shopTab === cat.key ? 'active' : ''}`}
+                  onClick={() => setShopTab(cat.key)}
+                >
+                  {cat.label}
+                </button>
+              ))}
+            </div>
+            <div className="moba-shop-items">
+              {MOBA_ITEMS.filter((item) => item.category === shopTab).map((item) => {
+                const owned = hud.self?.mobaItems ?? [];
+                const slots = owned.length;
+                const alreadyOwned = item.unique && owned.includes(item.id);
+                const noGold = (hud.self?.mobaGold ?? 0) < item.cost;
+                const slotsFull = slots >= 6;
+                const disabled = alreadyOwned || noGold || slotsFull;
+                return (
+                  <div key={item.id} className={`moba-shop-item ${disabled ? 'disabled' : ''}`}>
+                    <div className="moba-shop-item-icon">{item.icon}</div>
+                    <div className="moba-shop-item-info">
+                      <div className="moba-shop-item-name">{item.name}{item.unique ? ' ✦' : ''}</div>
+                      <div className="moba-shop-item-desc">{item.description}</div>
+                    </div>
+                    <button
+                      className="moba-shop-buy-btn"
+                      disabled={disabled}
+                      onClick={() => { if (!disabled) buyItem(item.id); }}
+                      title={
+                        alreadyOwned ? 'Already owned' :
+                        noGold ? 'Not enough gold' :
+                        slotsFull ? 'Item slots full' :
+                        `Buy for ${item.cost}g`
+                      }
+                    >
+                      {alreadyOwned ? '✓' : `${item.cost}🪙`}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="moba-shop-slots-row">
+              {Array.from({ length: 6 }, (_, i) => {
+                const itemId = (hud.self?.mobaItems ?? [])[i];
+                const item = itemId ? MOBA_ITEMS.find((x) => x.id === itemId) : null;
+                return (
+                  <div key={i} className={`moba-item-slot ${item ? 'filled' : 'empty'}`} title={item?.name ?? 'Empty'}>
+                    {item ? item.icon : ''}
+                  </div>
+                );
+              })}
+              <span className="moba-shop-slots-label">{(hud.self?.mobaItems ?? []).length}/6 slots</span>
+            </div>
+          </div>
+        </div>
+      )}
+
       {inSmoke && <div className="smoke-overlay" />}
       {novaFlash && <div className="nova-flash" />}
       {arenaElement === 'lava' && <div className="arena-lava-overlay" />}
@@ -453,6 +575,9 @@ export default function Game({ name, character, color, hue, room, country, roomN
           <h2>DEFEATED</h2>
           <div className="moba-respawn-timer">{mobaRespawnMs > 0 ? `${Math.ceil(mobaRespawnMs / 1000)}` : '...'}</div>
           <div className="moba-respawn-label">Respawning at base</div>
+          <button className="moba-shop-btn moba-respawn-shop-btn" onClick={() => setShopOpen((v) => !v)}>
+            🛒 Shop (B)
+          </button>
         </div>
       )}
 
