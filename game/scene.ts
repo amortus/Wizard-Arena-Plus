@@ -213,6 +213,21 @@ export class ArenaScene extends Phaser.Scene {
   playerHpTrack = new Map<string, { lastHp: number; flashUntilMs: number }>();
   npcHpTrack = new Map<string, { lastHp: number; flashUntilMs: number }>();
 
+  // Reusable collections — cleared and refilled each frame instead of
+  // creating new Map/Set objects every render call.  Eliminates GC pressure
+  // that manifests as periodic stutter even in single-player sessions.
+  _prevPlayerById = new Map<string, PlayerState>();
+  _prevNpcById    = new Map<string, { id: string; kind: string; x: number; y: number; hp: number; ownerPlayerId?: string }>();
+  _seenPlayers    = new Set<string>();
+  _seenNpcs       = new Set<string>();
+  _seenGems       = new Set<string>();
+  _seenProj       = new Set<string>();
+  _seenWolves     = new Set<string>();
+  _seenPickups    = new Set<string>();
+  _seenBossProj   = new Set<string>();
+  _seenHazards    = new Set<string>();
+  _cachedSelfPlayer: PlayerState | undefined = undefined;
+
   cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
   keyW!: Phaser.Input.Keyboard.Key;
   keyA!: Phaser.Input.Keyboard.Key;
@@ -1438,7 +1453,8 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   renderPickups(pickups: import('../shared/types').PickupState[], clientNow: number) {
-    const seen = new Set<string>();
+    this._seenPickups.clear();
+    const seen = this._seenPickups;
     for (const pk of pickups) {
       seen.add(pk.id);
       let g = this.pickupVisuals.get(pk.id);
@@ -1447,6 +1463,14 @@ export class ArenaScene extends Phaser.Scene {
         g.setDepth(8); // below gems but above ground
         this.pickupVisuals.set(pk.id, g);
       }
+      // Throttle redraws to ~20fps — pickups animate slowly, no need for 60fps
+      const lastDraw = (g.getData('lastDraw') as number) ?? 0;
+      if (clientNow - lastDraw < 50) {
+        const bob = Math.sin(clientNow * 0.005 + pk.x * 0.01 + pk.y * 0.013) * 3;
+        g.setPosition(pk.x, pk.y + bob);
+        continue;
+      }
+      g.setData('lastDraw', clientNow);
       g.clear();
       const bob = Math.sin(clientNow * 0.005 + pk.x * 0.01 + pk.y * 0.013) * 3;
       const pulse = 1 + Math.sin(clientNow * 0.007) * 0.1;
@@ -1606,7 +1630,8 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   renderBossProjectiles(bossProjs: BossProjectileState[], t: number) {
-    const seen = new Set<string>();
+    this._seenBossProj.clear();
+    const seen = this._seenBossProj;
     for (const bp of bossProjs) {
       seen.add(bp.id);
       let g = this.bossProjectileVisuals.get(bp.id);
@@ -1614,6 +1639,10 @@ export class ArenaScene extends Phaser.Scene {
         g = this.add.graphics().setDepth(55);
         this.bossProjectileVisuals.set(bp.id, g);
       }
+      // Throttle to 30fps — the pulse animation is subtle enough
+      const lastDraw = (g.getData('lastDraw') as number) ?? 0;
+      if (t - lastDraw < 33) { g.setPosition(bp.x, bp.y); continue; }
+      g.setData('lastDraw', t);
       g.clear();
       const pulse = 1 + Math.sin(t * 0.012) * 0.15;
       const r = bp.radius * pulse;
@@ -1635,11 +1664,13 @@ export class ArenaScene extends Phaser.Scene {
 
   renderHazards(hazards: import('../shared/types').HazardState[], serverNow: number) {
     const clientNow = performance.now();
-    const seen = new Set<string>();
+    this._seenHazards.clear();
+    const seen = this._seenHazards;
 
     // Track if self is inside any active smoke_zone
     let selfInSmoke = false;
-    const self = this.latestSnapshot?.players.find((p) => p.id === this.selfId);
+    // Reuse _cachedSelfPlayer if renderSnapshot already set it; fall back for standalone calls
+    const self = this._cachedSelfPlayer ?? this.latestSnapshot?.players.find((p) => p.id === this.selfId);
 
     for (const h of hazards) {
       seen.add(h.id);
@@ -2061,8 +2092,9 @@ export class ArenaScene extends Phaser.Scene {
     this.inputDy = dy;
 
     // Client-side prediction: move local self
+    // _cachedSelfPlayer is set by renderSnapshot which always runs right after handleInput
     if (this.predictedSelf && this.selfId) {
-      const self = this.latestSnapshot?.players.find((p) => p.id === this.selfId);
+      const self = this._cachedSelfPlayer ?? this.latestSnapshot?.players.find((p) => p.id === this.selfId);
       if (self && self.alive) {
         const speed = PLAYER_SPEED * (self.speedMul || 1);
         const dt = deltaMs / 1000;
@@ -2130,11 +2162,13 @@ export class ArenaScene extends Phaser.Scene {
 
     // Build per-id Maps from the previous snapshot once, so subsequent lookups
     // inside the per-entity render loops are O(1) instead of O(n) per find().
-    // With 100+ NPCs this was the largest CPU cost on the client tick.
-    const prevPlayerById = new Map<string, PlayerState>();
-    if (prev) for (const pp of prev.players) prevPlayerById.set(pp.id, pp);
-    const prevNpcById = new Map<string, typeof snap.npcs[number]>();
-    if (prev) for (const pn of prev.npcs) prevNpcById.set(pn.id, pn);
+    // Reuse class-field Maps instead of allocating new ones every frame.
+    this._prevPlayerById.clear();
+    if (prev) for (const pp of prev.players) this._prevPlayerById.set(pp.id, pp);
+    this._prevNpcById.clear();
+    if (prev) for (const pn of prev.npcs) this._prevNpcById.set(pn.id, pn);
+    const prevPlayerById = this._prevPlayerById;
+    const prevNpcById    = this._prevNpcById;
 
     // Find the "king of the arena" — top player by score (level*100 + waveNumber*50).
     // Their nameplate gets a 👑 prefix. Ties broken by id for stability.
@@ -2148,9 +2182,16 @@ export class ArenaScene extends Phaser.Scene {
       return best?.id ?? '';
     })();
 
-    // players
-    const seenPlayers = new Set<string>();
-    const selfPlayer = snap.players.find(pl => pl.id === this.selfId);
+    // Hoist clock reads — called once for all loops instead of per-entity
+    const renderNow = performance.now();
+    const wallNow   = Date.now();
+
+    // players — cache selfPlayer once (avoids two separate .find() calls later)
+    this._seenPlayers.clear();
+    const seenPlayers = this._seenPlayers;
+    this._cachedSelfPlayer = undefined;
+    for (const pl of snap.players) { if (pl.id === this.selfId) { this._cachedSelfPlayer = pl; break; } }
+    const selfPlayer = this._cachedSelfPlayer;
     if (selfPlayer?.mobaTeam) this.selfMobaTeam = selfPlayer.mobaTeam;
     for (const p of snap.players) {
       seenPlayers.add(p.id);
@@ -2225,17 +2266,15 @@ export class ArenaScene extends Phaser.Scene {
 
       // hit-flash: detect HP drop, override tint to red briefly
       const track = this.playerHpTrack.get(p.id) ?? { lastHp: p.hp, flashUntilMs: 0 };
-      const now = performance.now();
       if (p.hp < track.lastHp - 0.01 && p.alive) {
-        track.flashUntilMs = now + 220;
+        track.flashUntilMs = renderNow + 220;
       }
       track.lastHp = p.hp;
       this.playerHpTrack.set(p.id, track);
 
       // Damage flash + hue-based tint
-      const wallNow = Date.now();
       const isInvuln = wallNow < p.invulnerableUntil;
-      if (now < track.flashUntilMs) {
+      if (renderNow < track.flashUntilMs) {
         body.setTint(0xff3333);
       } else {
         body.setTint(hueToTint(p.hue ?? 0));
@@ -2247,8 +2286,8 @@ export class ArenaScene extends Phaser.Scene {
       if (shield) {
         shield.setVisible(isInvuln);
         if (isInvuln) {
-          shield.setRotation((now / 800) % (Math.PI * 2));
-          const pulse = 1 + Math.sin(now * 0.008) * 0.06;
+          shield.setRotation((renderNow / 800) % (Math.PI * 2));
+          const pulse = 1 + Math.sin(renderNow * 0.008) * 0.06;
           shield.setScale(1.05 * pulse);
         }
       }
@@ -2261,12 +2300,12 @@ export class ArenaScene extends Phaser.Scene {
         if (tsActive) {
           timeShield.setVisible(true);
           const tsLastDraw = (timeShield.getData('lastDraw') as number) ?? 0;
-          if (now - tsLastDraw < 33) {
+          if (renderNow - tsLastDraw < 33) {
             // throttle to 30fps — skip redraw this frame
           } else {
-          timeShield.setData('lastDraw', now);
+          timeShield.setData('lastDraw', renderNow);
           timeShield.clear();
-          const pulse = 1 + Math.sin(now * 0.012) * 0.08;
+          const pulse = 1 + Math.sin(renderNow * 0.012) * 0.08;
           const r = 30 * pulse;
           // outer soft glow halo (multiple stacked translucent fills)
           timeShield.fillStyle(0x55bbff, 0.10);
@@ -2282,7 +2321,7 @@ export class ArenaScene extends Phaser.Scene {
           timeShield.lineStyle(1, 0xffffff, 0.9);
           timeShield.strokeCircle(0, 0, r - 3);
           // 4 spinning sparkles
-          const t = now / 250;
+          const t = renderNow / 250;
           for (let i = 0; i < 4; i++) {
             const a = t + (i / 4) * Math.PI * 2;
             const sx = Math.cos(a) * r;
@@ -2306,8 +2345,8 @@ export class ArenaScene extends Phaser.Scene {
         if (p.frostAuraDmg > 0 && p.frostAuraRadius > 0) {
           frostAura.setVisible(true);
           const faLastDraw = (frostAura.getData('lastDraw') as number) ?? 0;
-          if (now - faLastDraw >= 33) {
-            frostAura.setData('lastDraw', now);
+          if (renderNow - faLastDraw >= 33) {
+            frostAura.setData('lastDraw', renderNow);
             frostAura.clear();
             const r = p.frostAuraRadius;
             // very faint inner mist
@@ -2317,10 +2356,10 @@ export class ArenaScene extends Phaser.Scene {
             frostAura.lineStyle(1, 0xccddee, 0.35);
             frostAura.strokeCircle(0, 0, r);
             // 6 slowly drifting tiny snowflakes around the perimeter
-            const t = now / 1400;
+            const t = renderNow / 1400;
             for (let i = 0; i < 6; i++) {
               const a = t + (i / 6) * Math.PI * 2;
-              const wob = Math.sin(now * 0.002 + i) * 3;
+              const wob = Math.sin(renderNow * 0.002 + i) * 3;
               const sx = Math.cos(a) * (r + wob);
               const sy = Math.sin(a) * (r + wob);
               frostAura.fillStyle(0xffffff, 0.45);
@@ -2339,10 +2378,10 @@ export class ArenaScene extends Phaser.Scene {
         if (hasAura) {
           aura.setVisible(true);
           const auraLastDraw = (aura.getData('lastDraw') as number) ?? 0;
-          if (now - auraLastDraw >= 33) {
-            aura.setData('lastDraw', now);
+          if (renderNow - auraLastDraw >= 33) {
+            aura.setData('lastDraw', renderNow);
             const radius = 70 * (p.auraShieldRangeMul ?? 1);
-            const pulse = 1 + Math.sin(now * 0.005) * 0.05;
+            const pulse = 1 + Math.sin(renderNow * 0.005) * 0.05;
             const r = radius * pulse;
             aura.clear();
             // outer soft glow
@@ -2352,7 +2391,7 @@ export class ArenaScene extends Phaser.Scene {
             aura.lineStyle(3, 0xffe080, 0.85);
             aura.strokeCircle(0, 0, r);
             // sparkle dots rotating around perimeter
-            const t = now / 400;
+            const t = renderNow / 400;
             for (let i = 0; i < 6; i++) {
               const a = t + (i / 6) * Math.PI * 2;
               const sx = Math.cos(a) * r;
@@ -2381,7 +2420,8 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     // npcs
-    const seenNpcs = new Set<string>();
+    this._seenNpcs.clear();
+    const seenNpcs = this._seenNpcs;
     for (const n of snap.npcs) {
       seenNpcs.add(n.id);
       let s = this.npcSprites.get(n.id);
@@ -2427,9 +2467,8 @@ export class ArenaScene extends Phaser.Scene {
 
       // hit flash for NPCs + floating damage number
       const ntrack = this.npcHpTrack.get(n.id) ?? { lastHp: n.hp, flashUntilMs: 0 };
-      const now = performance.now();
       if (n.hp < ntrack.lastHp - 0.01) {
-        ntrack.flashUntilMs = now + 150;
+        ntrack.flashUntilMs = renderNow + 150;
         const dmg = Math.max(1, Math.round(ntrack.lastHp - n.hp));
         this.spawnDamageNumber(n.x, n.y - 6, dmg);
       }
@@ -2439,7 +2478,7 @@ export class ArenaScene extends Phaser.Scene {
       const teamBaseTint = n.ownerPlayerId === 'blue' ? 0x88bbff
         : n.ownerPlayerId === 'red'  ? 0xff8866
         : (VARIANT_TINT[n.kind] ?? 0xffffff);
-      if (now < ntrack.flashUntilMs) {
+      if (renderNow < ntrack.flashUntilMs) {
         s.setTint(0xffffff);
       } else {
         s.setTint(teamBaseTint);
@@ -2462,7 +2501,8 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     // gems — tier picked from value
-    const seenGems = new Set<string>();
+    this._seenGems.clear();
+    const seenGems = this._seenGems;
     const gemTNow = performance.now();
     for (const g of snap.gems) {
       seenGems.add(g.id);
@@ -2514,7 +2554,8 @@ export class ArenaScene extends Phaser.Scene {
 
     // projectiles — element comes from the WEAPON (so picking up Leaf Cutter on a fire wizard
     // shoots leaves, not fireballs).
-    const seenProj = new Set<string>();
+    this._seenProj.clear();
+    const seenProj = this._seenProj;
     const tNow = performance.now();
     for (const pr of snap.projectiles) {
       seenProj.add(pr.id);
@@ -2594,7 +2635,8 @@ export class ArenaScene extends Phaser.Scene {
 
     // Spirit Wolves — wolf-head sprite layered over a procedural ghost orb.
     // Orb tints red while lunging so you can read the wolf's state at a glance.
-    const seenWolves = new Set<string>();
+    this._seenWolves.clear();
+    const seenWolves = this._seenWolves;
     for (const w of (snap.wolves ?? [])) {
       seenWolves.add(w.id);
       let container = this.wolfSprites.get(w.id);
@@ -2681,13 +2723,15 @@ export class ArenaScene extends Phaser.Scene {
         this.prevPlayerPos.set(p.id, { x: p.x, y: p.y, t: prev?.t ?? trailNow });
       }
     }
-    // Prune trailVisuals lists every frame
-    for (const [id, list] of this.trailVisuals) {
-      this.trailVisuals.set(id, list.filter((b) => trailNow - b.bornAt < 2200));
+    // Prune trailVisuals lists in-place (no array allocation per player per frame)
+    for (const list of this.trailVisuals.values()) {
+      for (let i = list.length - 1; i >= 0; i--) {
+        if (trailNow - list[i].bornAt >= 2200) list.splice(i, 1);
+      }
     }
 
-    // camera follow self (use predicted position if available — smoother)
-    const self = snap.players.find((p) => p.id === this.selfId);
+    // camera follow self — reuse already-found selfPlayer (no second .find())
+    const self = selfPlayer;
     if (self) {
       const cx = this.predictedSelf?.x ?? self.x;
       const cy = this.predictedSelf?.y ?? self.y;
