@@ -1584,6 +1584,18 @@ button {
   font-size: 48px;
   margin: 0 0 12px;
 }
+/* ARAM character badge */
+.aram-char-badge {
+  font-family: 'VT323', monospace;
+  font-size: 13px;
+  color: #ffdd88;
+  background: rgba(100,60,0,0.5);
+  border-radius: 3px;
+  padding: 1px 6px;
+  margin-bottom: 2px;
+  display: inline-block;
+  letter-spacing: 0.5px;
+}
 /* Mode selector buttons in create room form */
 .room-mode-row {
   display: flex;

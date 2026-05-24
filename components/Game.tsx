@@ -151,7 +151,7 @@ export default function Game({ name, character, color, hue, room, country, roomN
 
   // MOBA respawn countdown ticker
   useEffect(() => {
-    if (!dead || hud.gameMode !== 'moba') return;
+    if (!dead || (hud.gameMode !== 'moba' && hud.gameMode !== 'aram')) return;
     const iv = setInterval(() => {
       const at = hud.self?.mobaRespawnAt ?? 0;
       const ms = Math.max(0, at - Date.now());
@@ -304,7 +304,7 @@ export default function Game({ name, character, color, hue, room, country, roomN
         </div>
       )}
 
-      {hud.gameMode === 'moba' && hud.mobaCrystals && (
+      {(hud.gameMode === 'moba' || hud.gameMode === 'aram') && hud.mobaCrystals && (
         <div className="moba-crystal-bars">
           {(['blue', 'red'] as MobaTeam[]).map((team) => {
             const crystal = hud.mobaCrystals!.find((c) => c.team === team);
@@ -322,7 +322,7 @@ export default function Game({ name, character, color, hue, room, country, roomN
         </div>
       )}
 
-      {hud.gameMode === 'moba' && hud.towers && (
+      {(hud.gameMode === 'moba' || hud.gameMode === 'aram') && hud.towers && (
         <div className="moba-tower-status">
           {(['blue', 'red'] as MobaTeam[]).map((team) => (
             <div key={team} className={`moba-tower-row ${team}`}>
@@ -358,6 +358,9 @@ export default function Game({ name, character, color, hue, room, country, roomN
             <div className="unit-frame-xp-bar">
               <div className="unit-frame-xp-fill" style={{ width: `${xpPct}%` }} />
             </div>
+            {hud.gameMode === 'aram' && (
+              <div className="aram-char-badge">🎲 {hud.self.character.replace(/_/g, ' ')}</div>
+            )}
             <div className="unit-frame-spells">
               {hud.self.weapons.join(' · ')}
               {hud.self.projectileBonus > 0 ? ` +${hud.self.projectileBonus}` : ''}
@@ -445,7 +448,7 @@ export default function Game({ name, character, color, hue, room, country, roomN
         </div>
       )}
 
-      {dead && hud.gameMode === 'moba' && (
+      {dead && (hud.gameMode === 'moba' || hud.gameMode === 'aram') && (
         <div className="moba-respawn-overlay">
           <h2>DEFEATED</h2>
           <div className="moba-respawn-timer">{mobaRespawnMs > 0 ? `${Math.ceil(mobaRespawnMs / 1000)}` : '...'}</div>
@@ -468,7 +471,7 @@ export default function Game({ name, character, color, hue, room, country, roomN
         </div>
       )}
 
-      {dead && hud.gameMode !== 'moba' && (
+      {dead && hud.gameMode !== 'moba' && hud.gameMode !== 'aram' && (
         <div className="death-overlay">
           <h2>YOU DIED</h2>
           {deathStats && (() => {

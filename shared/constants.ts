@@ -367,6 +367,36 @@ export const MONSTER_FORMATION: Record<MonsterKind, FormationKind> = {
   death_titan:    'line',
 };
 
+// ── ARAM (All Random All Mid) mode ────────────────────────────────────────
+export const ARAM_PLAYER_MAX             = 6;
+export const ARAM_TOWER_HP               = 700;
+export const ARAM_CRYSTAL_HP             = 1800;
+export const ARAM_TOWER_ATTACK_RANGE     = 220;
+export const ARAM_TOWER_ATTACK_DAMAGE    = 20;
+export const ARAM_TOWER_ATTACK_INTERVAL  = 1000;
+export const ARAM_TOWER_RADIUS           = 40;
+export const ARAM_CRYSTAL_RADIUS         = 60;
+export const ARAM_MINION_WAVE_INTERVAL   = 20_000;
+export const ARAM_MINIONS_PER_WAVE       = 5;
+export const ARAM_MINION_HP              = 60;
+export const ARAM_MINION_SPEED           = 80;
+export const ARAM_MINION_DAMAGE          = 10;
+export const ARAM_MINION_TOWER_DAMAGE    = 20;
+export const ARAM_MINION_GOLD_REWARD     = 3;
+export const ARAM_RESPAWN_BASE_MS        = 4_000;
+export const ARAM_PLAYER_KILL_GOLD       = 30;
+export const ARAM_TOWER_KILL_GOLD        = 75;
+export const ARAM_HEALTH_RELIC_INTERVAL  = 25_000;
+export const ARAM_BLUE_SPAWN    = { x: 400,  y: 1600 } as const;
+export const ARAM_RED_SPAWN     = { x: 2800, y: 1600 } as const;
+export const ARAM_BLUE_CRYSTAL  = { x: 300,  y: 1600 } as const;
+export const ARAM_RED_CRYSTAL   = { x: 2900, y: 1600 } as const;
+export const ARAM_HEALTH_RELIC_POSITIONS = [
+  { x: 1600, y: 1600 },
+  { x: 1200, y: 1600 },
+  { x: 2000, y: 1600 },
+] as const;
+
 export function pickMonsterKind(): MonsterKind {
   const totalWeight = MONSTERS.reduce((s, m) => s + MONSTER_BASES[m].weight, 0);
   let r = Math.random() * totalWeight;

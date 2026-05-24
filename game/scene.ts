@@ -2639,9 +2639,12 @@ export class ArenaScene extends Phaser.Scene {
       this.updateCastleGraphics(snap.castle);
     }
 
-    // Crystal Rush (MOBA) — lane background + tower/crystal graphics
-    if (snap.gameMode === 'moba') {
-      if (!this.mobaLanePaths) this.initMobaBackground();
+    // Crystal Rush (MOBA) / ARAM — lane background + tower/crystal graphics
+    if (snap.gameMode === 'moba' || snap.gameMode === 'aram') {
+      if (!this.mobaLanePaths) {
+        if (snap.gameMode === 'aram') this.initAramBackground();
+        else this.initMobaBackground();
+      }
       this.updateMobaGraphics(snap);
     }
 
@@ -2766,6 +2769,28 @@ export class ArenaScene extends Phaser.Scene {
         ease: 'Power2',
       });
     }
+  }
+
+  initAramBackground() {
+    const g = this.add.graphics().setDepth(0.1);
+    this.mobaLanePaths = g;
+    // Single wide horizontal corridor
+    g.lineStyle(500, 0x3a2a1a, 0.45);
+    g.beginPath();
+    g.moveTo(200, 1600);
+    g.lineTo(3000, 1600);
+    g.strokePath();
+    // Lane edge lines
+    g.lineStyle(4, 0x6a4a2a, 0.5);
+    g.beginPath();
+    g.moveTo(200, 1350); g.lineTo(3000, 1350); g.strokePath();
+    g.beginPath();
+    g.moveTo(200, 1850); g.lineTo(3000, 1850); g.strokePath();
+    // Team bases
+    g.fillStyle(0x2244aa, 0.25);
+    g.fillCircle(400, 1600, 260);
+    g.fillStyle(0xaa2222, 0.25);
+    g.fillCircle(2800, 1600, 260);
   }
 
   initMobaBackground() {

@@ -4,7 +4,7 @@ export type HazardKind = 'fire_pool' | 'lightning_strike' | 'poison_cloud' | 'sl
 
 export type ArenaElement = 'normal' | 'lava' | 'ice' | 'fog';
 
-export type GameMode = 'arena' | 'castle' | 'moba';
+export type GameMode = 'arena' | 'castle' | 'moba' | 'aram';
 
 export type MobaTeam = 'blue' | 'red';
 
