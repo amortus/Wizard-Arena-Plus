@@ -398,9 +398,25 @@ export default function Page() {
         <button className="start-btn" onClick={handleStart}>
           Enter Wizard Arena Plus
         </button>
-        <Link href="/leaderboard" className="leaderboard-btn lb-link-btn">
-          Leaderboard
-        </Link>
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
+          <Link href="/leaderboard" className="leaderboard-btn lb-link-btn">
+            Leaderboard
+          </Link>
+          <Link href="/donate" className="leaderboard-btn lb-link-btn" style={{ color: 'var(--amber)' }}>
+            ♥ Support
+          </Link>
+        </div>
+
+        <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontFamily: "'Press Start 2P', monospace", fontSize: 8, color: 'var(--cream-dim)', letterSpacing: 1 }}>
+            PIX — donate instantly
+          </span>
+          <img
+            src="/QRcode.jpeg"
+            alt="PIX QR Code"
+            style={{ width: 80, height: 80, border: '1px solid var(--gold-dim)', borderRadius: 2, opacity: 0.85 }}
+          />
+        </div>
       </div>
     </div>
   );
