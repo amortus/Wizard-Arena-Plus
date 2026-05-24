@@ -200,11 +200,14 @@ export class ArenaScene extends Phaser.Scene {
   castleHpBar: Phaser.GameObjects.Graphics | null = null;
   castleGateMarkers: Phaser.GameObjects.Graphics[] = [];
   // Crystal Rush (MOBA) graphics
-  mobaTowerGraphics   = new Map<string, Phaser.GameObjects.Graphics>();
+  mobaTowerGraphics   = new Map<string, Phaser.GameObjects.Image>();
   mobaTowerHpBars     = new Map<string, Phaser.GameObjects.Graphics>();
   mobaCrystalGraphics = new Map<string, Phaser.GameObjects.Graphics>();
   mobaCrystalHpBars   = new Map<string, Phaser.GameObjects.Graphics>();
   mobaLanePaths: Phaser.GameObjects.Graphics | null = null;
+  // Bush zones for vision mechanic: {x,y,r} circles
+  mobaBushZones: { x: number; y: number; r: number }[] = [];
+  selfMobaTeam: MobaTeam | undefined = undefined;
   prevPlayerPos = new Map<string, { x: number; y: number; t: number }>();
   // hit-flash tracking: playerId -> { lastHp, flashUntilMs }
   playerHpTrack = new Map<string, { lastHp: number; flashUntilMs: number }>();
@@ -278,6 +281,11 @@ export class ArenaScene extends Phaser.Scene {
     this.load.audio('bgm0', '/audio/bgm.mp3');
     this.load.audio('bgm1', '/audio/bmg1.mp3');
     this.load.audio('bgm2', '/audio/bmg2.mp3');
+
+    // MOBA/ARAM scene objects
+    for (const name of ['Bush1', 'Bush2', 'SmallTree1', 'SmallTree2', 'Tree1', 'Tree2', 'TowerBlue', 'TowerRed', 'InibidorBlue', 'InibidorRed']) {
+      this.load.image(`scene_${name}`, `/Scene/${name}.png`);
+    }
 
     this.load.on('loaderror', (file: Phaser.Loader.File) => {
       void file;
@@ -2079,6 +2087,8 @@ export class ArenaScene extends Phaser.Scene {
 
     // players
     const seenPlayers = new Set<string>();
+    const selfPlayer = snap.players.find(pl => pl.id === this.selfId);
+    if (selfPlayer?.mobaTeam) this.selfMobaTeam = selfPlayer.mobaTeam;
     for (const p of snap.players) {
       seenPlayers.add(p.id);
       let container = this.playerSprites.get(p.id);
@@ -2101,6 +2111,26 @@ export class ArenaScene extends Phaser.Scene {
       container.x = renderX;
       container.y = renderY;
       container.setVisible(p.alive);
+
+      // Bush vision — MOBA/ARAM: hide enemy players that are inside a bush
+      // you are not also occupying (same mechanic as LoL/MLBB).
+      if (p.alive && p.id !== this.selfId && this.mobaBushZones.length > 0 &&
+          (snap.gameMode === 'moba' || snap.gameMode === 'aram')) {
+        const sameTeam = p.mobaTeam && this.selfMobaTeam && p.mobaTeam === this.selfMobaTeam;
+        if (!sameTeam) {
+          const bushIdx = this.mobaBushZones.findIndex(b => Math.hypot(renderX - b.x, renderY - b.y) < b.r);
+          if (bushIdx >= 0) {
+            const bz = this.mobaBushZones[bushIdx];
+            const selfX = this.predictedSelf?.x ?? selfPlayer?.x ?? -99999;
+            const selfY = this.predictedSelf?.y ?? selfPlayer?.y ?? -99999;
+            const selfInSameBush = Math.hypot(selfX - bz.x, selfY - bz.y) < bz.r;
+            if (!selfInSameBush) {
+              container.setVisible(false);
+              continue;
+            }
+          }
+        }
+      }
 
       // moving? for self, use input. for others, compare snapshot-to-snapshot.
       let moving = false;
@@ -2822,6 +2852,56 @@ export class ArenaScene extends Phaser.Scene {
     g.fillCircle(400, 1600, 260);
     g.fillStyle(0xaa2222, 0.25);
     g.fillCircle(2800, 1600, 260);
+    this.placeAramSceneObjects();
+  }
+
+  placeAramSceneObjects() {
+    const img = (key: string, x: number, y: number, w: number, h: number, depth = 1) =>
+      this.add.image(x, y, `scene_${key}`).setDisplaySize(w, h).setDepth(depth);
+
+    // ── Trees flanking the corridor (decorative) ──────────────────────────
+    // Above lane (y < 1350)
+    img('Tree1',      550, 1130, 120, 165, 0.5);
+    img('Tree2',      980, 1080, 105, 145, 0.5);
+    img('SmallTree1',1200, 1050,  75, 105, 0.5);
+    img('SmallTree2',1600,  980,  80, 110, 0.5);
+    img('SmallTree1',2000, 1050,  75, 105, 0.5);
+    img('Tree1',     2300, 1080, 105, 145, 0.5);
+    img('Tree2',     2650, 1130, 120, 165, 0.5);
+    // Below lane (y > 1850)
+    img('Tree2',      550, 2070, 120, 165, 0.5);
+    img('Tree1',      980, 2120, 105, 145, 0.5);
+    img('SmallTree2',1200, 2150,  75, 105, 0.5);
+    img('SmallTree1',1600, 2220,  80, 110, 0.5);
+    img('SmallTree2',2000, 2150,  75, 105, 0.5);
+    img('Tree2',     2300, 2120, 105, 145, 0.5);
+    img('Tree1',     2650, 2070, 120, 165, 0.5);
+
+    // ── Inhibitors — just outside each crystal ───────────────────────────
+    img('InibidorBlue', 520, 1600, 65, 95, 1.5);   // between T1(750) and crystal(300)
+    img('InibidorRed', 2680, 1600, 65, 95, 1.5);
+
+    // ── Bushes (Howling Abyss-style: flanking the lane) ──────────────────
+    const bushDefs: { key: string; x: number; y: number; r: number; w: number; h: number }[] = [
+      // Blue side near T1 (750, 1600)
+      { key: 'Bush1', x: 750, y: 1420, r: 70, w: 160, h: 115 },
+      { key: 'Bush2', x: 750, y: 1780, r: 70, w: 160, h: 115 },
+      // Mid-left
+      { key: 'Bush2', x: 1200, y: 1400, r: 75, w: 165, h: 120 },
+      { key: 'Bush1', x: 1200, y: 1800, r: 75, w: 165, h: 120 },
+      // Center
+      { key: 'Bush1', x: 1600, y: 1390, r: 80, w: 170, h: 125 },
+      { key: 'Bush2', x: 1600, y: 1810, r: 80, w: 170, h: 125 },
+      // Mid-right
+      { key: 'Bush1', x: 2000, y: 1400, r: 75, w: 165, h: 120 },
+      { key: 'Bush2', x: 2000, y: 1800, r: 75, w: 165, h: 120 },
+      // Red side near T1 (2450, 1600)
+      { key: 'Bush2', x: 2450, y: 1420, r: 70, w: 160, h: 115 },
+      { key: 'Bush1', x: 2450, y: 1780, r: 70, w: 160, h: 115 },
+    ];
+
+    this.mobaBushZones = bushDefs.map(b => ({ x: b.x, y: b.y, r: b.r }));
+    for (const b of bushDefs) img(b.key, b.x, b.y, b.w, b.h, 0.6);
   }
 
   initMobaBackground() {
@@ -2845,6 +2925,71 @@ export class ArenaScene extends Phaser.Scene {
     g.fillCircle(400, 2800, 300);
     g.fillStyle(0xaa2222, 0.2);
     g.fillCircle(2800, 400, 300);
+    this.placeMobaSceneObjects();
+  }
+
+  placeMobaSceneObjects() {
+    const img = (key: string, x: number, y: number, w: number, h: number, depth = 1) =>
+      this.add.image(x, y, `scene_${key}`).setDisplaySize(w, h).setDepth(depth);
+
+    // ── Trees (decorative jungle) ──────────────────────────────────────────
+    // Blue-side jungle (top-left quadrant)
+    img('Tree1',      220,  240, 130, 175, 0.5);
+    img('Tree2',      340,  190, 110, 150, 0.5);
+    img('SmallTree1', 750,  640, 80, 110,  0.5);
+    img('SmallTree2', 640,  760, 75, 105,  0.5);
+    img('SmallTree1', 520,  520, 70,  95,  0.5);
+    img('SmallTree2', 880, 1050, 70,  95,  0.5);
+    img('SmallTree1', 750, 1200, 65,  90,  0.5);
+    // Red-side jungle (bottom-right quadrant)
+    img('Tree1',     2980, 2960, 130, 175, 0.5);
+    img('Tree2',     2860, 3010, 110, 150, 0.5);
+    img('SmallTree1',2450, 2560, 80, 110,  0.5);
+    img('SmallTree2',2560, 2440, 75, 105,  0.5);
+    img('SmallTree1',2680, 2680, 70,  95,  0.5);
+    img('SmallTree2',2320, 2950, 70,  95,  0.5);
+    img('SmallTree1',2450, 2800, 65,  90,  0.5);
+    // Center jungle fringes
+    img('SmallTree2', 980,  820, 65,  90,  0.5);
+    img('SmallTree1', 820,  980, 65,  90,  0.5);
+    img('SmallTree2',2220, 2380, 65,  90,  0.5);
+    img('SmallTree1',2380, 2220, 65,  90,  0.5);
+
+    // ── Inhibitors — one per lane, just inside each base ─────────────────
+    // Blue base (crystal at 400,2800). Approaches: top from y-axis, mid diagonal, bot from x-axis
+    img('InibidorBlue', 400, 2560, 70, 100, 1.5);   // top lane
+    img('InibidorBlue', 640, 2720, 70, 100, 1.5);   // mid lane
+    img('InibidorBlue', 900, 2800, 70, 100, 1.5);   // bot lane
+    // Red base (crystal at 2800,400)
+    img('InibidorRed', 2100, 400,  70, 100, 1.5);   // top lane
+    img('InibidorRed', 2640, 640,  70, 100, 1.5);   // mid lane
+    img('InibidorRed', 2800, 900,  70, 100, 1.5);   // bot lane
+
+    // ── Bushes (strategic LoL-style) ──────────────────────────────────────
+    // Radius is the vision-blocking circle; display size is larger for visual presence
+    const bushDefs: { key: string; x: number; y: number; r: number; w: number; h: number }[] = [
+      // Top lane (left vertical segment)
+      { key: 'Bush1', x: 400,  y: 1900, r: 90,  w: 180, h: 130 },
+      { key: 'Bush2', x: 230,  y: 1230, r: 80,  w: 160, h: 115 },
+      { key: 'Bush1', x: 210,  y: 940,  r: 75,  w: 150, h: 110 },
+      // Mid lane (diagonal)
+      { key: 'Bush2', x: 960,  y: 2060, r: 90,  w: 175, h: 125 },
+      { key: 'Bush1', x: 1300, y: 1700, r: 85,  w: 170, h: 120 },
+      { key: 'Bush2', x: 1700, y: 1300, r: 85,  w: 170, h: 120 },
+      { key: 'Bush1', x: 2040, y: 940,  r: 90,  w: 175, h: 125 },
+      // Bot lane (bottom horizontal + right vertical)
+      { key: 'Bush2', x: 1900, y: 2800, r: 90,  w: 180, h: 130 },
+      { key: 'Bush1', x: 2280, y: 2960, r: 80,  w: 160, h: 115 },
+      { key: 'Bush2', x: 2960, y: 2280, r: 75,  w: 150, h: 110 },
+      // River / center objectives (high-value ambush spots)
+      { key: 'Bush1', x: 1150, y: 1150, r: 100, w: 195, h: 140 },
+      { key: 'Bush2', x: 2050, y: 2050, r: 100, w: 195, h: 140 },
+      { key: 'Bush1', x: 1420, y: 1750, r: 80,  w: 160, h: 115 },
+      { key: 'Bush2', x: 1780, y: 1420, r: 80,  w: 160, h: 115 },
+    ];
+
+    this.mobaBushZones = bushDefs.map(b => ({ x: b.x, y: b.y, r: b.r }));
+    for (const b of bushDefs) img(b.key, b.x, b.y, b.w, b.h, 0.6);
   }
 
   updateMobaGraphics(snap: Snapshot) {
@@ -2852,20 +2997,12 @@ export class ArenaScene extends Phaser.Scene {
     const crystals = snap.mobaCrystals ?? [];
 
     for (const tower of towers) {
-      // Tower body
+      // Tower body — use sprite asset
       if (!this.mobaTowerGraphics.has(tower.id)) {
-        const color = tower.team === 'blue' ? 0x4488ff : 0xff4444;
-        const tg = this.add.graphics().setDepth(1);
-        tg.fillStyle(color, 1);
-        tg.fillRect(-20, -20, 40, 40);
-        tg.lineStyle(2, 0xffffff, 0.8);
-        tg.strokeRect(-20, -20, 40, 40);
-        // Range ring
-        tg.lineStyle(1, color, 0.15);
-        tg.strokeCircle(0, 0, 220);
-        tg.setPosition(tower.x, tower.y);
-        this.mobaTowerGraphics.set(tower.id, tg);
-        this.mobaTowerHpBars.set(tower.id, this.add.graphics().setDepth(1.5));
+        const texKey = tower.team === 'blue' ? 'scene_TowerBlue' : 'scene_TowerRed';
+        const img = this.add.image(tower.x, tower.y, texKey).setDepth(3).setDisplaySize(90, 130);
+        this.mobaTowerGraphics.set(tower.id, img);
+        this.mobaTowerHpBars.set(tower.id, this.add.graphics().setDepth(3.5));
       }
 
       const tg = this.mobaTowerGraphics.get(tower.id)!;
