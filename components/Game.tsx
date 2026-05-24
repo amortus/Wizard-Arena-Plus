@@ -11,6 +11,8 @@ type Props = {
   hue: number;
   room: string;
   country?: string;
+  roomName?: string;
+  roomPassword?: string;
 };
 
 type LevelUpData = {
@@ -24,7 +26,7 @@ function flag(code?: string): string {
   return String.fromCodePoint(...cps);
 }
 
-export default function Game({ name, character, color, hue, room, country }: Props) {
+export default function Game({ name, character, color, hue, room, country, roomName, roomPassword }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<any>(null);
   const [hud, setHud] = useState<{
@@ -45,6 +47,7 @@ export default function Game({ name, character, color, hue, room, country }: Pro
   const [deathStats, setDeathStats] = useState<{ level: number; wave: number; score: number } | null>(null);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [roomFull, setRoomFull] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [bossAlert, setBossAlert] = useState<string | null>(null);
   const [inSmoke, setInSmoke] = useState(false);
   // Track latest hud.self level/wave so the 'died' event handler can read them
@@ -59,7 +62,7 @@ export default function Game({ name, character, color, hue, room, country }: Pro
       const { createGame } = await import('../game/scene');
       if (cancelled || !containerRef.current) return;
 
-      const result = createGame(containerRef.current, { name, character, color, hue, room, country });
+      const result = createGame(containerRef.current, { name, character, color, hue, room, country, roomName, roomPassword });
       sceneRef.current = result.scene;
       game = result.game;
 
@@ -95,6 +98,7 @@ export default function Game({ name, character, color, hue, room, country }: Pro
         setTimeout(() => setBossAlert(null), 3500);
       });
       result.scene.bus.on('smokeZone', (inside: boolean) => setInSmoke(inside));
+      result.scene.bus.on('authError', (reason: string) => setAuthError(reason));
     })();
 
     return () => {
@@ -192,6 +196,20 @@ export default function Game({ name, character, color, hue, room, country }: Pro
                 }}
               >
                 ← Back to Menu
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {authError && (
+        <div className="connecting-overlay">
+          <div className="room-full-card">
+            <h2>Wrong Password</h2>
+            <p>{authError}</p>
+            <div className="room-full-actions">
+              <button className="leaderboard-btn" onClick={() => { if (typeof window !== 'undefined') window.location.href = '/'; }}>
+                Back to Menu
               </button>
             </div>
           </div>

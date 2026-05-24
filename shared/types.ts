@@ -167,8 +167,19 @@ export type LeaderboardEntry = {
   ts: number; // ms epoch
 };
 
+export type RoomInfo = {
+  id: string;
+  name: string;
+  playerCount: number;
+  maxPlayers: number;
+  wave: number;
+  waveName: string;
+  hasPassword: boolean;
+  createdAt: number;
+};
+
 export type ClientToServer =
-  | { type: 'join'; name: string; character: CharacterKind; color: number; hue: number; country?: string }
+  | { type: 'join'; name: string; character: CharacterKind; color: number; hue: number; country?: string; roomName?: string; roomPassword?: string }
   | { type: 'input'; dx: number; dy: number }
   | { type: 'pickPowerup'; choiceIdx: number }
   | { type: 'respawn' };
@@ -201,4 +212,5 @@ export type ServerToClient =
   | { type: 'effect'; effect: 'phoenixRevive'; x: number; y: number }
   | { type: 'effect'; effect: 'earthquake'; x: number; y: number; radius: number }
   | { type: 'effect'; effect: 'timeStop'; x: number; y: number; radius: number }
-  | { type: 'bossAlert'; bossName: string };
+  | { type: 'bossAlert'; bossName: string }
+  | { type: 'authError'; reason: string };

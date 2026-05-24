@@ -225,6 +225,11 @@ export default class GameServer implements Party.Server {
   nextBossAllowedAt = 0;
   bossRosterIdx = 0;
   bossGeneration = 0;
+  // Lobby registry fields
+  roomName = '';
+  roomPassword = '';
+  roomCreatedAt = 0;
+  nextLobbyReportAt = 0;
   // Environmental hazards — fire pools and lightning strikes
   hazards = new Map<string, ServerHazard>();
   nextHazardAt = 0;
@@ -325,6 +330,9 @@ export default class GameServer implements Party.Server {
     if (this.players.size === 0) {
       this.stopTicking();
       this.resetRoom();
+      this.reportToLobby();
+    } else {
+      this.reportToLobby();
     }
   }
 
@@ -344,6 +352,9 @@ export default class GameServer implements Party.Server {
     this.bossGeneration = 0;
     this.nextHazardAt = 0;
     this.lastTickAt = 0;
+    this.roomName = '';
+    this.roomPassword = '';
+    this.roomCreatedAt = 0;
   }
 
   onMessage(message: string, sender: Party.Connection) {
@@ -363,7 +374,20 @@ export default class GameServer implements Party.Server {
     }
 
     if (msg.type === 'join') {
+      // Password check: if this room has a password and it's not the first player
+      if (this.roomPassword && msg.roomPassword !== this.roomPassword) {
+        sender.send(JSON.stringify({ type: 'authError', reason: 'Wrong password' } satisfies ServerToClient));
+        sender.close();
+        return;
+      }
+      // First player to join sets the room name and password
+      if (this.players.size === 0) {
+        this.roomName = msg.roomName || (this.room.id === 'main' ? 'Public Arena' : `Room ${this.room.id}`);
+        this.roomPassword = msg.roomPassword || '';
+        this.roomCreatedAt = Date.now();
+      }
       this.spawnPlayer(sender.id, msg.name, msg.character, msg.color, msg.hue ?? 0, msg.country);
+      this.reportToLobby();
     } else if (msg.type === 'input') {
       const p = this.players.get(sender.id);
       if (p && p.alive) {
@@ -740,10 +764,44 @@ export default class GameServer implements Party.Server {
     }
   }
 
+  reportToLobby() {
+    const totalPlayers = this.players.size;
+    let wave = 0, waveName = '';
+    for (const p of this.players.values()) {
+      if (p.waveNumber > wave) { wave = p.waveNumber; waveName = p.waveName; }
+    }
+    const cap = this.room.id === 'main' ? 6 : PLAYER_MAX_PER_ROOM;
+    const data = {
+      id: this.room.id,
+      name: this.roomName || (this.room.id === 'main' ? 'Public Arena' : `Room ${this.room.id}`),
+      playerCount: totalPlayers,
+      maxPlayers: cap,
+      wave,
+      waveName,
+      hasPassword: !!this.roomPassword,
+      createdAt: this.roomCreatedAt || Date.now(),
+    };
+    try {
+      const lobby = (this.room.context.parties as any).lobby?.get('main');
+      if (lobby) {
+        void lobby.fetch({
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data),
+        });
+      }
+    } catch {}
+  }
+
   tick() {
     const now = Date.now();
     const dt = Math.min((now - this.lastTickAt) / 1000, 0.1);
     this.lastTickAt = now;
+
+    if (now >= this.nextLobbyReportAt) {
+      this.nextLobbyReportAt = now + 10_000;
+      this.reportToLobby();
+    }
 
     this.reapZombiePlayers();
     this.updatePlayers(dt, now);

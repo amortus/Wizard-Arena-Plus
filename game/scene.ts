@@ -20,6 +20,8 @@ type SceneInit = {
   hue: number;
   room: string;
   country?: string;
+  roomName?: string;
+  roomPassword?: string;
 };
 
 function countryFlag(code?: string): string {
@@ -814,7 +816,7 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   connect() {
-    const { name, character, color, room } = this.init_;
+    const { name, character, color, room, country, roomName, roomPassword } = this.init_;
     const socket = new PartySocket({
       host: PARTY_HOST,
       room: room || 'main',
@@ -827,7 +829,9 @@ export class ArenaScene extends Phaser.Scene {
       type: 'join',
       name, character, color,
       hue: this.init_.hue,
-      country: this.init_.country,
+      country,
+      roomName,
+      roomPassword,
     };
 
     // Re-send join on every open (initial + reconnects after server HMR/restart)
@@ -944,6 +948,8 @@ export class ArenaScene extends Phaser.Scene {
       this.bossAlertName = msg.bossName;
       this.cameras.main.shake(300, 0.008);
       this.bus.emit('bossAlert', msg.bossName);
+    } else if (msg.type === 'authError') {
+      this.bus.emit('authError', (msg as any).reason);
     }
   }
 

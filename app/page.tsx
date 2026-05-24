@@ -4,6 +4,7 @@ import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import type { CharacterKind } from '../shared/constants';
 import { isBlockedName } from '../shared/profanity';
+import type { RoomInfo } from '../shared/types';
 
 // Tiny synth chime played whenever a gladiator is picked. Lazily creates an
 // AudioContext on first click so the browser allows playback.
@@ -75,19 +76,23 @@ function normalizeRoomCode(input: string): string {
 }
 
 export default function Page() {
-  const [started, setStarted] = useState(false);
+  const [screen, setScreen] = useState<'select' | 'browser' | 'game'>('select');
   const [name, setName] = useState('');
   const [character, setCharacter] = useState<CharacterKind>('blue_wizard');
   const [country, setCountry] = useState<string | undefined>(undefined);
   const [nameError, setNameError] = useState<string | null>(null);
   const [nameShake, setNameShake] = useState(false);
-  // Room state — defaults to "main" public, but can be overridden by ?room= or
-  // by clicking Play with Friends to mint a private room code.
-  const [room, setRoom] = useState<string>('main');
-  const [showRoomModal, setShowRoomModal] = useState(false);
-  const [pendingRoomCode, setPendingRoomCode] = useState('');
-  const [joinInput, setJoinInput] = useState('');
-  const [copied, setCopied] = useState(false);
+  const [roomId, setRoomId] = useState('main');
+  const [roomDisplayName, setRoomDisplayName] = useState('');
+  const [roomPassword, setRoomPassword] = useState('');
+  // Room browser state
+  const [rooms, setRooms] = useState<RoomInfo[]>([]);
+  const [loadingRooms, setLoadingRooms] = useState(true);
+  const [showCreate, setShowCreate] = useState(false);
+  const [createName, setCreateName] = useState('');
+  const [createPass, setCreatePass] = useState('');
+  const [joinPassFor, setJoinPassFor] = useState<string | null>(null);
+  const [joinPassInput, setJoinPassInput] = useState('');
   const playSelectSfx = useSelectSfx();
 
   const triggerNameError = (msg: string) => {
@@ -108,7 +113,49 @@ export default function Page() {
       return;
     }
     setNameError(null);
-    setStarted(true);
+    setCreateName(`${trimmed}'s Room`);
+    setScreen('browser');
+  };
+
+  // Lobby URL — determined once on client
+  const LOBBY_URL = (() => {
+    if (typeof window === 'undefined') return '';
+    const host = process.env.NEXT_PUBLIC_PARTYKIT_HOST;
+    if (host) return `https://${host}/parties/lobby/main`;
+    const h = window.location.hostname;
+    return (h === 'localhost' || h === '127.0.0.1') ? 'http://localhost:1999/parties/lobby/main' : '';
+  })();
+
+  const fetchRooms = async () => {
+    setLoadingRooms(true);
+    try {
+      if (LOBBY_URL) {
+        const res = await fetch(LOBBY_URL);
+        if (res.ok) setRooms(await res.json());
+      }
+    } catch {}
+    setLoadingRooms(false);
+  };
+
+  const enterGame = (id: string, displayName: string, password: string) => {
+    setRoomId(id);
+    setRoomDisplayName(displayName);
+    setRoomPassword(password);
+    setScreen('game');
+  };
+
+  const joinRoom = (room: RoomInfo) => {
+    if (room.hasPassword) {
+      setJoinPassFor(room.id);
+      setJoinPassInput('');
+    } else {
+      enterGame(room.id, room.name, '');
+    }
+  };
+
+  const createRoom = () => {
+    const id = generateRoomCode();
+    enterGame(id, createName.trim() || `${name}'s Room`, createPass);
   };
 
   useEffect(() => {
@@ -125,66 +172,167 @@ export default function Page() {
     return () => { cancelled = true; };
   }, []);
 
-  // Read ?room= on first load so a shared link drops you straight into the right room.
+  // Fetch rooms when entering browser screen
+  const prevScreen = useRef(screen);
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const params = new URLSearchParams(window.location.search);
-    const r = params.get('room');
-    if (r) {
-      const normalized = normalizeRoomCode(r);
-      if (normalized.length >= 3) setRoom(normalized);
+    if (screen === 'browser' && prevScreen.current !== 'browser') {
+      fetchRooms();
     }
-  }, []);
+    prevScreen.current = screen;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [screen]);
 
-  const openRoomModal = () => {
-    if (!pendingRoomCode) setPendingRoomCode(generateRoomCode());
-    setJoinInput('');
-    setCopied(false);
-    setShowRoomModal(true);
-  };
-
-  const shareUrlFor = (code: string) => {
-    if (typeof window === 'undefined') return '';
-    const url = new URL(window.location.href);
-    url.searchParams.set('room', code);
-    return url.toString();
-  };
-
-  const copyShareUrl = async () => {
-    try {
-      await navigator.clipboard.writeText(shareUrlFor(pendingRoomCode));
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1800);
-    } catch {}
-  };
-
-  const useRoom = (code: string) => {
-    setRoom(code);
-    setShowRoomModal(false);
-    // Reflect the room in the URL bar so refresh keeps you in the same room.
-    if (typeof window !== 'undefined') {
-      const url = new URL(window.location.href);
-      url.searchParams.set('room', code);
-      window.history.replaceState(null, '', url.toString());
-    }
-  };
-
-  const handleJoin = () => {
-    const code = normalizeRoomCode(joinInput);
-    if (code.length < 3) return;
-    useRoom(code);
-  };
-
-  if (started) {
+  if (screen === 'game') {
     return (
       <Game
         name={name || 'Player'}
         character={character}
         color={0xffffff}
         hue={0}
-        room={room}
+        room={roomId}
         country={country}
+        roomName={roomDisplayName}
+        roomPassword={roomPassword}
       />
+    );
+  }
+
+  if (screen === 'browser') {
+    return (
+      <div className="menu-root">
+        <div className="scanlines" />
+        <div className="menu-card" style={{ maxWidth: 720 }}>
+          <div className="room-browser">
+            <div className="room-browser-header">
+              <div className="room-browser-title">Choose a Room</div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="leaderboard-btn" style={{ marginTop: 0, padding: '6px 14px', fontSize: 9, letterSpacing: 1 }} onClick={fetchRooms} type="button">
+                  Refresh
+                </button>
+                <button className="leaderboard-btn" style={{ marginTop: 0, padding: '6px 14px', fontSize: 9, letterSpacing: 1 }} onClick={() => setScreen('select')} type="button">
+                  Back
+                </button>
+              </div>
+            </div>
+
+            <table className="room-table">
+              <thead>
+                <tr>
+                  <th style={{ width: 20 }}></th>
+                  <th>Room Name</th>
+                  <th>Players</th>
+                  <th>Wave</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {loadingRooms ? (
+                  <tr><td colSpan={5} className="room-empty">Loading...</td></tr>
+                ) : rooms.length === 0 ? (
+                  <tr><td colSpan={5} className="room-empty">No active rooms. Be the first to create one!</td></tr>
+                ) : (
+                  rooms.map((r) => {
+                    const isFull = r.playerCount >= r.maxPlayers;
+                    return (
+                      <tr key={r.id}>
+                        <td className="room-row-lock">{r.hasPassword ? '🔒' : ''}</td>
+                        <td className="room-row-name">{r.name}</td>
+                        <td className={`room-row-players${isFull ? ' room-row-full' : ''}`}>
+                          {r.playerCount}/{r.maxPlayers}
+                        </td>
+                        <td className="room-row-wave">
+                          {r.wave > 0 ? `W${r.wave}${r.waveName ? ` · ${r.waveName}` : ''}` : '—'}
+                        </td>
+                        <td>
+                          {isFull ? (
+                            <span className="room-row-full" style={{ fontSize: 8, fontFamily: "'Press Start 2P', monospace" }}>FULL</span>
+                          ) : joinPassFor === r.id ? (
+                            <span className="room-pass-prompt">
+                              <input
+                                type="password"
+                                placeholder="Password"
+                                value={joinPassInput}
+                                onChange={(e) => setJoinPassInput(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === 'Enter') enterGame(r.id, r.name, joinPassInput); }}
+                                style={{ background: 'transparent', border: 'none', color: '#e0d8c0', fontFamily: "'VT323', monospace", fontSize: 16, outline: 'none', width: 80 }}
+                                autoFocus
+                              />
+                              <button
+                                className="leaderboard-btn"
+                                style={{ marginTop: 0, padding: '2px 8px', fontSize: 8, letterSpacing: 1 }}
+                                onClick={() => enterGame(r.id, r.name, joinPassInput)}
+                                type="button"
+                              >Go</button>
+                              <button
+                                className="leaderboard-btn"
+                                style={{ marginTop: 0, padding: '2px 8px', fontSize: 8, letterSpacing: 1 }}
+                                onClick={() => setJoinPassFor(null)}
+                                type="button"
+                              >X</button>
+                            </span>
+                          ) : (
+                            <button
+                              className="leaderboard-btn"
+                              style={{ marginTop: 0, padding: '4px 10px', fontSize: 8, letterSpacing: 1 }}
+                              onClick={() => joinRoom(r)}
+                              type="button"
+                            >Join</button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+
+            <div className="room-browser-footer">
+              <div className="room-create-section">
+                <button
+                  className="leaderboard-btn"
+                  style={{ marginTop: 0 }}
+                  onClick={() => setShowCreate((v) => !v)}
+                  type="button"
+                >
+                  {showCreate ? 'Cancel' : '+ Create Room'}
+                </button>
+                {showCreate && (
+                  <div className="room-create-form">
+                    <input
+                      type="text"
+                      placeholder="Room name..."
+                      value={createName}
+                      onChange={(e) => setCreateName(e.target.value)}
+                      maxLength={32}
+                      className="room-input"
+                      style={{ fontSize: 12, letterSpacing: 1 }}
+                    />
+                    <div className="room-pass-row">
+                      <input
+                        type="password"
+                        placeholder="Password (optional)"
+                        value={createPass}
+                        onChange={(e) => setCreatePass(e.target.value)}
+                        maxLength={32}
+                        className="room-input"
+                        style={{ fontSize: 12, letterSpacing: 1, flex: 1 }}
+                      />
+                    </div>
+                    <button className="start-btn" onClick={createRoom} type="button">
+                      Create &amp; Play
+                    </button>
+                  </div>
+                )}
+              </div>
+              <div>
+                <Link href="/leaderboard" className="leaderboard-btn lb-link-btn" style={{ marginTop: 0, display: 'inline-block', padding: '12px 16px' }}>
+                  Leaderboard
+                </Link>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     );
   }
 
@@ -250,92 +398,10 @@ export default function Page() {
         <button className="start-btn" onClick={handleStart}>
           Enter Wizard Arena Plus
         </button>
-        <button
-          className="leaderboard-btn"
-          onClick={openRoomModal}
-          type="button"
-        >
-          👥 Play with Friends
-          {room !== 'main' && <span className="room-tag">Room: {room}</span>}
-        </button>
         <Link href="/leaderboard" className="leaderboard-btn lb-link-btn">
-          🏆 Leaderboard
+          Leaderboard
         </Link>
       </div>
-
-      {showRoomModal && (
-        <div
-          className="lb-overlay"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setShowRoomModal(false);
-          }}
-        >
-          <div className="lb-modal">
-            <h2>Play with Friends</h2>
-            <p className="lb-sub">Share this code or link — only people with it can join.</p>
-
-            <div className="room-block">
-              <div className="room-label">Your Room Code</div>
-              <div className="room-code">{pendingRoomCode}</div>
-              <div className="room-actions">
-                <button
-                  className="leaderboard-btn"
-                  onClick={() => setPendingRoomCode(generateRoomCode())}
-                  type="button"
-                >
-                  🎲 New Code
-                </button>
-                <button
-                  className="leaderboard-btn"
-                  onClick={copyShareUrl}
-                  type="button"
-                >
-                  {copied ? '✅ Copied' : '📋 Copy Link'}
-                </button>
-              </div>
-              <button className="start-btn" onClick={() => useRoom(pendingRoomCode)}>
-                Use This Room
-              </button>
-            </div>
-
-            <div className="room-divider">— or join existing —</div>
-
-            <div className="room-block">
-              <input
-                type="text"
-                placeholder="Enter room code..."
-                value={joinInput}
-                onChange={(e) => setJoinInput(normalizeRoomCode(e.target.value))}
-                maxLength={12}
-                className="room-input"
-              />
-              <button
-                className="leaderboard-btn"
-                onClick={handleJoin}
-                disabled={normalizeRoomCode(joinInput).length < 3}
-                type="button"
-              >
-                Join Room
-              </button>
-            </div>
-
-            {room !== 'main' && (
-              <button
-                className="leaderboard-btn"
-                onClick={() => useRoom('main')}
-                type="button"
-                style={{ marginTop: 12 }}
-              >
-                ← Back to Public Room
-              </button>
-            )}
-
-            <button className="start-btn lb-close" onClick={() => setShowRoomModal(false)}>
-              Close
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
