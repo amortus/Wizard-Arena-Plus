@@ -196,7 +196,7 @@ export class ArenaScene extends Phaser.Scene {
   bossAlertName = '';
   lastArenaElement: string = 'normal';
   // Castle Defender graphics
-  castleGraphic: Phaser.GameObjects.Graphics | null = null;
+  castleGraphic: Phaser.GameObjects.Image | null = null;
   castleHpBar: Phaser.GameObjects.Graphics | null = null;
   castleGateMarkers: Phaser.GameObjects.Graphics[] = [];
   // Crystal Rush (MOBA) graphics
@@ -2760,28 +2760,24 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   updateCastleGraphics(castle: { hp: number; maxHp: number; x: number; y: number }) {
-    // Draw castle body on first call
+    // Build castle on first call
     if (!this.castleGraphic) {
-      this.castleGraphic = this.add.graphics().setDepth(0.5);
-      // Base structure
-      this.castleGraphic.fillStyle(0x8855aa, 1);
-      this.castleGraphic.fillRect(-40, -40, 80, 80);
-      // Battlements (4 corners)
-      this.castleGraphic.fillStyle(0x6633aa, 1);
-      this.castleGraphic.fillRect(-50, -50, 20, 20);
-      this.castleGraphic.fillRect(30, -50, 20, 20);
-      this.castleGraphic.fillRect(-50, 30, 20, 20);
-      this.castleGraphic.fillRect(30, 30, 20, 20);
-      // Gate archway
-      this.castleGraphic.fillStyle(0x220033, 1);
-      this.castleGraphic.fillRect(-10, 5, 20, 35);
-      // Castle border
-      this.castleGraphic.lineStyle(3, 0xddaaff, 1);
-      this.castleGraphic.strokeRect(-40, -40, 80, 80);
-      this.castleGraphic.setPosition(castle.x, castle.y);
+      // Ambient glow pool under the inhibitor (static, no update needed)
+      const glow = this.add.graphics().setDepth(1.5);
+      glow.fillStyle(0x6699ff, 0.18);
+      glow.fillCircle(castle.x, castle.y, 90);
+      glow.lineStyle(5, 0x88bbff, 0.45);
+      glow.strokeCircle(castle.x, castle.y, 72);
+      glow.lineStyle(3, 0xaaddff, 0.25);
+      glow.strokeCircle(castle.x, castle.y, 90);
+
+      // InibidorBlue sprite as the castle
+      this.castleGraphic = this.add.image(castle.x, castle.y, 'scene_InibidorBlue')
+        .setDisplaySize(110, 165)
+        .setDepth(2);
 
       // HP bar (world-space, above castle)
-      this.castleHpBar = this.add.graphics().setDepth(1);
+      this.castleHpBar = this.add.graphics().setDepth(2.5);
 
       // Gate markers at arena edges
       const gates = [
@@ -2808,7 +2804,7 @@ export class ArenaScene extends Phaser.Scene {
       const pct = castle.hp / castle.maxHp;
       const W = 120, H = 10;
       const bx = castle.x - W / 2;
-      const by = castle.y - 70;
+      const by = castle.y - 100;
       // Background
       bar.fillStyle(0x330000, 0.9);
       bar.fillRect(bx, by, W, H);

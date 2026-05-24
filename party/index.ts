@@ -413,30 +413,36 @@ export default class GameServer implements Party.Server {
       this.castleWaveStartedAt = now;
       this.castleWaveLastTrickleAt = now;
 
-      // Determine how many gates to use (scale with wave)
-      const gatesUsed = this.castleWave <= 1 ? 2 : this.castleWave <= 2 ? 3 : 4;
-      this.castleWaveGateIdx = 0; // reset round-robin
+      // Gates open gradually: TD style (1 direction → 2 → 3 → all 4)
+      const gatesUsed = this.castleWave <= 2 ? 1
+                      : this.castleWave <= 5 ? 2
+                      : this.castleWave <= 9 ? 3
+                      : 4;
+      this.castleWaveGateIdx = 0;
 
-      // Initial burst: 60% of the wave
-      const burst = Math.floor(this.castleWaveTotal * 0.60);
+      // Small initial burst (35%) so the first group arrives together
+      const burst = Math.floor(this.castleWaveTotal * 0.35);
       for (let i = 0; i < burst; i++) {
         const gate = CASTLE_GATES[i % gatesUsed];
         this.spawnCastleNpc(gate.x, gate.y, this.castleWave);
         this.castleWaveSpawned++;
       }
 
-      // Trigger boss spawn on every 5th castle wave
+      // Boss every 5 waves
       if (this.castleWave % 5 === 0) {
         this.triggerCastleBoss();
       }
       return;
     }
 
-    // Trickle remaining enemies
+    // Trickle remaining enemies in small groups (classic TD pacing)
     const remaining = this.castleWaveTotal - this.castleWaveSpawned;
-    if (remaining > 0 && now - this.castleWaveLastTrickleAt >= 600) {
-      const gatesUsed = this.castleWave <= 1 ? 2 : this.castleWave <= 2 ? 3 : 4;
-      const batch = Math.min(remaining, 6);
+    if (remaining > 0 && now - this.castleWaveLastTrickleAt >= 1500) {
+      const gatesUsed = this.castleWave <= 2 ? 1
+                      : this.castleWave <= 5 ? 2
+                      : this.castleWave <= 9 ? 3
+                      : 4;
+      const batch = Math.min(remaining, 3);
       for (let i = 0; i < batch; i++) {
         const gate = CASTLE_GATES[(this.castleWaveGateIdx + i) % gatesUsed];
         this.spawnCastleNpc(gate.x, gate.y, this.castleWave);
@@ -467,7 +473,7 @@ export default class GameServer implements Party.Server {
     const x = gateX + Math.cos(angle) * r;
     const y = gateY + Math.sin(angle) * r;
 
-    const waveMul = 1 + (wave - 1) * 0.12;
+    const waveMul = 1 + (wave - 1) * 0.08;  // 8% HP per wave (gentler ramp than arena)
     const hp = NPC_BASE_HP * (base?.hpMul ?? 1) * waveMul;
     const spd = Math.min(NPC_BASE_SPEED * (base?.speedMul ?? 1), PLAYER_SPEED * NPC_SPEED_CAP_FRAC);
 

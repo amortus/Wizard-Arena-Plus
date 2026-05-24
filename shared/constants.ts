@@ -525,11 +525,13 @@ export const CASTLE_GATES: { x: number; y: number }[] = [
   { x: 80, y: ARENA_HEIGHT / 2 },              // West
 ];
 
-// Castle mode uses a single room-wide wave (not per-player)
-export const CASTLE_WAVE_BASE_SIZE = 48;
-export const CASTLE_WAVE_GROWTH = 14;
-export const CASTLE_WAVE_DURATION_MS = 20_000;
-export const CASTLE_WAVE_COOLDOWN_MS = 3_000;
+// Castle mode uses a single room-wide wave (not per-player).
+// Designed like classic tower-defense (Kingdom Rush / BTD): small early waves
+// that ramp gradually so players can find a rhythm before chaos hits.
+export const CASTLE_WAVE_BASE_SIZE = 12;   // wave 1: 12 | wave 5: 28 | wave 10: 48 | wave 20: 88
+export const CASTLE_WAVE_GROWTH    = 4;
+export const CASTLE_WAVE_DURATION_MS  = 28_000;  // ample time to deal with each wave
+export const CASTLE_WAVE_COOLDOWN_MS  = 6_000;   // 6-second breather between waves
 
 // HP drained from the castle when an NPC reaches it
 export const CASTLE_DAMAGE_BY_TIER: Record<string, number> = {
