@@ -2295,10 +2295,11 @@ export default class GameServer implements Party.Server {
         expiresAt: now2 + 15_000,
       });
       const mid = genId('pickup');
+      const mAngle = Math.random() * Math.PI * 2;
       this.pickups.set(mid, {
         id: mid, kind: 'magnet',
-        x: n.x + (Math.random() - 0.5) * 80,
-        y: n.y + (Math.random() - 0.5) * 80,
+        x: n.x + Math.cos(mAngle) * 220,
+        y: n.y + Math.sin(mAngle) * 220,
         expiresAt: now2 + 15_000,
       });
       // Do NOT null activeBossId here — maybeSpawnBoss() detects the dead boss
