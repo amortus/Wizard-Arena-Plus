@@ -1360,6 +1360,25 @@ button {
   to   { opacity: 0; }
 }
 
+/* ── Arena Elemental Overlays ───────────────────────────────────── */
+.arena-lava-overlay {
+  position: fixed; inset: 0; pointer-events: none; z-index: 5;
+  background: rgba(200, 30, 0, 0.18);
+  animation: lava-pulse 2s ease-in-out infinite;
+}
+@keyframes lava-pulse {
+  0%, 100% { background: rgba(200, 30, 0, 0.18); }
+  50%       { background: rgba(220, 60, 0, 0.28); }
+}
+.arena-ice-overlay {
+  position: fixed; inset: 0; pointer-events: none; z-index: 5;
+  background: rgba(40, 120, 220, 0.16);
+}
+.arena-fog-overlay {
+  position: fixed; inset: 0; pointer-events: none; z-index: 5;
+  background: rgba(20, 20, 30, 0.50);
+}
+
 /* ── Room Browser ───────────────────────────────────────────────── */
 .room-browser {
   width: 100%;

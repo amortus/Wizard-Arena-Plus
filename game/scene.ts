@@ -193,6 +193,7 @@ export class ArenaScene extends Phaser.Scene {
   bossProjectileVisuals = new Map<string, Phaser.GameObjects.Graphics>();
   bossAlertUntil = 0;
   bossAlertName = '';
+  lastArenaElement: string = 'normal';
   prevPlayerPos = new Map<string, { x: number; y: number; t: number }>();
   // hit-flash tracking: playerId -> { lastHp, flashUntilMs }
   playerHpTrack = new Map<string, { lastHp: number; flashUntilMs: number }>();
@@ -1669,6 +1670,38 @@ export class ArenaScene extends Phaser.Scene {
             g.fillRect(h.x - 4, 0, 8, ARENA_HEIGHT);
             g.setBlendMode(Phaser.BlendModes.ADD);
           }
+        } else if (h.kind === 'beam_diag' || h.kind === 'beam_diag_ne') {
+          const isWarn = serverNow < h.warningUntilMs;
+          const angle = h.angle ?? Math.PI / 4;
+          const cos = Math.cos(angle), sin = Math.sin(angle);
+          const hw = h.radius;
+          const beamLen = Math.sqrt(ARENA_WIDTH * ARENA_WIDTH + ARENA_HEIGHT * ARENA_HEIGHT);
+          const pts = [
+            { x: h.x + cos * beamLen - sin * hw, y: h.y + sin * beamLen + cos * hw },
+            { x: h.x + cos * beamLen + sin * hw, y: h.y + sin * beamLen - cos * hw },
+            { x: h.x - cos * beamLen + sin * hw, y: h.y - sin * beamLen - cos * hw },
+            { x: h.x - cos * beamLen - sin * hw, y: h.y - sin * beamLen + cos * hw },
+          ];
+          if (isWarn) {
+            const pulse = 0.07 + Math.sin(t * 0.022) * 0.04;
+            g.fillStyle(0xffee00, pulse);
+            g.fillPoints(pts, true);
+            g.lineStyle(2, 0xffdd00, 0.7 + Math.sin(t * 0.025) * 0.2);
+            g.lineBetween(h.x - cos * beamLen, h.y - sin * beamLen, h.x + cos * beamLen, h.y + sin * beamLen);
+          } else {
+            g.fillStyle(0xff6600, 0.80);
+            g.fillPoints(pts, true);
+            const coreHw = 4;
+            const corePts = [
+              { x: h.x + cos * beamLen - sin * coreHw, y: h.y + sin * beamLen + cos * coreHw },
+              { x: h.x + cos * beamLen + sin * coreHw, y: h.y + sin * beamLen - cos * coreHw },
+              { x: h.x - cos * beamLen + sin * coreHw, y: h.y - sin * beamLen - cos * coreHw },
+              { x: h.x - cos * beamLen - sin * coreHw, y: h.y - sin * beamLen + cos * coreHw },
+            ];
+            g.fillStyle(0xffffff, 0.55);
+            g.fillPoints(corePts, true);
+            g.setBlendMode(Phaser.BlendModes.ADD);
+          }
         }
       }
     }
@@ -2528,6 +2561,13 @@ export class ArenaScene extends Phaser.Scene {
     // Hazards: warning ring + active fire/lightning visuals.
     // Hazard timestamps are server Date.now() — use snap.t (server time) for comparison.
     this.renderHazards(snap.hazards ?? [], snap.t);
+
+    // Arena elemental theme
+    const snapElement = snap.arenaElement ?? 'normal';
+    if (snapElement !== this.lastArenaElement) {
+      this.lastArenaElement = snapElement;
+      this.bus.emit('arenaElement', snapElement);
+    }
 
     // emit HUD update — top-bar wave is the room's global wave; survivalWave tracks this player's personal progression
     this.bus.emit('hud', {

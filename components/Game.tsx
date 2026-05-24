@@ -51,6 +51,7 @@ export default function Game({ name, character, color, hue, room, country, roomN
   const [bossAlert, setBossAlert] = useState<string | null>(null);
   const [inSmoke, setInSmoke] = useState(false);
   const [novaFlash, setNovaFlash] = useState(false);
+  const [arenaElement, setArenaElement] = useState<'normal' | 'lava' | 'ice' | 'fog'>('normal');
   // Track latest hud.self level/wave so the 'died' event handler can read them
   // synchronously (the bus.on closure would otherwise capture an empty hud).
   const lastSelfRef = useRef<{ level: number; wave: number } | null>(null);
@@ -99,6 +100,7 @@ export default function Game({ name, character, color, hue, room, country, roomN
         setTimeout(() => setBossAlert(null), 3500);
       });
       result.scene.bus.on('smokeZone', (inside: boolean) => setInSmoke(inside));
+      result.scene.bus.on('arenaElement', (el: 'normal' | 'lava' | 'ice' | 'fog') => setArenaElement(el));
       result.scene.bus.on('authError', (reason: string) => setAuthError(reason));
       result.scene.bus.on('nova', () => {
         setNovaFlash(true);
@@ -259,6 +261,9 @@ export default function Game({ name, character, color, hue, room, country, roomN
 
       {inSmoke && <div className="smoke-overlay" />}
       {novaFlash && <div className="nova-flash" />}
+      {arenaElement === 'lava' && <div className="arena-lava-overlay" />}
+      {arenaElement === 'ice'  && <div className="arena-ice-overlay"  />}
+      {arenaElement === 'fog'  && <div className="arena-fog-overlay"  />}
 
       {hud.self && (
         <div className="unit-frame">

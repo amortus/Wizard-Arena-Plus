@@ -55,6 +55,7 @@ import {
 import { rollPowerupChoices, POWERUPS } from '../shared/powerups';
 import { isBlockedName } from '../shared/profanity';
 import type {
+  ArenaElement,
   BossProjectileState,
   ClientToServer,
   GemState,
@@ -175,6 +176,8 @@ type ServerNpc = NPCState & {
   bossSpellAt?: number;
   bossFireAngle?: number;
   bossPhaseNum?: 0 | 1 | 2;   // 0=normal, 1=enraged(<60%), 2=desperation(<25%)
+  bossComboIdx?: number;       // 0|1|2 — position in 3-pattern combo sequence
+  bossComboFireAt?: number;    // next combo fire time
 };
 
 type ServerHazard = HazardState & {
@@ -242,7 +245,14 @@ export default class GameServer implements Party.Server {
   hazards = new Map<string, ServerHazard>();
   nextHazardAt = 0;
   nextBeamAt = 0;
+  nextBeamCurtainAt = 0;
   currentRoomWave = 0;
+  // Mini-boss — spawns every 5 waves
+  miniBossId: string | null = null;
+  nextMiniBossWave = 5;
+  // Arena elemental theme
+  arenaElement: ArenaElement = 'normal';
+  nextArenaElementWave = 100;
   // Droppable pickups (health, speed boost, etc.)
   pickups = new Map<string, ServerPickup>();
   bossProjectiles = new Map<string, ServerBossProjectile>();
@@ -364,10 +374,15 @@ export default class GameServer implements Party.Server {
     this.bossGeneration = 0;
     this.nextHazardAt = 0;
     this.nextBeamAt = 0;
+    this.nextBeamCurtainAt = 0;
     this.lastTickAt = 0;
     this.roomName = '';
     this.roomPassword = '';
     this.roomCreatedAt = 0;
+    this.miniBossId = null;
+    this.nextMiniBossWave = 5;
+    this.arenaElement = 'normal';
+    this.nextArenaElementWave = 100;
   }
 
   onMessage(message: string, sender: Party.Connection) {
@@ -823,6 +838,7 @@ export default class GameServer implements Party.Server {
     this.maybeSpawnDragon(now);
     this.retargetDragon();
     this.maybeSpawnBoss(now);
+    this.maybeSpawnMiniBoss(now);
     this.updateNPCs(dt, now);
     this.updateBlackHoles(now);
     this.updateWolves(dt, now);
@@ -831,7 +847,9 @@ export default class GameServer implements Party.Server {
     this.updateBossProjectiles(dt, now);
     this.scheduleHazard(now);
     this.scheduleBeams(now);
+    this.scheduleBeamCurtain(now);
     this.updateHazards(now);
+    this.checkArenaElement();
 
     this.broadcastSnapshot(now);
   }
@@ -863,9 +881,16 @@ export default class GameServer implements Party.Server {
     void now;
     for (const p of this.players.values()) {
       if (!p.alive) continue;
-      const speed = PLAYER_SPEED * p.speedMul * (p.inSlowZone ? 0.45 : 1) * (wallNow < p.speedBoostUntil ? 1.7 : 1);
+      const rawSpeed = PLAYER_SPEED * p.speedMul * (p.inSlowZone ? 0.45 : 1) * (wallNow < p.speedBoostUntil ? 1.7 : 1) * (this.arenaElement === 'ice' ? 0.75 : 1);
+      const speed = Math.min(rawSpeed, PLAYER_SPEED * 2.8);
       p.x = clamp(p.x + p.input.dx * speed * dt, PLAYER_RADIUS, ARENA_WIDTH - PLAYER_RADIUS);
       p.y = clamp(p.y + p.input.dy * speed * dt, PLAYER_RADIUS, ARENA_HEIGHT - PLAYER_RADIUS);
+
+      // Elemental arena effects
+      if (this.arenaElement === 'lava') {
+        p.hp -= 1 * dt; // 1 HP/s passive lava damage
+        if (p.hp <= 0) this.killPlayer(p, '__hazard__');
+      }
 
       // passive HP regen always allowed
       if (p.regenPerSec > 0 && p.hp < p.maxHp) {
@@ -1706,10 +1731,12 @@ export default class GameServer implements Party.Server {
       bossSummonKind: boss.summonKind,
       bossSummonCount: boss.summonCount,
       bossSummonIntervalMs: boss.summonIntervalMs,
-      bossFireAt: this.bossGeneration >= 1 ? now + 2000 : undefined,
+      bossFireAt: this.bossGeneration >= 5 ? undefined : (this.bossGeneration >= 1 ? now + 2000 : undefined),
       bossSpellAt: this.bossGeneration >= 3 ? now + 12000 + Math.random() * 6000 : undefined,
       bossFireAngle: 0,
       bossPhaseNum: this.bossGeneration >= 4 ? 0 : undefined,
+      bossComboIdx: this.bossGeneration >= 5 ? 0 : undefined,
+      bossComboFireAt: this.bossGeneration >= 5 ? now + 3000 : undefined,
     });
 
     this.room.broadcast(JSON.stringify({ type: 'bossAlert', bossName: boss.name } satisfies ServerToClient));
@@ -2122,6 +2149,11 @@ export default class GameServer implements Party.Server {
         const t = this.players.get(n.ownerPlayerId);
         if (t?.alive) this.fireBossProjectiles(n, t, now);
       }
+      // Boss combo attack (gen 5+)
+      if (n.bossComboFireAt !== undefined && now >= n.bossComboFireAt) {
+        const t2 = this.players.get(n.ownerPlayerId);
+        if (t2?.alive) this.fireBossCombo(n, t2, now);
+      }
       // Boss spell casting (gen 3+)
       if (n.bossSpellAt !== undefined && now >= n.bossSpellAt) {
         const t = this.players.get(n.ownerPlayerId);
@@ -2134,6 +2166,7 @@ export default class GameServer implements Party.Server {
       const dx = aimX - n.x;
       const dy = aimY - n.y;
       const dist = Math.hypot(dx, dy) || 1;
+      speedNow = Math.min(speedNow, PLAYER_SPEED * NPC_SPEED_CAP_FRAC);
       n.x += (dx / dist) * speedNow * dt;
       n.y += (dy / dist) * speedNow * dt;
 
@@ -2253,6 +2286,11 @@ export default class GameServer implements Party.Server {
       });
       // Do NOT null activeBossId here — maybeSpawnBoss() detects the dead boss
       // on next tick and handles cooldown + roster advance atomically.
+    } else if (n.id === this.miniBossId) {
+      for (let i = 0; i < 5; i++) this.dropGem(n.x, n.y, 3);
+      for (let i = 0; i < 2; i++) this.dropGem(n.x, n.y, 5);
+      this.dropGem(n.x, n.y, 10);
+      this.miniBossId = null;
     } else {
       const tier = MONSTER_BASES[n.kind].tier;
       if (tier === 'boss') {
@@ -2535,7 +2573,7 @@ export default class GameServer implements Party.Server {
     }
     const hazards: HazardState[] = [];
     for (const h of this.hazards.values()) {
-      hazards.push({ id: h.id, kind: h.kind, x: h.x, y: h.y, radius: h.radius, warningUntilMs: h.warningUntilMs, activeUntilMs: h.activeUntilMs });
+      hazards.push({ id: h.id, kind: h.kind, x: h.x, y: h.y, radius: h.radius, warningUntilMs: h.warningUntilMs, activeUntilMs: h.activeUntilMs, angle: h.angle });
     }
     const pickups: PickupState[] = [];
     for (const pk of this.pickups.values()) {
@@ -2572,18 +2610,21 @@ export default class GameServer implements Party.Server {
       hazards,
       pickups,
       bossProjectiles,
+      arenaElement: this.arenaElement,
     };
     this.room.broadcast(JSON.stringify(snap));
   }
 
   scheduleHazard(now: number) {
     if (now < this.nextHazardAt) return;
-    if (this.hazards.size >= 2) return;
-    // Only spawn if at least one player is past wave 3
+    // Wave-scaled hazard count cap
+    const maxHazards = this.currentRoomWave < 20 ? 1 : this.currentRoomWave < 50 ? 2 : 3;
+    if (this.hazards.size >= maxHazards) return;
+    // Only spawn if at least one player is past wave 5
     let anyEligible = false;
     let anchorPlayer: ServerPlayer | null = null;
     for (const p of this.players.values()) {
-      if (p.alive && p.waveNumber >= 3) { anyEligible = true; anchorPlayer = p; break; }
+      if (p.alive && p.waveNumber >= 5) { anyEligible = true; anchorPlayer = p; break; }
     }
     if (!anyEligible || !anchorPlayer) return;
 
@@ -2615,31 +2656,56 @@ export default class GameServer implements Party.Server {
       lastDamageAt: 0,
       lightningFired: false,
     });
-    this.nextHazardAt = now + 35_000 + Math.random() * 35_000;
+    // Wave-scaled cooldown: 90s at wave 5 → 35s at wave 50+
+    const hCooldown = Math.max(35000, 90000 - this.currentRoomWave * 1100) + Math.random() * 25000;
+    this.nextHazardAt = now + hCooldown;
   }
 
   scheduleBeams(now: number) {
     const wave = this.currentRoomWave;
-    if (wave < 20) return;
+    if (wave < 50) return;
     if (now < this.nextBeamAt) return;
-    const beamCount = wave < 35 ? 1 : wave < 50 ? 2 : 3;
+    // Max simultaneous: 1 at wave 50–100, 2 at wave 100–200, 3 at wave 200+
+    const beamCount = wave < 100 ? 1 : wave < 200 ? 2 : 3;
     for (let i = 0; i < beamCount; i++) {
-      const kind: HazardKind = Math.random() < 0.5 ? 'beam_h' : 'beam_v';
-      const frac = 0.2 + Math.random() * 0.6;
-      const pos = kind === 'beam_h' ? ARENA_HEIGHT * frac : ARENA_WIDTH * frac;
-      const id = genId('hazard');
-      this.hazards.set(id, {
-        id, kind,
-        x: kind === 'beam_v' ? pos : ARENA_WIDTH / 2,
-        y: kind === 'beam_h' ? pos : ARENA_HEIGHT / 2,
-        radius: 28,
-        warningUntilMs: now + 2500,
-        activeUntilMs: now + 2500 + 1500,
-        lastDamageAt: 0,
-        lightningFired: false,
-      });
+      // 33% chance to spawn a diagonal beam instead of h/v
+      const isDiag = Math.random() < 0.33;
+      if (isDiag) {
+        const kind: HazardKind = Math.random() < 0.5 ? 'beam_diag' : 'beam_diag_ne';
+        // beam_diag = 45° (NW-SE), beam_diag_ne = -45° (NE-SW)
+        const angle = kind === 'beam_diag' ? Math.PI / 4 : -Math.PI / 4;
+        const centerOffset = (Math.random() - 0.5) * Math.min(ARENA_WIDTH, ARENA_HEIGHT) * 0.4;
+        const id = genId('hazard');
+        this.hazards.set(id, {
+          id, kind,
+          x: ARENA_WIDTH / 2 + (kind === 'beam_diag' ? -centerOffset : centerOffset),
+          y: ARENA_HEIGHT / 2 + centerOffset,
+          radius: 28,
+          angle,
+          warningUntilMs: now + 2500,
+          activeUntilMs: now + 2500 + 1500,
+          lastDamageAt: 0,
+          lightningFired: false,
+        });
+      } else {
+        const kind: HazardKind = Math.random() < 0.5 ? 'beam_h' : 'beam_v';
+        const frac = 0.2 + Math.random() * 0.6;
+        const pos = kind === 'beam_h' ? ARENA_HEIGHT * frac : ARENA_WIDTH * frac;
+        const id = genId('hazard');
+        this.hazards.set(id, {
+          id, kind,
+          x: kind === 'beam_v' ? pos : ARENA_WIDTH / 2,
+          y: kind === 'beam_h' ? pos : ARENA_HEIGHT / 2,
+          radius: 28,
+          warningUntilMs: now + 2500,
+          activeUntilMs: now + 2500 + 1500,
+          lastDamageAt: 0,
+          lightningFired: false,
+        });
+      }
     }
-    const cooldown = Math.max(12000, 38000 - wave * 350);
+    // Cooldown: 300s at wave 50, decreasing to 30s at wave 300+
+    const cooldown = Math.max(30000, 300000 - (wave - 50) * 1080);
     this.nextBeamAt = now + cooldown;
   }
 
@@ -2711,12 +2777,156 @@ export default class GameServer implements Party.Server {
             }
           }
         }
+      } else if (h.kind === 'beam_diag' || h.kind === 'beam_diag_ne') {
+        if (now >= h.activeUntilMs) { this.hazards.delete(id); continue; }
+        if (active && now - h.lastDamageAt > 250) {
+          h.lastDamageAt = now;
+          const cos = Math.cos(h.angle ?? Math.PI / 4);
+          const sin = Math.sin(h.angle ?? Math.PI / 4);
+          for (const p of this.players.values()) {
+            if (!p.alive || now < p.damageImmuneUntil) continue;
+            const px = p.x - h.x, py = p.y - h.y;
+            const perpDist = Math.abs(-sin * px + cos * py);
+            if (perpDist < h.radius + 16) {
+              const incomingMul = now < p.berserkerUntil ? 1.5 : 1;
+              p.hp -= 25 * incomingMul;
+            }
+          }
+        }
       }
 
       if (now > h.activeUntilMs) {
         this.hazards.delete(id);
       }
     }
+  }
+
+  scheduleBeamCurtain(now: number) {
+    const wave = this.currentRoomWave;
+    if (wave < 300) return;
+    if (now < this.nextBeamCurtainAt) return;
+    // 4 parallel beams of the same direction, 1 random gap
+    const isH = Math.random() < 0.5;
+    const count = 5;
+    const skip = Math.floor(Math.random() * count);
+    for (let i = 0; i < count; i++) {
+      if (i === skip) continue;
+      const frac = (i + 0.5) / count;
+      const id = genId('hazard');
+      this.hazards.set(id, {
+        id,
+        kind: isH ? 'beam_h' : 'beam_v',
+        x: isH ? ARENA_WIDTH / 2 : ARENA_WIDTH * frac,
+        y: isH ? ARENA_HEIGHT * frac : ARENA_HEIGHT / 2,
+        radius: 22,
+        warningUntilMs: now + 2500,
+        activeUntilMs: now + 4000,
+        lastDamageAt: 0,
+        lightningFired: false,
+      });
+    }
+    const curtainCooldown = Math.max(45000, 200000 - (wave - 300) * 500);
+    this.nextBeamCurtainAt = now + curtainCooldown;
+  }
+
+  maybeSpawnMiniBoss(now: number) {
+    const wave = this.currentRoomWave;
+    if (wave < 5 || wave < this.nextMiniBossWave) return;
+    if (this.miniBossId && this.npcs.has(this.miniBossId)) return;
+    if (this.activeBossId) return;
+    let target: ServerPlayer | null = null;
+    let best = -1;
+    for (const p of this.players.values()) {
+      if (!p.alive) continue;
+      const s = p.level * 100 + p.waveNumber * 50;
+      if (s > best) { best = s; target = p; }
+    }
+    if (!target || this.npcs.size >= NPC_MAX_COUNT) return;
+
+    // Random elite-tier monster kind
+    const elites: MonsterKind[] = ['goblin', 'spider', 'zombie_bear', 'giant_rat' as MonsterKind];
+    // Filter to valid monster kinds
+    const validElites: MonsterKind[] = elites.filter((k) => MONSTER_BASES[k] !== undefined);
+    const fallbackElites: MonsterKind[] = ['goblin', 'spider', 'zombie_bear'];
+    const kindPool = validElites.length > 0 ? validElites : fallbackElites;
+    const kind = kindPool[Math.floor(Math.random() * kindPool.length)];
+    const base = MONSTER_BASES[kind];
+    const hp = Math.round(NPC_BASE_HP * (base.hpMul ?? 1) * 10 * (1 + wave * 0.08));
+    const speed = Math.min(NPC_BASE_SPEED * (base.speedMul ?? 1) * 1.4, PLAYER_SPEED * NPC_SPEED_CAP_FRAC);
+
+    const angle = Math.random() * Math.PI * 2;
+    const dist = 350 + Math.random() * 150;
+    const x = clamp(target.x + Math.cos(angle) * dist, 30, ARENA_WIDTH - 30);
+    const y = clamp(target.y + Math.sin(angle) * dist, 30, ARENA_HEIGHT - 30);
+
+    const id = genId('miniboss');
+    this.miniBossId = id;
+    this.npcs.set(id, {
+      id, kind, x, y, hp, baseHp: hp, speed, baseSpeed: speed,
+      slowUntil: 0, slowMul: 1, freezeUntil: 0, lastHitAt: 0,
+      ownerPlayerId: target.id,
+      retargetAt: now + 45000 + Math.random() * 45000,
+      ai: 'boss_enrage',
+      aiPhase: 'pursue', aiPhaseEndsAt: 0, flankSide: 1,
+      bossEnraged: false,
+    });
+    this.nextMiniBossWave = wave + 5;
+  }
+
+  fireBossCombo(boss: ServerNpc, target: ServerPlayer, now: number) {
+    const gen = this.bossGeneration;
+    const dmg = 20 + gen * 5;
+    const dx = target.x - boss.x, dy = target.y - boss.y;
+    const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+    const baseAngle = Math.atan2(dy, dx);
+
+    const comboIdx = boss.bossComboIdx ?? 0;
+
+    if (comboIdx === 0) {
+      // Step 1: Weapon-themed attack (same as Gen 3)
+      this.fireBossProjectiles(boss, target, now);
+      boss.bossComboIdx = 1;
+      boss.bossComboFireAt = now + 2200;
+    } else if (comboIdx === 1) {
+      // Step 2: Rotating 6-way radial burst
+      boss.bossFireAngle = ((boss.bossFireAngle ?? 0) + Math.PI / 6) % (Math.PI * 2);
+      for (let i = 0; i < 6; i++) {
+        const a = boss.bossFireAngle + (i / 6) * Math.PI * 2;
+        const id = genId('bproj');
+        this.bossProjectiles.set(id, {
+          id, generation: gen,
+          x: boss.x, y: boss.y,
+          vx: Math.cos(a) * 280, vy: Math.sin(a) * 280,
+          radius: 12, expiresAt: now + 3500, damage: dmg,
+        });
+      }
+      boss.bossComboIdx = 2;
+      boss.bossComboFireAt = now + 2200;
+    } else {
+      // Step 3: Fast aimed volley (4 shots ±5° spread)
+      for (let i = 0; i < 4; i++) {
+        const a = baseAngle + (Math.random() - 0.5) * 0.18;
+        const id = genId('bproj');
+        this.bossProjectiles.set(id, {
+          id, generation: gen,
+          x: boss.x, y: boss.y,
+          vx: Math.cos(a) * 380, vy: Math.sin(a) * 380,
+          radius: 10, expiresAt: now + 3000, damage: dmg - 5,
+        });
+      }
+      boss.bossComboIdx = 0;
+      boss.bossComboFireAt = now + 5500; // longer pause after full combo
+    }
+    void dist;
+    void baseAngle;
+  }
+
+  checkArenaElement() {
+    const wave = this.currentRoomWave;
+    if (wave < 100 || wave < this.nextArenaElementWave) return;
+    const elements: ('lava' | 'ice' | 'fog' | 'normal')[] = ['lava', 'ice', 'fog', 'normal'];
+    this.arenaElement = elements[Math.floor(Math.random() * elements.length)];
+    this.nextArenaElementWave = wave + 20;
   }
 
   tryDropPickup(npc: ServerNpc, now: number) {

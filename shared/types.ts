@@ -1,6 +1,8 @@
 import type { CharacterKind, MonsterKind, WeaponKind } from './constants';
 
-export type HazardKind = 'fire_pool' | 'lightning_strike' | 'poison_cloud' | 'slow_zone' | 'smoke_zone' | 'beam_h' | 'beam_v';
+export type HazardKind = 'fire_pool' | 'lightning_strike' | 'poison_cloud' | 'slow_zone' | 'smoke_zone' | 'beam_h' | 'beam_v' | 'beam_diag' | 'beam_diag_ne';
+
+export type ArenaElement = 'normal' | 'lava' | 'ice' | 'fog';
 
 export type PickupKind = 'health' | 'speed' | 'damage' | 'shield' | 'cooldown' | 'berserker' | 'annihilate';
 
@@ -19,6 +21,7 @@ export type HazardState = {
   radius: number;
   warningUntilMs: number;
   activeUntilMs: number;
+  angle?: number;
 };
 
 export type PlayerState = {
@@ -166,6 +169,7 @@ export type Snapshot = {
   hazards?: HazardState[];
   pickups?: PickupState[];
   bossProjectiles?: BossProjectileState[];
+  arenaElement?: ArenaElement;
 };
 
 export type LeaderboardEntry = {
