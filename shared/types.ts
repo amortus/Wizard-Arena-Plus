@@ -1,6 +1,6 @@
 import type { CharacterKind, MonsterKind, WeaponKind } from './constants';
 
-export type HazardKind = 'fire_pool' | 'lightning_strike' | 'poison_cloud' | 'slow_zone' | 'smoke_zone';
+export type HazardKind = 'fire_pool' | 'lightning_strike' | 'poison_cloud' | 'slow_zone' | 'smoke_zone' | 'beam_h' | 'beam_v';
 
 export type PickupKind = 'health' | 'speed' | 'damage' | 'shield' | 'cooldown' | 'berserker' | 'annihilate';
 

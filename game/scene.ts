@@ -1636,6 +1636,39 @@ export class ArenaScene extends Phaser.Scene {
             const dx = self.x - h.x, dy = self.y - h.y;
             if (dx * dx + dy * dy < h.radius * h.radius) selfInSmoke = true;
           }
+        } else if (h.kind === 'beam_h') {
+          const isWarn = serverNow < h.warningUntilMs;
+          if (isWarn) {
+            // Pulsing danger band
+            const pulse = 0.08 + Math.sin(t * 0.02) * 0.04;
+            g.fillStyle(0xffee00, pulse);
+            g.fillRect(0, h.y - h.radius, ARENA_WIDTH, h.radius * 2);
+            // Solid warning line
+            g.lineStyle(2, 0xffdd00, 0.7 + Math.sin(t * 0.025) * 0.2);
+            g.lineBetween(0, h.y, ARENA_WIDTH, h.y);
+          } else {
+            // Active beam — bright fire with ADD blend
+            g.fillStyle(0xff6600, 0.80);
+            g.fillRect(0, h.y - h.radius, ARENA_WIDTH, h.radius * 2);
+            g.fillStyle(0xffffff, 0.55);
+            g.fillRect(0, h.y - 4, ARENA_WIDTH, 8);
+            g.setBlendMode(Phaser.BlendModes.ADD);
+          }
+        } else if (h.kind === 'beam_v') {
+          const isWarn = serverNow < h.warningUntilMs;
+          if (isWarn) {
+            const pulse = 0.08 + Math.sin(t * 0.02) * 0.04;
+            g.fillStyle(0xffee00, pulse);
+            g.fillRect(h.x - h.radius, 0, h.radius * 2, ARENA_HEIGHT);
+            g.lineStyle(2, 0xffdd00, 0.7 + Math.sin(t * 0.025) * 0.2);
+            g.lineBetween(h.x, 0, h.x, ARENA_HEIGHT);
+          } else {
+            g.fillStyle(0xff6600, 0.80);
+            g.fillRect(h.x - h.radius, 0, h.radius * 2, ARENA_HEIGHT);
+            g.fillStyle(0xffffff, 0.55);
+            g.fillRect(h.x - 4, 0, 8, ARENA_HEIGHT);
+            g.setBlendMode(Phaser.BlendModes.ADD);
+          }
         }
       }
     }

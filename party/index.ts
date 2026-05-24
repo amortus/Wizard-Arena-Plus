@@ -174,6 +174,7 @@ type ServerNpc = NPCState & {
   bossFireAt?: number;
   bossSpellAt?: number;
   bossFireAngle?: number;
+  bossPhaseNum?: 0 | 1 | 2;   // 0=normal, 1=enraged(<60%), 2=desperation(<25%)
 };
 
 type ServerHazard = HazardState & {
@@ -240,6 +241,8 @@ export default class GameServer implements Party.Server {
   // Environmental hazards — fire pools and lightning strikes
   hazards = new Map<string, ServerHazard>();
   nextHazardAt = 0;
+  nextBeamAt = 0;
+  currentRoomWave = 0;
   // Droppable pickups (health, speed boost, etc.)
   pickups = new Map<string, ServerPickup>();
   bossProjectiles = new Map<string, ServerBossProjectile>();
@@ -360,6 +363,7 @@ export default class GameServer implements Party.Server {
     this.bossRosterIdx = 0;
     this.bossGeneration = 0;
     this.nextHazardAt = 0;
+    this.nextBeamAt = 0;
     this.lastTickAt = 0;
     this.roomName = '';
     this.roomPassword = '';
@@ -826,6 +830,7 @@ export default class GameServer implements Party.Server {
     this.updatePickups(now);
     this.updateBossProjectiles(dt, now);
     this.scheduleHazard(now);
+    this.scheduleBeams(now);
     this.updateHazards(now);
 
     this.broadcastSnapshot(now);
@@ -1704,6 +1709,7 @@ export default class GameServer implements Party.Server {
       bossFireAt: this.bossGeneration >= 1 ? now + 2000 : undefined,
       bossSpellAt: this.bossGeneration >= 3 ? now + 12000 + Math.random() * 6000 : undefined,
       bossFireAngle: 0,
+      bossPhaseNum: this.bossGeneration >= 4 ? 0 : undefined,
     });
 
     this.room.broadcast(JSON.stringify({ type: 'bossAlert', bossName: boss.name } satisfies ServerToClient));
@@ -1714,8 +1720,116 @@ export default class GameServer implements Party.Server {
     const speed = 300;
     const dx = target.x - boss.x, dy = target.y - boss.y;
     const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-    void dist;
     const baseAngle = Math.atan2(dy, dx);
+    const dmg = 15 + gen * 5;
+
+    // Gen 3+: weapon-themed attacks unique to each boss
+    if (gen >= 3) {
+      const idx = this.bossRosterIdx;
+      // Compute perpendicular direction (for parallel spear offsets)
+      const perpX = -dy / dist, perpY = dx / dist;
+
+      if (idx === 0) {
+        // Rat King — Fire Fan: 5 projectiles spread ±60°
+        const spread = Math.PI / 3; // 60° each side
+        for (let i = 0; i < 5; i++) {
+          const a = baseAngle - spread + (i / 4) * spread * 2;
+          const id = genId('bproj');
+          this.bossProjectiles.set(id, { id, generation: gen, x: boss.x, y: boss.y, vx: Math.cos(a) * 250, vy: Math.sin(a) * 250, radius: 12, expiresAt: now + 3500, damage: dmg });
+        }
+        boss.bossFireAt = now + 3500;
+
+      } else if (idx === 1) {
+        // Bone Colossus — Cardinal Shockwaves: 4 slow large orbs N/E/S/W
+        for (let i = 0; i < 4; i++) {
+          const a = (i / 4) * Math.PI * 2;
+          const id = genId('bproj');
+          this.bossProjectiles.set(id, { id, generation: gen, x: boss.x, y: boss.y, vx: Math.cos(a) * 200, vy: Math.sin(a) * 200, radius: 18, expiresAt: now + 4000, damage: dmg + 5 });
+        }
+        boss.bossFireAt = now + 4000;
+
+      } else if (idx === 2) {
+        // Plague Lord — Poison Cluster: 3 slow orbs at ±25° + aimed
+        const angles = [baseAngle - 0.44, baseAngle, baseAngle + 0.44];
+        for (const a of angles) {
+          const id = genId('bproj');
+          this.bossProjectiles.set(id, { id, generation: gen, x: boss.x, y: boss.y, vx: Math.cos(a) * 180, vy: Math.sin(a) * 180, radius: 14, expiresAt: now + 4500, damage: dmg });
+        }
+        boss.bossFireAt = now + 3000;
+
+      } else if (idx === 3) {
+        // Wraith Lord — Shadow Volley: 2 fast bolts at ±12°
+        const angles = [baseAngle - 0.21, baseAngle + 0.21];
+        for (const a of angles) {
+          const id = genId('bproj');
+          this.bossProjectiles.set(id, { id, generation: gen, x: boss.x, y: boss.y, vx: Math.cos(a) * 480, vy: Math.sin(a) * 480, radius: 10, expiresAt: now + 2500, damage: dmg + 8 });
+        }
+        boss.bossFireAt = now + 2000;
+
+      } else if (idx === 4) {
+        // Goblin Warchief — Rapid Burst: 5 straight shots, small angle variance
+        for (let i = 0; i < 5; i++) {
+          const a = baseAngle + (Math.random() - 0.5) * 0.15;
+          const id = genId('bproj');
+          this.bossProjectiles.set(id, { id, generation: gen, x: boss.x, y: boss.y, vx: Math.cos(a) * 320, vy: Math.sin(a) * 320, radius: 9, expiresAt: now + 2800, damage: dmg - 3 });
+        }
+        boss.bossFireAt = now + 2500;
+
+      } else if (idx === 5) {
+        // Ancient Treant — Thorn Explosion: 12 projectiles full 360°
+        for (let i = 0; i < 12; i++) {
+          const a = (i / 12) * Math.PI * 2;
+          const id = genId('bproj');
+          this.bossProjectiles.set(id, { id, generation: gen, x: boss.x, y: boss.y, vx: Math.cos(a) * 220, vy: Math.sin(a) * 220, radius: 11, expiresAt: now + 4000, damage: dmg });
+        }
+        boss.bossFireAt = now + 5000;
+
+      } else if (idx === 6) {
+        // Alpha Wolf — Scatter Claw: 3 fast wide-spread shots at ±20°
+        const angles = [baseAngle - 0.35, baseAngle, baseAngle + 0.35];
+        for (const a of angles) {
+          const id = genId('bproj');
+          this.bossProjectiles.set(id, { id, generation: gen, x: boss.x, y: boss.y, vx: Math.cos(a) * 400, vy: Math.sin(a) * 400, radius: 10, expiresAt: now + 2500, damage: dmg });
+        }
+        boss.bossFireAt = now + 2500;
+
+      } else {
+        // Death Titan — Parallel Spears: 3 lightning bolts side-by-side
+        const offsets = [-60, 0, 60];
+        for (const off of offsets) {
+          const id = genId('bproj');
+          this.bossProjectiles.set(id, {
+            id, generation: gen,
+            x: boss.x + perpX * off,
+            y: boss.y + perpY * off,
+            vx: (dx / dist) * 360,
+            vy: (dy / dist) * 360,
+            radius: 12, expiresAt: now + 3000, damage: dmg,
+          });
+        }
+        boss.bossFireAt = now + 2500;
+      }
+
+      // Phase 1+: rotate attack angle each salvo (spiral effect)
+      if (boss.bossPhaseNum !== undefined && boss.bossPhaseNum >= 1) {
+        boss.bossFireAngle = ((boss.bossFireAngle || 0) + Math.PI / 5) % (Math.PI * 2);
+        // Additionally fire a rotating 3-way spiral alongside the weapon attack
+        for (let i = 0; i < 3; i++) {
+          const a = boss.bossFireAngle + (i / 3) * Math.PI * 2;
+          const sid = genId('bproj');
+          this.bossProjectiles.set(sid, {
+            id: sid, generation: this.bossGeneration,
+            x: boss.x, y: boss.y,
+            vx: Math.cos(a) * 240, vy: Math.sin(a) * 240,
+            radius: 11, expiresAt: now + 3500, damage: 15 + this.bossGeneration * 3,
+          });
+        }
+      }
+
+      return; // skip generic gen 1/2 logic below
+    }
+
+    // Gen 1 and 2 (existing logic)
     let angles: number[];
     let nextFire: number;
     if (gen === 1) {
@@ -1730,7 +1844,6 @@ export default class GameServer implements Party.Server {
       angles = Array.from({ length: count }, (_, i) => baseAngle + (i / count) * Math.PI * 2);
       nextFire = now + 2000;
     }
-    const dmg = 15 + gen * 5;
     for (const a of angles) {
       const id = genId('bproj');
       this.bossProjectiles.set(id, {
@@ -1744,6 +1857,48 @@ export default class GameServer implements Party.Server {
       });
     }
     boss.bossFireAt = nextFire;
+  }
+
+  checkBossPhase(boss: ServerNpc, now: number) {
+    if (boss.bossPhaseNum === undefined) return;
+    const hpFrac = boss.hp / boss.baseHp;
+
+    if (boss.bossPhaseNum === 0 && hpFrac < 0.60) {
+      boss.bossPhaseNum = 1;
+      // Phase 2 entry: fire a 6-way burst warning shot
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2;
+        const id = genId('bproj');
+        this.bossProjectiles.set(id, {
+          id, generation: this.bossGeneration,
+          x: boss.x, y: boss.y,
+          vx: Math.cos(a) * 280, vy: Math.sin(a) * 280,
+          radius: 13, expiresAt: now + 3500, damage: 20 + this.bossGeneration * 5,
+        });
+      }
+      // Speed up firing (reduce bossFireAt by 25%)
+      if (boss.bossFireAt) boss.bossFireAt = now + 500;
+
+    } else if (boss.bossPhaseNum === 1 && hpFrac < 0.25) {
+      boss.bossPhaseNum = 2;
+      // Phase 3 entry: DESPERATION — 12-way explosion
+      for (let i = 0; i < 12; i++) {
+        const a = (i / 12) * Math.PI * 2;
+        const id = genId('bproj');
+        this.bossProjectiles.set(id, {
+          id, generation: this.bossGeneration,
+          x: boss.x, y: boss.y,
+          vx: Math.cos(a) * 320, vy: Math.sin(a) * 320,
+          radius: 15, expiresAt: now + 4000, damage: 30 + this.bossGeneration * 5,
+        });
+      }
+      // Broadcast boss alert for phase 3
+      this.room.broadcast(JSON.stringify({
+        type: 'bossAlert',
+        bossName: `${BOSS_ROSTER[this.bossRosterIdx].name} — DESPERATION`,
+      } satisfies ServerToClient));
+      if (boss.bossFireAt) boss.bossFireAt = now + 300;
+    }
   }
 
   bossCastSpell(boss: ServerNpc, target: ServerPlayer, now: number) {
@@ -1971,6 +2126,10 @@ export default class GameServer implements Party.Server {
       if (n.bossSpellAt !== undefined && now >= n.bossSpellAt) {
         const t = this.players.get(n.ownerPlayerId);
         if (t?.alive) this.bossCastSpell(n, t, now);
+      }
+      // Boss phase transition check (gen 4+)
+      if (n.bossPhaseNum !== undefined) {
+        this.checkBossPhase(n, now);
       }
       const dx = aimX - n.x;
       const dy = aimY - n.y;
@@ -2397,6 +2556,7 @@ export default class GameServer implements Party.Server {
         roomWaveTimeLeftMs = p.waveTimeLeftMs;
       }
     }
+    this.currentRoomWave = roomWave;
 
     const snap: Snapshot = {
       type: 'snapshot',
@@ -2458,6 +2618,31 @@ export default class GameServer implements Party.Server {
     this.nextHazardAt = now + 35_000 + Math.random() * 35_000;
   }
 
+  scheduleBeams(now: number) {
+    const wave = this.currentRoomWave;
+    if (wave < 20) return;
+    if (now < this.nextBeamAt) return;
+    const beamCount = wave < 35 ? 1 : wave < 50 ? 2 : 3;
+    for (let i = 0; i < beamCount; i++) {
+      const kind: HazardKind = Math.random() < 0.5 ? 'beam_h' : 'beam_v';
+      const frac = 0.2 + Math.random() * 0.6;
+      const pos = kind === 'beam_h' ? ARENA_HEIGHT * frac : ARENA_WIDTH * frac;
+      const id = genId('hazard');
+      this.hazards.set(id, {
+        id, kind,
+        x: kind === 'beam_v' ? pos : ARENA_WIDTH / 2,
+        y: kind === 'beam_h' ? pos : ARENA_HEIGHT / 2,
+        radius: 28,
+        warningUntilMs: now + 2500,
+        activeUntilMs: now + 2500 + 1500,
+        lastDamageAt: 0,
+        lightningFired: false,
+      });
+    }
+    const cooldown = Math.max(12000, 38000 - wave * 350);
+    this.nextBeamAt = now + cooldown;
+  }
+
   updateHazards(now: number) {
     // Reset slow_zone state — will be set below for each player in range
     for (const p of this.players.values()) p.inSlowZone = false;
@@ -2511,6 +2696,21 @@ export default class GameServer implements Party.Server {
           }
         }
         // smoke_zone: no server effect, client handles visual
+      } else if (h.kind === 'beam_h' || h.kind === 'beam_v') {
+        if (now >= h.activeUntilMs) { this.hazards.delete(id); continue; }
+        if (active && now - h.lastDamageAt > 250) {
+          h.lastDamageAt = now;
+          for (const p of this.players.values()) {
+            if (!p.alive || now < p.damageImmuneUntil) continue;
+            const inBeam = h.kind === 'beam_h'
+              ? Math.abs(p.y - h.y) < h.radius + 16
+              : Math.abs(p.x - h.x) < h.radius + 16;
+            if (inBeam) {
+              const incomingMul = now < p.berserkerUntil ? 1.5 : 1;
+              p.hp -= 25 * incomingMul;
+            }
+          }
+        }
       }
 
       if (now > h.activeUntilMs) {
