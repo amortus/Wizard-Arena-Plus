@@ -961,6 +961,8 @@ export class ArenaScene extends Phaser.Scene {
         this.cameras.main.shake(1200, 0.025);
         this.spawnCastleDestroyedEffect(msg.x, msg.y);
         this.bus.emit('castleDestroyed');
+      } else if (msg.effect === 'towerShot') {
+        this.spawnTowerShotEffect(msg.x, msg.y, msg.tx, msg.ty, msg.team);
       } else if (msg.effect === 'towerDestroyed') {
         this.cameras.main.shake(400, 0.01);
         this.spawnCastleDestroyedEffect(msg.x, msg.y);
@@ -2340,10 +2342,14 @@ export class ArenaScene extends Phaser.Scene {
       }
       ntrack.lastHp = n.hp;
       this.npcHpTrack.set(n.id, ntrack);
+      // MOBA/ARAM team tint: blue team = blue hue, red team = red hue
+      const teamBaseTint = n.ownerPlayerId === 'blue' ? 0x88bbff
+        : n.ownerPlayerId === 'red'  ? 0xff8866
+        : (VARIANT_TINT[n.kind] ?? 0xffffff);
       if (now < ntrack.flashUntilMs) {
-        s.setTint(0xff5555);
+        s.setTint(0xffffff);
       } else {
-        s.setTint(VARIANT_TINT[n.kind] ?? 0xffffff);
+        s.setTint(teamBaseTint);
       }
 
       s.x = interpPos.x;
@@ -2769,6 +2775,31 @@ export class ArenaScene extends Phaser.Scene {
         ease: 'Power2',
       });
     }
+  }
+
+  spawnTowerShotEffect(x: number, y: number, tx: number, ty: number, team: MobaTeam) {
+    const color = team === 'blue' ? 0x44aaff : 0xff4422;
+    const g = this.add.graphics().setDepth(15);
+    g.fillStyle(color, 1);
+    g.fillCircle(0, 0, 7);
+    g.lineStyle(2, 0xffffff, 0.7);
+    g.strokeCircle(0, 0, 7);
+    g.setPosition(x, y);
+    const dist = Math.hypot(tx - x, ty - y);
+    const duration = Math.max(120, dist / 0.55); // ~550 px/s
+    this.tweens.add({
+      targets: g,
+      x: tx, y: ty,
+      duration,
+      ease: 'Linear',
+      onComplete: () => {
+        // small impact burst
+        g.clear();
+        g.fillStyle(color, 0.8);
+        g.fillCircle(0, 0, 14);
+        this.tweens.add({ targets: g, alpha: 0, scaleX: 2, scaleY: 2, duration: 200, ease: 'Power2', onComplete: () => g.destroy() });
+      },
+    });
   }
 
   initAramBackground() {

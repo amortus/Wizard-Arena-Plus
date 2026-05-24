@@ -706,6 +706,8 @@ export default class GameServer implements Party.Server {
         closestMinion.hp -= dmg;
         tower.lastAttackAt = now;
         attacked = true;
+        const shotFx: ServerToClient = { type: 'effect', effect: 'towerShot', x: tower.x, y: tower.y, tx: closestMinion.x, ty: closestMinion.y, team: tower.team };
+        this.room.broadcast(JSON.stringify(shotFx));
         if (closestMinion.hp <= 0) {
           this.npcs.delete(closestMinionId);
           this.mobaMinionWaypoints.delete(closestMinionId);
@@ -728,6 +730,8 @@ export default class GameServer implements Party.Server {
       if (closestPlayer) {
         closestPlayer.hp -= attackDmg * damageMul;
         tower.lastAttackAt = now;
+        const shotFx: ServerToClient = { type: 'effect', effect: 'towerShot', x: tower.x, y: tower.y, tx: closestPlayer.x, ty: closestPlayer.y, team: tower.team };
+        this.room.broadcast(JSON.stringify(shotFx));
         if (closestPlayer.hp <= 0) this.killPlayer(closestPlayer, tower.id);
       }
     }
@@ -3468,7 +3472,10 @@ export default class GameServer implements Party.Server {
     }
     const npcs = [];
     for (const n of this.npcs.values()) {
-      npcs.push({ id: n.id, kind: n.kind, x: n.x, y: n.y, hp: n.hp });
+      npcs.push({
+        id: n.id, kind: n.kind, x: n.x, y: n.y, hp: n.hp,
+        ...(n.ai === 'moba_march' ? { ownerPlayerId: n.ownerPlayerId } : {}),
+      });
     }
     const gems = [];
     for (const g of this.gems.values()) {

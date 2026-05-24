@@ -155,6 +155,7 @@ export type NPCState = {
   x: number;
   y: number;
   hp: number;
+  ownerPlayerId?: string; // 'blue' | 'red' for MOBA/ARAM minions
 };
 
 export type GemState = {
@@ -271,6 +272,7 @@ export type ServerToClient =
   | { type: 'effect'; effect: 'earthquake'; x: number; y: number; radius: number }
   | { type: 'effect'; effect: 'timeStop'; x: number; y: number; radius: number }
   | { type: 'effect'; effect: 'castleDestroyed'; x: number; y: number }
+  | { type: 'effect'; effect: 'towerShot'; x: number; y: number; tx: number; ty: number; team: MobaTeam }
   | { type: 'effect'; effect: 'towerDestroyed'; x: number; y: number; team: MobaTeam }
   | { type: 'effect'; effect: 'crystalDestroyed'; x: number; y: number; team: MobaTeam }
   | { type: 'mobaVictory'; winnerTeam: MobaTeam }
