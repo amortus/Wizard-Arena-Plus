@@ -75,6 +75,7 @@ export default function Game({ name, character, color, hue, room, country, roomN
         }
       });
       result.scene.bus.on('levelUp', (data: LevelUpData) => {
+        result.scene.clearMovement();
         setLevelUp(data);
         setLevelUpFocus(0);
       });
@@ -162,7 +163,7 @@ export default function Game({ name, character, color, hue, room, country, roomN
     return () => window.removeEventListener('keydown', onKey);
   }, [levelUp, levelUpFocus]);
 
-  const isConnecting = !hud.self && !dead && !roomFull;
+  const isConnecting = !hud.self && !dead && !roomFull && !authError;
   const hpPct = hud.self ? Math.max(0, (hud.self.hp / hud.self.maxHp) * 100) : 100;
   const hpColor = hpPct > 60 ? '#22cc44' : hpPct > 30 ? '#ddcc22' : '#cc3333';
   const xpPct = hud.self ? Math.min(100, (hud.self.xp / Math.max(1, hud.self.xpToNext)) * 100) : 0;

@@ -1895,6 +1895,17 @@ export class ArenaScene extends Phaser.Scene {
     this.bus.emit('respawned');
   }
 
+  clearMovement() {
+    this.joystickPointer = null;
+    this.joystickDx = 0;
+    this.joystickDy = 0;
+    this.joystickBase?.destroy();
+    this.joystickKnob?.destroy();
+    this.joystickBase = null;
+    this.joystickKnob = null;
+    this.mouseDown = false;
+  }
+
   renderJoystick(ox: number, oy: number, kx: number, ky: number, radius: number) {
     if (!this.joystickBase) {
       this.joystickBase = this.add.graphics().setScrollFactor(0).setDepth(200);
