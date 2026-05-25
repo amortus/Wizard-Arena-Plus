@@ -6,6 +6,8 @@ import {
   CHARACTERS,
   ELEMENT_VISUAL,
   MOBA_COLLISION_RECTS,
+  MOBA_TOWER_ATTACK_RANGE,
+  ARAM_TOWER_ATTACK_RANGE,
   MONSTERS,
   PLAYER_RADIUS,
   PLAYER_SPEED,
@@ -3256,7 +3258,7 @@ export class ArenaScene extends Phaser.Scene {
         continue;
       }
 
-      // HP bar above tower
+      // HP bar + attack range circle
       hb.clear();
       const pct = tower.hp / tower.maxHp;
       const W = 50, H = 6;
@@ -3268,6 +3270,11 @@ export class ArenaScene extends Phaser.Scene {
       const gr = Math.round(pct * 255);
       hb.fillStyle(Phaser.Display.Color.GetColor(r, gr, 0), 1);
       hb.fillRect(bx, by, Math.round(W * pct), H);
+      // Attack range circle (subtle, team-colored)
+      const rangeColor = tower.team === 'blue' ? 0x4488ff : 0xff4444;
+      const towerRange = snap.gameMode === 'aram' ? ARAM_TOWER_ATTACK_RANGE : MOBA_TOWER_ATTACK_RANGE;
+      hb.lineStyle(1, rangeColor, 0.25);
+      hb.strokeCircle(tower.x, tower.y, towerRange);
     }
 
     for (const crystal of crystals) {

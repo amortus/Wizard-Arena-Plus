@@ -258,6 +258,9 @@ type ServerNpc = NPCState & {
   // MOBA/ARAM minion combat
   minionCombatTarget?: string | null; // id of enemy minion currently fighting
   minionLastAttackAt?: number;        // epoch ms of last minion-vs-minion attack
+  // MOBA/ARAM minion player aggro (LoL-style: triggered when player shoots wave)
+  minionPlayerTarget?: string | null; // id of enemy player being chased
+  minionPlayerAggroUntil?: number;    // epoch ms when player aggro expires
 };
 
 type ServerHazard = HazardState & {
@@ -2121,8 +2124,11 @@ export default class GameServer implements Party.Server {
       const collR = NPC_RADIUS + PROJECTILE_RADIUS * (owner0?.bigHitMul ?? 1);
       const collR2 = collR * collR;
       const hitNpcs = new Set<string>();
+      const isMobaProj = (this.gameMode === 'moba' || this.gameMode === 'aram') && !!owner0?.mobaTeam;
       for (const n of this.npcs.values()) {
         if (hitNpcs.has(n.id)) continue;
+        // MOBA/ARAM: player projectiles must not hit friendly minions
+        if (isMobaProj && n.ownerPlayerId === owner0!.mobaTeam) continue;
         if ((n.x - proj.x) ** 2 + (n.y - proj.y) ** 2 < collR2) {
           // Orbitals have a per-NPC hit cooldown (don't drain HP every tick)
           if (proj.pattern === 'orbital') {
@@ -2135,6 +2141,17 @@ export default class GameServer implements Party.Server {
           this.applyVampire(owner0, dmg);
           if (n.hp <= 0) this.killNPC(n.id, owner0?.id);
           this.applySplash(proj.x, proj.y, owner0, dmg);
+          // MOBA/ARAM: player hitting enemy minion triggers wave aggro (LoL retribution)
+          if (isMobaProj && n.ai === 'moba_march' && owner0) {
+            const hitTeam = n.ownerPlayerId as MobaTeam;
+            const WAVE_AGGRO_RADIUS2 = 400 * 400;
+            for (const ally of this.npcs.values()) {
+              if (ally.ai !== 'moba_march' || ally.ownerPlayerId !== hitTeam) continue;
+              if ((ally.x - n.x) ** 2 + (ally.y - n.y) ** 2 > WAVE_AGGRO_RADIUS2) continue;
+              ally.minionPlayerTarget = owner0.id;
+              ally.minionPlayerAggroUntil = now + 3000;
+            }
+          }
           hitNpcs.add(n.id);
           if (proj.pattern === 'orbital') {
             // orbitals never consume — they keep spinning
@@ -2883,7 +2900,11 @@ export default class GameServer implements Party.Server {
     const alivePlayers = [...this.players.values()].filter((p) => p.alive);
 
     for (const n of this.npcs.values()) {
-      // MOBA minions follow lane waypoints toward the enemy crystal.
+      // MOBA/ARAM minions: LoL-style priority AI
+      // Priority 1: fight nearest enemy minion in range
+      // Priority 2: chase player who shot into the wave (3s retribution aggro)
+      // Priority 3: natural proximity aggro (player walks within 150px)
+      // Default: march waypoints
       if (n.ai === 'moba_march') {
         const frozen = now < n.freezeUntil;
         const slowed = now < n.slowUntil;
@@ -2894,18 +2915,25 @@ export default class GameServer implements Party.Server {
           const minionTeam = n.ownerPlayerId as MobaTeam;
           const enemyTeam: MobaTeam = minionTeam === 'blue' ? 'red' : 'blue';
           const wpData = this.mobaMinionWaypoints.get(n.id);
-
-          // Minion vs minion combat — stop and fight nearby enemies before advancing
-          const MINION_AGGRO_RANGE = 80;
-          const MINION_ATTACK_RANGE = 40;
+          const MINION_AGGRO_RANGE = 200;
+          const MINION_ATTACK_RANGE = 60;
           const MINION_ATTACK_COOLDOWN = 800;
           const MINION_DAMAGE = 12;
-          // Validate existing combat target
+          const PLAYER_NATURAL_AGGRO = 150; // auto-aggro if player walks this close
+
+          // --- Validate minion combat target ---
           if (n.minionCombatTarget) {
             const ct = this.npcs.get(n.minionCombatTarget);
             if (!ct || ct.hp <= 0 || ct.ownerPlayerId === minionTeam) n.minionCombatTarget = null;
           }
-          // Acquire new target if none
+          // --- Validate player aggro target ---
+          if (n.minionPlayerTarget) {
+            const pt = this.players.get(n.minionPlayerTarget);
+            if (!pt || !pt.alive || pt.mobaTeam === minionTeam || now > (n.minionPlayerAggroUntil ?? 0)) {
+              n.minionPlayerTarget = null;
+            }
+          }
+          // --- Acquire nearest enemy minion if no current target ---
           if (!n.minionCombatTarget) {
             let nearest: ServerNpc | null = null;
             let nearestD = MINION_AGGRO_RANGE;
@@ -2916,13 +2944,13 @@ export default class GameServer implements Party.Server {
             }
             if (nearest) n.minionCombatTarget = nearest.id;
           }
-          // If in combat — attack and skip waypoint advance
+
+          // === PRIORITY 1: fight enemy minion ===
           if (n.minionCombatTarget) {
             const target = this.npcs.get(n.minionCombatTarget);
             if (target) {
               const td = Math.hypot(target.x - n.x, target.y - n.y);
               if (td > MINION_ATTACK_RANGE) {
-                // Walk toward enemy minion
                 const capped = Math.min(spd, PLAYER_SPEED * NPC_SPEED_CAP_FRAC);
                 n.x += ((target.x - n.x) / td) * capped * dt;
                 n.y += ((target.y - n.y) / td) * capped * dt;
@@ -2936,56 +2964,106 @@ export default class GameServer implements Party.Server {
                 }
               }
             }
-          }
-
-          if (wpData && !n.minionCombatTarget) {
-            const wp = wpData.waypoints[wpData.waypointIdx];
-            const dx = wp.x - n.x;
-            const dy = wp.y - n.y;
-            const dist = Math.hypot(dx, dy) || 1;
-
-            if (dist < 30) {
-              if (wpData.waypointIdx < wpData.waypoints.length - 1) {
-                wpData.waypointIdx++;
-              } else {
-                // Reached enemy crystal
-                const crystal = this.mobaCrystals.get(enemyTeam);
-                if (crystal && crystal.alive) {
-                  const crystalDmg = this.gameMode === 'aram' ? ARAM_MINION_TOWER_DAMAGE : MOBA_MINION_TOWER_DAMAGE;
-                  crystal.hp = Math.max(0, crystal.hp - crystalDmg);
-                  if (crystal.hp <= 0) {
-                    crystal.alive = false;
-                    this.broadcastMobaVictory(minionTeam);
-                  }
+            // also deal touch damage to player if they walk into melee while we're fighting
+            if (now >= n.lastHitAt + NPC_TOUCH_COOLDOWN_MS) {
+              for (const p of this.players.values()) {
+                if (!p.alive || p.mobaTeam === minionTeam) continue;
+                if (now < p.invulnerableUntil || now < p.damageImmuneUntil) continue;
+                if (Math.hypot(p.x - n.x, p.y - n.y) < PLAYER_RADIUS + NPC_RADIUS) {
+                  const berserkerPenalty = now < p.berserkerUntil ? 1.5 : 1;
+                  const minionTouchDmg = this.gameMode === 'aram' ? ARAM_MINION_DAMAGE : MOBA_MINION_DAMAGE;
+                  p.hp -= minionTouchDmg * berserkerPenalty;
+                  n.lastHitAt = now;
+                  if (p.hp <= 0) this.killPlayer(p, n.id);
+                  break;
                 }
-                this.npcs.delete(n.id);
-                this.mobaMinionWaypoints.delete(n.id);
-                continue;
               }
-            } else {
+            }
+          }
+          // === PRIORITY 2: chase aggroed player ===
+          else if (n.minionPlayerTarget) {
+            const pTarget = this.players.get(n.minionPlayerTarget)!;
+            const pd = Math.hypot(pTarget.x - n.x, pTarget.y - n.y);
+            if (pd > PLAYER_RADIUS + NPC_RADIUS) {
               const capped = Math.min(spd, PLAYER_SPEED * NPC_SPEED_CAP_FRAC);
-              n.x += (dx / dist) * capped * dt;
-              n.y += (dy / dist) * capped * dt;
+              n.x += ((pTarget.x - n.x) / pd) * capped * dt;
+              n.y += ((pTarget.y - n.y) / pd) * capped * dt;
               n.x = clamp(n.x, 20, ARENA_WIDTH - 20);
               n.y = clamp(n.y, 20, ARENA_HEIGHT - 20);
               const col = resolveCollision(n.x, n.y, NPC_RADIUS, MOBA_COLLISION_RECTS);
               n.x = col.x; n.y = col.y;
             }
+            if (now >= n.lastHitAt + NPC_TOUCH_COOLDOWN_MS && pTarget.alive
+              && now >= pTarget.invulnerableUntil && now >= pTarget.damageImmuneUntil) {
+              if (pd < PLAYER_RADIUS + NPC_RADIUS) {
+                const berserkerPenalty = now < pTarget.berserkerUntil ? 1.5 : 1;
+                const minionTouchDmg = this.gameMode === 'aram' ? ARAM_MINION_DAMAGE : MOBA_MINION_DAMAGE;
+                pTarget.hp -= minionTouchDmg * berserkerPenalty;
+                n.lastHitAt = now;
+                if (pTarget.hp <= 0) this.killPlayer(pTarget, n.id);
+              }
+            }
           }
-
-          // Touch damage to enemy players only
-          if (now >= n.lastHitAt + NPC_TOUCH_COOLDOWN_MS) {
+          // === DEFAULT: march waypoints ===
+          else {
+            // Natural proximity aggro: player walks within range → minion turns
             for (const p of this.players.values()) {
               if (!p.alive || p.mobaTeam === minionTeam) continue;
-              if (now < p.invulnerableUntil || now < p.damageImmuneUntil) continue;
-              const pd = Math.hypot(p.x - n.x, p.y - n.y);
-              if (pd < PLAYER_RADIUS + NPC_RADIUS) {
-                const berserkerPenalty = now < p.berserkerUntil ? 1.5 : 1;
-                const minionTouchDmg = this.gameMode === 'aram' ? ARAM_MINION_DAMAGE : MOBA_MINION_DAMAGE;
-                p.hp -= minionTouchDmg * berserkerPenalty;
-                n.lastHitAt = now;
-                if (p.hp <= 0) this.killPlayer(p, n.id);
+              if (Math.hypot(p.x - n.x, p.y - n.y) < PLAYER_NATURAL_AGGRO) {
+                n.minionPlayerTarget = p.id;
+                n.minionPlayerAggroUntil = now + 3000;
                 break;
+              }
+            }
+
+            if (wpData) {
+              const wp = wpData.waypoints[wpData.waypointIdx];
+              const dx = wp.x - n.x;
+              const dy = wp.y - n.y;
+              const dist = Math.hypot(dx, dy) || 1;
+
+              if (dist < 30) {
+                if (wpData.waypointIdx < wpData.waypoints.length - 1) {
+                  wpData.waypointIdx++;
+                } else {
+                  // Reached enemy crystal
+                  const crystal = this.mobaCrystals.get(enemyTeam);
+                  if (crystal && crystal.alive) {
+                    const crystalDmg = this.gameMode === 'aram' ? ARAM_MINION_TOWER_DAMAGE : MOBA_MINION_TOWER_DAMAGE;
+                    crystal.hp = Math.max(0, crystal.hp - crystalDmg);
+                    if (crystal.hp <= 0) {
+                      crystal.alive = false;
+                      this.broadcastMobaVictory(minionTeam);
+                    }
+                  }
+                  this.npcs.delete(n.id);
+                  this.mobaMinionWaypoints.delete(n.id);
+                  continue;
+                }
+              } else {
+                const capped = Math.min(spd, PLAYER_SPEED * NPC_SPEED_CAP_FRAC);
+                n.x += (dx / dist) * capped * dt;
+                n.y += (dy / dist) * capped * dt;
+                n.x = clamp(n.x, 20, ARENA_WIDTH - 20);
+                n.y = clamp(n.y, 20, ARENA_HEIGHT - 20);
+                const col = resolveCollision(n.x, n.y, NPC_RADIUS, MOBA_COLLISION_RECTS);
+                n.x = col.x; n.y = col.y;
+              }
+            }
+
+            // Touch damage while marching (player walks into the wave)
+            if (now >= n.lastHitAt + NPC_TOUCH_COOLDOWN_MS) {
+              for (const p of this.players.values()) {
+                if (!p.alive || p.mobaTeam === minionTeam) continue;
+                if (now < p.invulnerableUntil || now < p.damageImmuneUntil) continue;
+                if (Math.hypot(p.x - n.x, p.y - n.y) < PLAYER_RADIUS + NPC_RADIUS) {
+                  const berserkerPenalty = now < p.berserkerUntil ? 1.5 : 1;
+                  const minionTouchDmg = this.gameMode === 'aram' ? ARAM_MINION_DAMAGE : MOBA_MINION_DAMAGE;
+                  p.hp -= minionTouchDmg * berserkerPenalty;
+                  n.lastHitAt = now;
+                  if (p.hp <= 0) this.killPlayer(p, n.id);
+                  break;
+                }
               }
             }
           }
