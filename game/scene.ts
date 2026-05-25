@@ -5,11 +5,13 @@ import {
   ARENA_WIDTH,
   CHARACTERS,
   ELEMENT_VISUAL,
+  MOBA_COLLISION_RECTS,
   MONSTERS,
   PLAYER_RADIUS,
   PLAYER_SPEED,
   WEAPON_ELEMENT,
   type CharacterKind,
+  type CollisionRect,
 } from '../shared/constants';
 import type { BossProjectileState, CastleState, ClientToServer, GameMode, MobaCrystalState, MobaTeam, PlayerState, ServerToClient, Snapshot, TowerState } from '../shared/types';
 
@@ -29,6 +31,31 @@ function countryFlag(code?: string): string {
   if (!code || code.length !== 2) return '';
   const cps = code.toUpperCase().split('').map((c) => 127397 + c.charCodeAt(0));
   return String.fromCodePoint(...cps);
+}
+
+function resolveCollision(x: number, y: number, r: number, rects: CollisionRect[]): { x: number; y: number } {
+  let nx = x, ny = y;
+  for (const rect of rects) {
+    const closestX = Math.max(rect.x, Math.min(nx, rect.x + rect.w));
+    const closestY = Math.max(rect.y, Math.min(ny, rect.y + rect.h));
+    const dx = nx - closestX;
+    const dy = ny - closestY;
+    const dist2 = dx * dx + dy * dy;
+    if (dist2 === 0) {
+      const dL = nx - rect.x, dR = rect.x + rect.w - nx;
+      const dT = ny - rect.y, dB = rect.y + rect.h - ny;
+      const m = Math.min(dL, dR, dT, dB);
+      if (m === dL)      nx = rect.x - r;
+      else if (m === dR) nx = rect.x + rect.w + r;
+      else if (m === dT) ny = rect.y - r;
+      else               ny = rect.y + rect.h + r;
+    } else if (dist2 < r * r) {
+      const dist = Math.sqrt(dist2);
+      nx += (dx / dist) * (r - dist);
+      ny += (dy / dist) * (r - dist);
+    }
+  }
+  return { x: nx, y: ny };
 }
 
 // Convert a hue (radians) to a tint color. hue=0 gives white (no shift).
@@ -997,9 +1024,11 @@ export class ArenaScene extends Phaser.Scene {
               this.corrX = 0;
               this.corrY = 0;
             } else {
-              // Accumulate correction — bled per-frame in handleInput instead of instant snap
-              this.corrX += dx * 0.2;
-              this.corrY += dy * 0.2;
+              // Accumulate a small fraction — bled rapidly per-frame so stale corrections
+              // from the previous movement direction clear before the next snapshot arrives.
+              // (Large multiplier here → ghost-step on direction change; too small → drift)
+              this.corrX += dx * 0.08;
+              this.corrY += dy * 0.08;
             }
           }
         } else {
@@ -2138,18 +2167,24 @@ export class ArenaScene extends Phaser.Scene {
           ARENA_HEIGHT - PLAYER_RADIUS,
         );
 
-        // Bleed accumulated reconciliation correction at ~15% per frame (~6 frames to converge).
-        // This spreads the correction over ~100ms instead of snapping in one frame.
+        // Bleed accumulated reconciliation correction at 40% per frame (~2-3 frames to converge).
+        // Fast bleed ensures stale corrections from the old movement direction clear before
+        // the next server snapshot arrives (server ticks at 50Hz = ~1.2 render frames apart).
         if (this.corrX !== 0 || this.corrY !== 0) {
-          const bleedX = this.corrX * 0.15;
-          const bleedY = this.corrY * 0.15;
+          const bleedX = this.corrX * 0.4;
+          const bleedY = this.corrY * 0.4;
           this.predictedSelf.x = clamp(this.predictedSelf.x + bleedX, PLAYER_RADIUS, ARENA_WIDTH - PLAYER_RADIUS);
           this.predictedSelf.y = clamp(this.predictedSelf.y + bleedY, PLAYER_RADIUS, ARENA_HEIGHT - PLAYER_RADIUS);
           this.corrX -= bleedX;
           this.corrY -= bleedY;
-          // Clamp to zero once negligibly small
           if (Math.abs(this.corrX) < 0.05) this.corrX = 0;
           if (Math.abs(this.corrY) < 0.05) this.corrY = 0;
+        }
+        // Client-side collision vs jungle tree walls (MOBA only)
+        if (this.latestSnapshot?.gameMode === 'moba') {
+          const col = resolveCollision(this.predictedSelf.x, this.predictedSelf.y, PLAYER_RADIUS, MOBA_COLLISION_RECTS);
+          this.predictedSelf.x = col.x;
+          this.predictedSelf.y = col.y;
         }
       }
     }
@@ -3072,17 +3107,43 @@ export class ArenaScene extends Phaser.Scene {
   initMobaBackground() {
     this.buildGroundTextures();
 
-    // Grass covers full map
+    // Grass base
     this.add.tileSprite(1600, 1600, 3200, 3200, 'tile_grass').setDepth(0);
 
-    // Straight lane segments (TileSprite dirt)
-    const LW = 90;
-    this.add.tileSprite(400,  1600, LW,   2400, 'tile_dirt').setDepth(0.05); // top-lane left side (vertical)
-    this.add.tileSprite(1600, 400,  2400, LW,   'tile_dirt').setDepth(0.05); // top-lane top side (horizontal)
-    this.add.tileSprite(1600, 2800, 2400, LW,   'tile_dirt').setDepth(0.05); // bot-lane bottom side
-    this.add.tileSprite(2800, 1600, LW,   2400, 'tile_dirt').setDepth(0.05); // bot-lane right side
+    // Jungle floor — darker green tint in jungle zones (between lanes)
+    const jungle = this.add.graphics().setDepth(0.01);
+    jungle.fillStyle(0x2e4f22, 0.35);
+    jungle.fillRect(80,   80,  320,  2700); // outer left strip
+    jungle.fillRect(400,  80,  1200, 1200); // upper blue jungle
+    jungle.fillRect(480,  1100, 620, 1050); // lower blue jungle
+    jungle.fillRect(1600, 2020, 620, 1100); // upper red jungle
+    jungle.fillRect(1600, 1020, 1200, 1000);// lower red jungle
+    jungle.fillRect(2800, 420,  320,  2700); // outer right strip
+    jungle.fillRect(500,  80,  2200, 300);  // top outer strip
+    jungle.fillRect(500,  2820, 2200, 300); // bottom outer strip
 
-    // Mid lane diagonal — 2400√2 ≈ 3394 long, rotated 45° CW from vertical
+    // River — diagonal band along y=x (top-left corner → bottom-right corner)
+    const river = this.add.graphics().setDepth(0.02);
+    river.fillStyle(0x2a6b52, 0.55);
+    river.fillPoints([
+      { x: 220,  y: 0    },
+      { x: 0,    y: 220  },
+      { x: 2980, y: 3200 },
+      { x: 3200, y: 2980 },
+    ], true);
+    river.lineStyle(3, 0x3a9068, 0.45);
+    river.beginPath();
+    river.moveTo(0, 0);
+    river.lineTo(3200, 3200);
+    river.strokePath();
+
+    // Lane dirt paths — wider for comfort
+    const LW = 140;
+    this.add.tileSprite(400,  1600, LW,   2400, 'tile_dirt').setDepth(0.05);
+    this.add.tileSprite(1600, 400,  2400, LW,   'tile_dirt').setDepth(0.05);
+    this.add.tileSprite(1600, 2800, 2400, LW,   'tile_dirt').setDepth(0.05);
+    this.add.tileSprite(2800, 1600, LW,   2400, 'tile_dirt').setDepth(0.05);
+    // Mid lane diagonal — 2400√2 ≈ 3394 long, rotated 45°
     this.add.tileSprite(1600, 1600, LW, 3394, 'tile_dirt')
       .setDepth(0.05).setRotation(Math.PI / 4);
 
@@ -3109,60 +3170,78 @@ export class ArenaScene extends Phaser.Scene {
     const img = (key: string, x: number, y: number, w: number, h: number, depth = 1) =>
       this.add.image(x, y, `scene_${key}`).setDisplaySize(w, h).setDepth(depth);
 
-    // ── Trees (decorative jungle) ──────────────────────────────────────────
-    // Blue-side jungle (top-left quadrant)
-    img('Tree1',      220,  240, 130, 175, 0.5);
-    img('Tree2',      340,  190, 110, 150, 0.5);
-    img('SmallTree1', 750,  640, 80, 110,  0.5);
-    img('SmallTree2', 640,  760, 75, 105,  0.5);
-    img('SmallTree1', 520,  520, 70,  95,  0.5);
-    img('SmallTree2', 880, 1050, 70,  95,  0.5);
-    img('SmallTree1', 750, 1200, 65,  90,  0.5);
-    // Red-side jungle (bottom-right quadrant)
-    img('Tree1',     2980, 2960, 130, 175, 0.5);
-    img('Tree2',     2860, 3010, 110, 150, 0.5);
-    img('SmallTree1',2450, 2560, 80, 110,  0.5);
-    img('SmallTree2',2560, 2440, 75, 105,  0.5);
-    img('SmallTree1',2680, 2680, 70,  95,  0.5);
-    img('SmallTree2',2320, 2950, 70,  95,  0.5);
-    img('SmallTree1',2450, 2800, 65,  90,  0.5);
-    // Center jungle fringes
-    img('SmallTree2', 980,  820, 65,  90,  0.5);
-    img('SmallTree1', 820,  980, 65,  90,  0.5);
-    img('SmallTree2',2220, 2380, 65,  90,  0.5);
-    img('SmallTree1',2380, 2220, 65,  90,  0.5);
+    // ── Tree wall blocks (collision rects rendered as dark forest clusters) ──
+    const treeGfx = this.add.graphics().setDepth(0.12);
+    treeGfx.fillStyle(0x18361a, 0.92);
+    treeGfx.lineStyle(2, 0x0d1e0e, 0.85);
+    for (const rect of MOBA_COLLISION_RECTS) {
+      treeGfx.fillRect(rect.x, rect.y, rect.w, rect.h);
+      treeGfx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+    }
+
+    // ── Decorative trees on top of collision walls ─────────────────────────
+    // Blue jungle
+    img('Tree1',       240,  230, 150, 200, 0.5);
+    img('Tree2',       560,  540, 110, 150, 0.5);
+    img('SmallTree1',  710,  640,  85, 115, 0.5);
+    img('SmallTree2',  800,  600,  80, 110, 0.5);
+    img('SmallTree1',  630, 1160,  80, 110, 0.5);
+    img('SmallTree2',  870, 1100,  75, 105, 0.5);
+    img('SmallTree1', 1060, 1550,  80, 110, 0.5);
+    img('SmallTree2', 1250, 1560,  75, 100, 0.5);
+    img('SmallTree1',  600, 2110,  80, 110, 0.5);
+    img('SmallTree2',  200,  980,  70,  95, 0.5);
+    img('SmallTree1',  180, 1360,  70,  95, 0.5);
+    img('SmallTree2',  170, 1860,  70,  95, 0.5);
+    // Red jungle (mirrored)
+    img('Tree1',      2960, 2970, 150, 200, 0.5);
+    img('Tree2',      2640, 2660, 110, 150, 0.5);
+    img('SmallTree1', 2490, 2560,  85, 115, 0.5);
+    img('SmallTree2', 2400, 2600,  80, 110, 0.5);
+    img('SmallTree1', 2370, 2040,  80, 110, 0.5);
+    img('SmallTree2', 2330, 2100,  75, 105, 0.5);
+    img('SmallTree1', 2140, 1650,  80, 110, 0.5);
+    img('SmallTree2', 1950, 1640,  75, 100, 0.5);
+    img('SmallTree1', 2600, 1090,  80, 110, 0.5);
+    img('SmallTree2', 3000, 2220,  70,  95, 0.5);
+    img('SmallTree1', 3020, 1820,  70,  95, 0.5);
+    img('SmallTree2', 3030, 1340,  70,  95, 0.5);
 
     // ── Inhibitors — one per lane, just inside each base ─────────────────
-    // Blue base (crystal at 400,2800). Approaches: top from y-axis, mid diagonal, bot from x-axis
-    img('InibidorBlue', 400, 2560, 70, 100, 1.5);   // top lane
-    img('InibidorBlue', 640, 2720, 70, 100, 1.5);   // mid lane
-    img('InibidorBlue', 900, 2800, 70, 100, 1.5);   // bot lane
-    // Red base (crystal at 2800,400)
-    img('InibidorRed', 2100, 400,  70, 100, 1.5);   // top lane
-    img('InibidorRed', 2640, 640,  70, 100, 1.5);   // mid lane
-    img('InibidorRed', 2800, 900,  70, 100, 1.5);   // bot lane
+    img('InibidorBlue', 400, 2560, 70, 100, 1.5);
+    img('InibidorBlue', 640, 2720, 70, 100, 1.5);
+    img('InibidorBlue', 900, 2800, 70, 100, 1.5);
+    img('InibidorRed',  2100, 400,  70, 100, 1.5);
+    img('InibidorRed',  2640, 640,  70, 100, 1.5);
+    img('InibidorRed',  2800, 900,  70, 100, 1.5);
 
-    // ── Bushes (strategic LoL-style) ──────────────────────────────────────
-    // Radius is the vision-blocking circle; display size is larger for visual presence
+    // ── Bushes — LoL-accurate strategic vision zones ──────────────────────
     const bushDefs: { key: string; x: number; y: number; r: number; w: number; h: number }[] = [
-      // Top lane (left vertical segment)
-      { key: 'Bush1', x: 400,  y: 1900, r: 90,  w: 180, h: 130 },
-      { key: 'Bush2', x: 230,  y: 1230, r: 80,  w: 160, h: 115 },
+      // Top lane — left vertical
+      { key: 'Bush1', x: 300,  y: 1900, r: 90,  w: 180, h: 130 },
+      { key: 'Bush2', x: 220,  y: 1230, r: 80,  w: 160, h: 115 },
       { key: 'Bush1', x: 210,  y: 940,  r: 75,  w: 150, h: 110 },
-      // Mid lane (diagonal)
-      { key: 'Bush2', x: 960,  y: 2060, r: 90,  w: 175, h: 125 },
-      { key: 'Bush1', x: 1300, y: 1700, r: 85,  w: 170, h: 120 },
-      { key: 'Bush2', x: 1700, y: 1300, r: 85,  w: 170, h: 120 },
-      { key: 'Bush1', x: 2040, y: 940,  r: 90,  w: 175, h: 125 },
-      // Bot lane (bottom horizontal + right vertical)
-      { key: 'Bush2', x: 1900, y: 2800, r: 90,  w: 180, h: 130 },
-      { key: 'Bush1', x: 2280, y: 2960, r: 80,  w: 160, h: 115 },
-      { key: 'Bush2', x: 2960, y: 2280, r: 75,  w: 150, h: 110 },
-      // River / center objectives (high-value ambush spots)
-      { key: 'Bush1', x: 1150, y: 1150, r: 100, w: 195, h: 140 },
-      { key: 'Bush2', x: 2050, y: 2050, r: 100, w: 195, h: 140 },
-      { key: 'Bush1', x: 1420, y: 1750, r: 80,  w: 160, h: 115 },
-      { key: 'Bush2', x: 1780, y: 1420, r: 80,  w: 160, h: 115 },
+      // Top lane — horizontal segment
+      { key: 'Bush2', x: 900,  y: 300,  r: 80,  w: 160, h: 110 },
+      { key: 'Bush1', x: 1800, y: 300,  r: 80,  w: 160, h: 110 },
+      // Mid lane bushes (LoL tri-brush equivalent)
+      { key: 'Bush2', x: 900,  y: 2050, r: 90,  w: 175, h: 125 },
+      { key: 'Bush1', x: 1250, y: 1750, r: 85,  w: 170, h: 120 },
+      { key: 'Bush1', x: 1950, y: 1450, r: 85,  w: 170, h: 120 },
+      { key: 'Bush2', x: 2300, y: 1150, r: 90,  w: 175, h: 125 },
+      // Bot lane — horizontal segment
+      { key: 'Bush2', x: 1000, y: 2900, r: 80,  w: 160, h: 110 },
+      { key: 'Bush1', x: 1900, y: 2900, r: 80,  w: 160, h: 110 },
+      // Bot lane — right vertical
+      { key: 'Bush2', x: 2900, y: 1300, r: 90,  w: 180, h: 130 },
+      { key: 'Bush1', x: 2980, y: 940,  r: 75,  w: 150, h: 110 },
+      { key: 'Bush2', x: 2780, y: 1900, r: 80,  w: 160, h: 115 },
+      // River ambush bushes (near dragon/baron pits)
+      { key: 'Bush1', x: 1100, y: 1100, r: 100, w: 195, h: 140 },
+      { key: 'Bush2', x: 2100, y: 2100, r: 100, w: 195, h: 140 },
+      // Jungle entrances
+      { key: 'Bush1', x: 680,  y: 870,  r: 75,  w: 150, h: 110 },
+      { key: 'Bush2', x: 2520, y: 2330, r: 75,  w: 150, h: 110 },
     ];
 
     this.mobaBushZones = bushDefs.map(b => ({ x: b.x, y: b.y, r: b.r }));

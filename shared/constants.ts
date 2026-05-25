@@ -592,7 +592,68 @@ export const MOBA_TOWERS: {
 
 // Minion lane waypoints: Blue follows in order; Red follows reversed
 export const MOBA_LANE_WAYPOINTS: { x: number; y: number }[][] = [
-  [{ x: 400, y: 2800 }, { x: 400,  y: 400  }, { x: 2800, y: 400  }], // top
-  [{ x: 400, y: 2800 }, { x: 1600, y: 1600 }, { x: 2800, y: 400  }], // mid
-  [{ x: 400, y: 2800 }, { x: 2800, y: 2800 }, { x: 2800, y: 400  }], // bot
+  // top lane: up left side then across top
+  [
+    { x: 400,  y: 2800 }, { x: 400,  y: 2400 }, { x: 400,  y: 1600 },
+    { x: 400,  y: 800  }, { x: 400,  y: 400  }, { x: 800,  y: 400  },
+    { x: 1600, y: 400  }, { x: 2400, y: 400  }, { x: 2800, y: 400  },
+  ],
+  // mid lane: straight diagonal
+  [
+    { x: 400,  y: 2800 }, { x: 700,  y: 2500 }, { x: 1000, y: 2200 },
+    { x: 1300, y: 1900 }, { x: 1600, y: 1600 }, { x: 1900, y: 1300 },
+    { x: 2200, y: 1000 }, { x: 2500, y: 700  }, { x: 2800, y: 400  },
+  ],
+  // bot lane: across bottom then up right side
+  [
+    { x: 400,  y: 2800 }, { x: 800,  y: 2800 }, { x: 1600, y: 2800 },
+    { x: 2400, y: 2800 }, { x: 2800, y: 2800 }, { x: 2800, y: 2400 },
+    { x: 2800, y: 1600 }, { x: 2800, y: 800  }, { x: 2800, y: 400  },
+  ],
+];
+
+// ── MOBA jungle collision walls ───────────────────────────────────────────
+export type CollisionRect = { x: number; y: number; w: number; h: number };
+
+// Tree walls that create labyrinth-style jungle corridors.
+// Blue side defined first; red side is the point-mirror at map center (3200,3200):
+//   mirror(rect) = { x: 3200-rect.x-rect.w, y: 3200-rect.y-rect.h, w: rect.w, h: rect.h }
+export const MOBA_COLLISION_RECTS: CollisionRect[] = [
+  // ── Blue jungle (between top lane and mid lane, left side) ──────────
+  // Baron Nashor pit — north + west + east walls; entrance gap at south (x 600-760)
+  { x: 500,  y: 500,  w: 360, h: 100 },
+  { x: 500,  y: 600,  w: 100, h: 300 },
+  { x: 760,  y: 600,  w: 100, h: 300 },
+  // Gromp corner cluster
+  { x: 80,   y: 680,  w: 300, h: 100 },
+  // Blue buff separator walls
+  { x: 580,  y: 1100, w: 100, h: 300 },
+  { x: 880,  y: 1000, w: 100, h: 380 },
+  // Raptors pit — top + west + east walls
+  { x: 1000, y: 1480, w: 340, h: 100 },
+  { x: 1000, y: 1580, w: 100, h: 240 },
+  { x: 1240, y: 1580, w: 100, h: 240 },
+  // Krugs area
+  { x: 540,  y: 2060, w: 340, h: 100 },
+  { x: 540,  y: 2160, w: 100, h: 220 },
+  // Outer jungle edge walls
+  { x: 80,   y: 900,  w: 220, h: 100 },
+  { x: 80,   y: 1300, w: 220, h: 100 },
+  { x: 80,   y: 1800, w: 220, h: 100 },
+
+  // ── Red jungle (point-mirror of blue) ───────────────────────────────
+  { x: 2340, y: 2600, w: 360, h: 100 },
+  { x: 2600, y: 2300, w: 100, h: 300 },
+  { x: 2340, y: 2300, w: 100, h: 300 },
+  { x: 2820, y: 2420, w: 300, h: 100 },
+  { x: 2520, y: 1800, w: 100, h: 300 },
+  { x: 2220, y: 1820, w: 100, h: 380 },
+  { x: 1860, y: 1620, w: 340, h: 100 },
+  { x: 2100, y: 1380, w: 100, h: 240 },
+  { x: 1860, y: 1380, w: 100, h: 240 },
+  { x: 2320, y: 1040, w: 340, h: 100 },
+  { x: 2560, y:  820, w: 100, h: 220 },
+  { x: 2900, y: 2200, w: 220, h: 100 },
+  { x: 2900, y: 1800, w: 220, h: 100 },
+  { x: 2900, y: 1300, w: 220, h: 100 },
 ];

@@ -89,6 +89,8 @@ import {
   MOBA_RED_CRYSTAL,
   MOBA_TOWERS,
   MOBA_LANE_WAYPOINTS,
+  MOBA_COLLISION_RECTS,
+  type CollisionRect,
   ARAM_PLAYER_MAX,
   ARAM_TOWER_HP,
   ARAM_CRYSTAL_HP,
@@ -1613,6 +1615,10 @@ export default class GameServer implements Party.Server {
       const speed = Math.min(rawSpeed, PLAYER_SPEED * 2.8);
       p.x = clamp(p.x + p.input.dx * speed * dt, PLAYER_RADIUS, ARENA_WIDTH - PLAYER_RADIUS);
       p.y = clamp(p.y + p.input.dy * speed * dt, PLAYER_RADIUS, ARENA_HEIGHT - PLAYER_RADIUS);
+      if (this.gameMode === 'moba') {
+        const col = resolveCollision(p.x, p.y, PLAYER_RADIUS, MOBA_COLLISION_RECTS);
+        p.x = col.x; p.y = col.y;
+      }
 
       // Elemental arena effects
       if (this.arenaElement === 'lava') {
@@ -2963,6 +2969,8 @@ export default class GameServer implements Party.Server {
               n.y += (dy / dist) * capped * dt;
               n.x = clamp(n.x, 20, ARENA_WIDTH - 20);
               n.y = clamp(n.y, 20, ARENA_HEIGHT - 20);
+              const col = resolveCollision(n.x, n.y, NPC_RADIUS, MOBA_COLLISION_RECTS);
+              n.x = col.x; n.y = col.y;
             }
           }
 
@@ -4121,6 +4129,32 @@ export default class GameServer implements Party.Server {
 
 function clamp(v: number, lo: number, hi: number) {
   return v < lo ? lo : v > hi ? hi : v;
+}
+
+function resolveCollision(x: number, y: number, r: number, rects: CollisionRect[]): { x: number; y: number } {
+  let nx = x, ny = y;
+  for (const rect of rects) {
+    const closestX = Math.max(rect.x, Math.min(nx, rect.x + rect.w));
+    const closestY = Math.max(rect.y, Math.min(ny, rect.y + rect.h));
+    const dx = nx - closestX;
+    const dy = ny - closestY;
+    const dist2 = dx * dx + dy * dy;
+    if (dist2 === 0) {
+      // Center inside rect — push to nearest edge
+      const dL = nx - rect.x, dR = rect.x + rect.w - nx;
+      const dT = ny - rect.y, dB = rect.y + rect.h - ny;
+      const m = Math.min(dL, dR, dT, dB);
+      if (m === dL)      nx = rect.x - r;
+      else if (m === dR) nx = rect.x + rect.w + r;
+      else if (m === dT) ny = rect.y - r;
+      else               ny = rect.y + rect.h + r;
+    } else if (dist2 < r * r) {
+      const dist = Math.sqrt(dist2);
+      nx += (dx / dist) * (r - dist);
+      ny += (dy / dist) * (r - dist);
+    }
+  }
+  return { x: nx, y: ny };
 }
 
 // Pick N anchor points around a player position (so hordes converge on them).
