@@ -1634,34 +1634,6 @@ export class ArenaScene extends Phaser.Scene {
           g.setAngle(((clientNow * 0.02) % 360));
           break;
         }
-        case 'magnet': {
-          // Large teal orb with rotating field arcs — the rarest pickup
-          const mr = 18 * pulse;
-          g.setBlendMode(Phaser.BlendModes.ADD);
-          g.fillStyle(0x00eeff, 0.18);
-          g.fillCircle(0, 0, mr + 14);
-          g.fillStyle(0x00ccdd, 0.50);
-          g.fillCircle(0, 0, mr + 5);
-          g.fillStyle(0x44ffee, 0.88);
-          g.fillCircle(0, 0, mr);
-          g.fillStyle(0xffffff, 1.0);
-          g.fillCircle(0, 0, mr * 0.32);
-          // Rotating outer arcs (field lines)
-          const rotA = (clientNow * 0.0018);
-          g.lineStyle(2, 0x88ffff, 0.85);
-          for (let i = 0; i < 6; i++) {
-            const a = (i / 6) * Math.PI * 2 + rotA;
-            g.lineBetween(Math.cos(a) * mr, Math.sin(a) * mr, Math.cos(a) * (mr + 11), Math.sin(a) * (mr + 11));
-          }
-          // Counter-rotating inner arcs
-          g.lineStyle(2, 0x00ffcc, 0.65);
-          for (let i = 0; i < 4; i++) {
-            const a = (i / 4) * Math.PI * 2 - rotA * 1.5;
-            g.lineBetween(Math.cos(a) * (mr * 0.42), Math.sin(a) * (mr * 0.42), Math.cos(a) * (mr * 0.78), Math.sin(a) * (mr * 0.78));
-          }
-          g.setScale(pulse);
-          break;
-        }
       }
     }
     // Clean up visuals for collected/expired pickups

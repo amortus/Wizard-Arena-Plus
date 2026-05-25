@@ -7,7 +7,6 @@ import {
   GEM_RADIUS,
   PICKUP_RADIUS,
   PICKUP_LIFETIME_MS,
-  MAGNET_RADIUS,
   MIN_SAFE_SPAWN_DIST,
   LEVEL_DAMAGE_CAP_LEVELS,
   LEVEL_DAMAGE_MUL,
@@ -2292,35 +2291,42 @@ export default class GameServer implements Party.Server {
       : Math.max(0, WAVE_DURATION_MS + WAVE_COOLDOWN_MS - (now - p.pwWaveStartedAt));
   }
 
-  // Ensure a spawn point is at least MIN_SAFE_SPAWN_DIST away from every alive player.
-  // If not, push it radially away from the nearest player. Tries up to 3 random offsets
-  // before falling back to the hard push, so formations stay roughly intact.
+  // Ensure a spawn point is at least MIN_SAFE_SPAWN_DIST from EVERY alive player.
+  // Checks all players simultaneously — single-player push could land on a second player.
   safeSpawnPos(x: number, y: number): { x: number; y: number } {
     const minDist = MIN_SAFE_SPAWN_DIST;
-    for (let attempt = 0; attempt < 3; attempt++) {
-      let nearest: ServerPlayer | null = null;
-      let nearestDist = Infinity;
-      for (const p of this.players.values()) {
-        if (!p.alive) continue;
-        const d = Math.hypot(p.x - x, p.y - y);
-        if (d < nearestDist) { nearestDist = d; nearest = p; }
-      }
-      if (!nearest || nearestDist >= minDist) break;
-      if (attempt < 2) {
-        // Try a random push away from the nearest player
-        const angle = Math.random() * Math.PI * 2;
-        x = clamp(nearest.x + Math.cos(angle) * (minDist + 40 + Math.random() * 80), 20, ARENA_WIDTH - 20);
-        y = clamp(nearest.y + Math.sin(angle) * (minDist + 40 + Math.random() * 80), 20, ARENA_HEIGHT - 20);
-      } else {
-        // Hard push: move directly away from nearest player to exactly minDist
-        const dx = x - nearest.x;
-        const dy = y - nearest.y;
-        const len = Math.hypot(dx, dy) || 1;
-        x = clamp(nearest.x + (dx / len) * minDist, 20, ARENA_WIDTH - 20);
-        y = clamp(nearest.y + (dy / len) * minDist, 20, ARENA_HEIGHT - 20);
-      }
+    const alive = [...this.players.values()].filter(p => p.alive);
+    if (alive.length === 0) return { x, y };
+
+    const isClear = (tx: number, ty: number) =>
+      alive.every(p => Math.hypot(p.x - tx, p.y - ty) >= minDist);
+
+    if (isClear(x, y)) return { x, y };
+
+    // Try 8 random pushes, each time sampling a random alive player as the repulsion center
+    for (let i = 0; i < 8; i++) {
+      const ref = alive[Math.floor(Math.random() * alive.length)];
+      const angle = Math.random() * Math.PI * 2;
+      const dist = minDist + 60 + Math.random() * 120;
+      const tx = clamp(ref.x + Math.cos(angle) * dist, 20, ARENA_WIDTH - 20);
+      const ty = clamp(ref.y + Math.sin(angle) * dist, 20, ARENA_HEIGHT - 20);
+      if (isClear(tx, ty)) return { x: tx, y: ty };
     }
-    return { x, y };
+
+    // Hard fallback: push directly away from the nearest player
+    let nearest = alive[0];
+    let nearestDist = Math.hypot(alive[0].x - x, alive[0].y - y);
+    for (const p of alive) {
+      const d = Math.hypot(p.x - x, p.y - y);
+      if (d < nearestDist) { nearestDist = d; nearest = p; }
+    }
+    const fdx = x !== nearest.x ? x - nearest.x : 1;
+    const fdy = x !== nearest.x ? y - nearest.y : 0;
+    const flen = Math.hypot(fdx, fdy) || 1;
+    return {
+      x: clamp(nearest.x + (fdx / flen) * (minDist + 20), 20, ARENA_WIDTH - 20),
+      y: clamp(nearest.y + (fdy / flen) * (minDist + 20), 20, ARENA_HEIGHT - 20),
+    };
   }
 
   spawnInWave(p: ServerPlayer) {
@@ -3296,20 +3302,12 @@ export default class GameServer implements Party.Server {
       if (killer) killer.bossKills = (killer.bossKills ?? 0) + 1;
       for (let i = 0; i < 15; i++) this.dropGem(n.x, n.y, 5);
       for (let i = 0; i < 5; i++) this.dropGem(n.x, n.y, 10);
-      // Drop the annihilate + a magnet pickup so the nova gems are collectable
+      // Drop the annihilate pickup so the nova gems are collectable
       const now2 = Date.now();
       const aid = genId('pickup');
       this.pickups.set(aid, {
         id: aid, kind: 'annihilate',
         x: n.x, y: n.y,
-        expiresAt: now2 + 15_000,
-      });
-      const mid = genId('pickup');
-      const mAngle = Math.random() * Math.PI * 2;
-      this.pickups.set(mid, {
-        id: mid, kind: 'magnet',
-        x: n.x + Math.cos(mAngle) * 220,
-        y: n.y + Math.sin(mAngle) * 220,
         expiresAt: now2 + 15_000,
       });
       // Do NOT null activeBossId here — maybeSpawnBoss() detects the dead boss
@@ -4086,26 +4084,6 @@ export default class GameServer implements Party.Server {
         this.npcs.clear();
         this.bossProjectiles.clear();
         this.room.broadcast(JSON.stringify({ type: 'nova' } satisfies ServerToClient));
-        break;
-      }
-      case 'magnet': {
-        // Pull and instantly collect all pickups + gems within MAGNET_RADIUS
-        const r2 = MAGNET_RADIUS * MAGNET_RADIUS;
-        const toCollect: string[] = [];
-        for (const [pid, pk] of this.pickups) {
-          if (pk.kind === 'magnet') continue; // no recursion
-          if ((p.x - pk.x) ** 2 + (p.y - pk.y) ** 2 < r2) toCollect.push(pid);
-        }
-        for (const pid of toCollect) {
-          const pk = this.pickups.get(pid);
-          if (pk) { this.applyPickup(p, pk, now); this.pickups.delete(pid); }
-        }
-        for (const [gid, gem] of this.gems) {
-          if ((p.x - gem.x) ** 2 + (p.y - gem.y) ** 2 < r2) {
-            p.xp += gem.value * p.xpMul;
-            this.gems.delete(gid);
-          }
-        }
         break;
       }
     }

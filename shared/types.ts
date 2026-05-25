@@ -36,7 +36,7 @@ export type CastleState = {
   y: number;
 };
 
-export type PickupKind = 'health' | 'speed' | 'damage' | 'shield' | 'cooldown' | 'berserker' | 'annihilate' | 'magnet';
+export type PickupKind = 'health' | 'speed' | 'damage' | 'shield' | 'cooldown' | 'berserker' | 'annihilate';
 
 export type PickupState = {
   id: string;
