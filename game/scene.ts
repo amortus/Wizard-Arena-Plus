@@ -2167,9 +2167,12 @@ export class ArenaScene extends Phaser.Scene {
           ARENA_HEIGHT - PLAYER_RADIUS,
         );
 
-        // Bleed accumulated reconciliation correction at 40% per frame (~2-3 frames to converge).
-        // Fast bleed ensures stale corrections from the old movement direction clear before
-        // the next server snapshot arrives (server ticks at 50Hz = ~1.2 render frames apart).
+        // Drop any correction component that opposes the current input direction —
+        // this eliminates the "drag" feeling when changing direction.
+        if (this.inputDx !== 0 && this.corrX * this.inputDx < 0) this.corrX = 0;
+        if (this.inputDy !== 0 && this.corrY * this.inputDy < 0) this.corrY = 0;
+
+        // Bleed remaining correction (same-direction or perpendicular) at 40%/frame.
         if (this.corrX !== 0 || this.corrY !== 0) {
           const bleedX = this.corrX * 0.4;
           const bleedY = this.corrY * 0.4;
