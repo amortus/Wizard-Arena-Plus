@@ -254,6 +254,9 @@ type ServerNpc = NPCState & {
   bossPhaseNum?: 0 | 1 | 2;   // 0=normal, 1=enraged(<60%), 2=desperation(<25%)
   bossComboIdx?: number;       // 0|1|2 — position in 3-pattern combo sequence
   bossComboFireAt?: number;    // next combo fire time
+  // MOBA/ARAM minion combat
+  minionCombatTarget?: string | null; // id of enemy minion currently fighting
+  minionLastAttackAt?: number;        // epoch ms of last minion-vs-minion attack
 };
 
 type ServerHazard = HazardState & {
@@ -2887,7 +2890,50 @@ export default class GameServer implements Party.Server {
           const enemyTeam: MobaTeam = minionTeam === 'blue' ? 'red' : 'blue';
           const wpData = this.mobaMinionWaypoints.get(n.id);
 
-          if (wpData) {
+          // Minion vs minion combat — stop and fight nearby enemies before advancing
+          const MINION_AGGRO_RANGE = 80;
+          const MINION_ATTACK_RANGE = 40;
+          const MINION_ATTACK_COOLDOWN = 800;
+          const MINION_DAMAGE = 12;
+          // Validate existing combat target
+          if (n.minionCombatTarget) {
+            const ct = this.npcs.get(n.minionCombatTarget);
+            if (!ct || ct.hp <= 0 || ct.ownerPlayerId === minionTeam) n.minionCombatTarget = null;
+          }
+          // Acquire new target if none
+          if (!n.minionCombatTarget) {
+            let nearest: ServerNpc | null = null;
+            let nearestD = MINION_AGGRO_RANGE;
+            for (const en of this.npcs.values()) {
+              if (en.ownerPlayerId !== enemyTeam || en.ai !== 'moba_march') continue;
+              const d = Math.hypot(en.x - n.x, en.y - n.y);
+              if (d < nearestD) { nearestD = d; nearest = en; }
+            }
+            if (nearest) n.minionCombatTarget = nearest.id;
+          }
+          // If in combat — attack and skip waypoint advance
+          if (n.minionCombatTarget) {
+            const target = this.npcs.get(n.minionCombatTarget);
+            if (target) {
+              const td = Math.hypot(target.x - n.x, target.y - n.y);
+              if (td > MINION_ATTACK_RANGE) {
+                // Walk toward enemy minion
+                const capped = Math.min(spd, PLAYER_SPEED * NPC_SPEED_CAP_FRAC);
+                n.x += ((target.x - n.x) / td) * capped * dt;
+                n.y += ((target.y - n.y) / td) * capped * dt;
+              } else if (now >= (n.minionLastAttackAt ?? 0) + MINION_ATTACK_COOLDOWN) {
+                target.hp -= MINION_DAMAGE;
+                n.minionLastAttackAt = now;
+                if (target.hp <= 0) {
+                  this.npcs.delete(target.id);
+                  this.mobaMinionWaypoints.delete(target.id);
+                  n.minionCombatTarget = null;
+                }
+              }
+            }
+          }
+
+          if (wpData && !n.minionCombatTarget) {
             const wp = wpData.waypoints[wpData.waypointIdx];
             const dx = wp.x - n.x;
             const dy = wp.y - n.y;

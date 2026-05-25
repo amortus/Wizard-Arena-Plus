@@ -264,6 +264,10 @@ export class ArenaScene extends Phaser.Scene {
 
   // client-side prediction for self
   predictedSelf?: { x: number; y: number };
+  // pending reconciliation correction — bled into predictedSelf gradually each frame
+  // instead of applied all at once, eliminating the direction-change stutter
+  corrX = 0;
+  corrY = 0;
   // smoothed camera target — lerps toward predictedSelf to absorb reconciliation jolts
   camX?: number;
   camY?: number;
@@ -978,20 +982,24 @@ export class ArenaScene extends Phaser.Scene {
             this.predictedSelf = { x: self.x, y: self.y };
             this.camX = self.x;
             this.camY = self.y;
+            this.corrX = 0;
+            this.corrY = 0;
           } else {
             const dx = self.x - this.predictedSelf.x;
             const dy = self.y - this.predictedSelf.y;
             const drift = Math.hypot(dx, dy);
             if (drift > 80) {
-              // hard snap on big drift (knockback, respawn, teleport) — reset camera too
+              // hard snap on big drift (knockback, respawn, teleport) — reset everything
               this.predictedSelf.x = self.x;
               this.predictedSelf.y = self.y;
               this.camX = self.x;
               this.camY = self.y;
+              this.corrX = 0;
+              this.corrY = 0;
             } else {
-              // soft correct ~20% per snapshot
-              this.predictedSelf.x += dx * 0.2;
-              this.predictedSelf.y += dy * 0.2;
+              // Accumulate correction — bled per-frame in handleInput instead of instant snap
+              this.corrX += dx * 0.2;
+              this.corrY += dy * 0.2;
             }
           }
         } else {
@@ -2129,6 +2137,20 @@ export class ArenaScene extends Phaser.Scene {
           PLAYER_RADIUS,
           ARENA_HEIGHT - PLAYER_RADIUS,
         );
+
+        // Bleed accumulated reconciliation correction at ~15% per frame (~6 frames to converge).
+        // This spreads the correction over ~100ms instead of snapping in one frame.
+        if (this.corrX !== 0 || this.corrY !== 0) {
+          const bleedX = this.corrX * 0.15;
+          const bleedY = this.corrY * 0.15;
+          this.predictedSelf.x = clamp(this.predictedSelf.x + bleedX, PLAYER_RADIUS, ARENA_WIDTH - PLAYER_RADIUS);
+          this.predictedSelf.y = clamp(this.predictedSelf.y + bleedY, PLAYER_RADIUS, ARENA_HEIGHT - PLAYER_RADIUS);
+          this.corrX -= bleedX;
+          this.corrY -= bleedY;
+          // Clamp to zero once negligibly small
+          if (Math.abs(this.corrX) < 0.05) this.corrX = 0;
+          if (Math.abs(this.corrY) < 0.05) this.corrY = 0;
+        }
       }
     }
 
@@ -3233,7 +3255,7 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   makePlayerContainer(p: PlayerState) {
-    const container = this.add.container(p.x, p.y);
+    const container = this.add.container(p.x, p.y).setDepth(10);
     const charScale = (PLAYER_SPRITE_SCALE[p.character] ?? 1.0) * SPRITE_SHRINK;
     const body = this.add.sprite(0, 0, `${p.character}_${p.facing}`).setName('body').setScale(charScale);
     body.setTint(hueToTint(p.hue ?? 0));
