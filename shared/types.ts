@@ -214,6 +214,9 @@ export type Snapshot = {
   roomWave?: number;
   towers?: TowerState[];
   mobaCrystals?: MobaCrystalState[];
+  activeBossId?: string;
+  bossMaxHp?: number;
+  bossHp?: number;
 };
 
 export type LeaderboardEntry = {

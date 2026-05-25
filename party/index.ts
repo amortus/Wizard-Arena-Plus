@@ -1571,7 +1571,6 @@ export default class GameServer implements Party.Server {
       this.scheduleBeams(now);
       this.scheduleBeamCurtain(now);
       this.updateHazards(now);
-      this.checkArenaElement();
     }
 
     this.updateBlackHoles(now);
@@ -1610,19 +1609,13 @@ export default class GameServer implements Party.Server {
     void now;
     for (const p of this.players.values()) {
       if (!p.alive) continue;
-      const rawSpeed = PLAYER_SPEED * p.speedMul * (p.inSlowZone ? 0.45 : 1) * (wallNow < p.speedBoostUntil ? 1.7 : 1) * (this.arenaElement === 'ice' ? 0.75 : 1);
+      const rawSpeed = PLAYER_SPEED * p.speedMul * (p.inSlowZone ? 0.45 : 1) * (wallNow < p.speedBoostUntil ? 1.7 : 1);
       const speed = Math.min(rawSpeed, PLAYER_SPEED * 2.8);
       p.x = clamp(p.x + p.input.dx * speed * dt, PLAYER_RADIUS, ARENA_WIDTH - PLAYER_RADIUS);
       p.y = clamp(p.y + p.input.dy * speed * dt, PLAYER_RADIUS, ARENA_HEIGHT - PLAYER_RADIUS);
       if (this.gameMode === 'moba') {
         const col = resolveCollision(p.x, p.y, PLAYER_RADIUS, MOBA_COLLISION_RECTS);
         p.x = col.x; p.y = col.y;
-      }
-
-      // Elemental arena effects
-      if (this.arenaElement === 'lava') {
-        p.hp -= 1 * dt; // 1 HP/s passive lava damage
-        if (p.hp <= 0) this.killPlayer(p, '__hazard__');
       }
 
       // passive HP regen always allowed
@@ -3297,11 +3290,14 @@ export default class GameServer implements Party.Server {
         this.nextDragonAllowedAt = Date.now() + 60_000;
       }
     } else if (n.id === this.activeBossId) {
-      // Unique roster boss — big feast
+      // Unique roster boss — big feast scaled by difficulty
       const killer = killerId ? this.players.get(killerId) : undefined;
       if (killer) killer.bossKills = (killer.bossKills ?? 0) + 1;
-      for (let i = 0; i < 15; i++) this.dropGem(n.x, n.y, 5);
-      for (let i = 0; i < 5; i++) this.dropGem(n.x, n.y, 10);
+      const hpMul = MONSTER_BASES[n.kind]?.hpMul ?? 8;
+      const bigCount = Math.max(10, Math.round(hpMul * 2.5));
+      const midCount = Math.max(5, Math.round(hpMul * 1.2));
+      for (let i = 0; i < bigCount; i++) this.dropGem(n.x, n.y, 10);
+      for (let i = 0; i < midCount; i++) this.dropGem(n.x, n.y, 5);
       // Drop the annihilate pickup so the nova gems are collectable
       const now2 = Date.now();
       const aid = genId('pickup');
@@ -3313,17 +3309,15 @@ export default class GameServer implements Party.Server {
       // Do NOT null activeBossId here — maybeSpawnBoss() detects the dead boss
       // on next tick and handles cooldown + roster advance atomically.
     } else if (n.id === this.miniBossId) {
-      for (let i = 0; i < 5; i++) this.dropGem(n.x, n.y, 3);
-      for (let i = 0; i < 2; i++) this.dropGem(n.x, n.y, 5);
-      this.dropGem(n.x, n.y, 10);
+      for (let i = 0; i < 4; i++) this.dropGem(n.x, n.y, 10);
+      for (let i = 0; i < 8; i++) this.dropGem(n.x, n.y, 5);
       this.miniBossId = null;
     } else {
       const tier = MONSTER_BASES[n.kind].tier;
       if (tier === 'boss') {
-        // Wave boss drops — many greens + golds + epic
-        for (let i = 0; i < 6; i++) this.dropGem(n.x, n.y, 3);
-        for (let i = 0; i < 2; i++) this.dropGem(n.x, n.y, 5);
-        this.dropGem(n.x, n.y, 10);
+        // Wave boss drops
+        for (let i = 0; i < 8; i++) this.dropGem(n.x, n.y, 5);
+        for (let i = 0; i < 4; i++) this.dropGem(n.x, n.y, 10);
       } else if (tier === 'elite') {
         // Elites always drop 2 greens, often a gold
         for (let i = 0; i < 2; i++) this.dropGem(n.x, n.y, 3);
@@ -3704,6 +3698,9 @@ export default class GameServer implements Party.Server {
       roomWave: this.gameMode === 'castle' ? this.castleWave : undefined,
       towers: this.gameMode === 'moba' ? towers : undefined,
       mobaCrystals: this.gameMode === 'moba' ? mobaCrystals : undefined,
+      activeBossId: this.activeBossId ?? undefined,
+      bossMaxHp: this.activeBossId ? (this.npcs.get(this.activeBossId) as any)?.baseHp ?? undefined : undefined,
+      bossHp: this.activeBossId ? this.npcs.get(this.activeBossId)?.hp ?? undefined : undefined,
     };
     this.room.broadcast(JSON.stringify(snap));
   }

@@ -53,6 +53,9 @@ export default function Game({ name, character, color, hue, room, country, roomN
     gameMode?: GameMode;
     towers?: TowerState[];
     mobaCrystals?: MobaCrystalState[];
+    activeBossId?: string;
+    bossMaxHp?: number;
+    bossHp?: number;
   }>({ players: [] });
   const [castleDestroyed, setCastleDestroyed] = useState(false);
   const [mobaVictory, setMobaVictory] = useState<MobaTeam | null>(null);
@@ -71,7 +74,6 @@ export default function Game({ name, character, color, hue, room, country, roomN
   const [bossAlert, setBossAlert] = useState<string | null>(null);
   const [inSmoke, setInSmoke] = useState(false);
   const [novaFlash, setNovaFlash] = useState(false);
-  const [arenaElement, setArenaElement] = useState<'normal' | 'lava' | 'ice' | 'fog'>('normal');
   // Track latest hud.self level/wave/bossKills so the 'died' handler can read them
   // synchronously (the bus.on closure would otherwise capture an empty hud).
   const lastSelfRef = useRef<{ level: number; wave: number; bossKills: number } | null>(null);
@@ -121,7 +123,6 @@ export default function Game({ name, character, color, hue, room, country, roomN
         setTimeout(() => setBossAlert(null), 3500);
       });
       result.scene.bus.on('smokeZone', (inside: boolean) => setInSmoke(inside));
-      result.scene.bus.on('arenaElement', (el: 'normal' | 'lava' | 'ice' | 'fog') => setArenaElement(el));
       result.scene.bus.on('authError', (reason: string) => setAuthError(reason));
       result.scene.bus.on('nova', () => {
         setNovaFlash(true);
@@ -284,21 +285,35 @@ export default function Game({ name, character, color, hue, room, country, roomN
 
       {hud.gameMode !== 'moba' && hud.gameMode !== 'aram' && <div className="top-bar">
         <div className="top-bar-level">L{hud.self?.level ?? 1}</div>
-        <div className="top-bar-xp">
-          <div
-            className="top-bar-xp-fill"
-            style={{
-              width: hud.self
-                ? `${Math.min(100, (hud.self.xp / Math.max(1, hud.self.xpToNext)) * 100)}%`
-                : '0%',
-            }}
-          />
-          <div className="top-bar-xp-text">
-            {hud.self
-              ? `${hud.self.xp} / ${hud.self.xpToNext} GEMS`
-              : 'connecting...'}
+        {hud.activeBossId && hud.bossMaxHp ? (
+          <div className="top-bar-xp top-bar-boss-hp">
+            <div
+              className="top-bar-boss-hp-fill"
+              style={{
+                width: `${Math.max(0, Math.min(100, ((hud.bossHp ?? 0) / hud.bossMaxHp) * 100))}%`,
+              }}
+            />
+            <div className="top-bar-xp-text">
+              {`${Math.max(0, Math.round(hud.bossHp ?? 0))} / ${Math.round(hud.bossMaxHp)} HP`}
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="top-bar-xp">
+            <div
+              className="top-bar-xp-fill"
+              style={{
+                width: hud.self
+                  ? `${Math.min(100, (hud.self.xp / Math.max(1, hud.self.xpToNext)) * 100)}%`
+                  : '0%',
+              }}
+            />
+            <div className="top-bar-xp-text">
+              {hud.self
+                ? `${hud.self.xp} / ${hud.self.xpToNext} GEMS`
+                : 'connecting...'}
+            </div>
+          </div>
+        )}
         <div className="top-bar-wave">
           <div className="top-bar-wave-num">
             {hud.wave ? `WAVE ${hud.wave}` : 'WAVE -'}
@@ -458,9 +473,6 @@ export default function Game({ name, character, color, hue, room, country, roomN
 
       {inSmoke && <div className="smoke-overlay" />}
       {novaFlash && <div className="nova-flash" />}
-      {arenaElement === 'lava' && <div className="arena-lava-overlay" />}
-      {arenaElement === 'ice'  && <div className="arena-ice-overlay"  />}
-      {arenaElement === 'fog'  && <div className="arena-fog-overlay"  />}
 
       {hud.self && (
         <div className="unit-frame">
@@ -483,10 +495,6 @@ export default function Game({ name, character, color, hue, room, country, roomN
             {hud.gameMode === 'aram' && (
               <div className="aram-char-badge">🎲 {hud.self.character.replace(/_/g, ' ')}</div>
             )}
-            <div className="unit-frame-spells">
-              {hud.self.weapons.join(' · ')}
-              {hud.self.projectileBonus > 0 ? ` +${hud.self.projectileBonus}` : ''}
-            </div>
             {(() => {
               const now = Date.now();
               const buffs: { icon: string; cls: string; until: number }[] = [];

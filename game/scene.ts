@@ -2876,6 +2876,9 @@ export class ArenaScene extends Phaser.Scene {
       gameMode: snap.gameMode,
       towers: snap.towers,
       mobaCrystals: snap.mobaCrystals,
+      activeBossId: snap.activeBossId,
+      bossMaxHp: snap.bossMaxHp,
+      bossHp: snap.bossHp,
     });
   }
 
