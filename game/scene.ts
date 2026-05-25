@@ -264,6 +264,9 @@ export class ArenaScene extends Phaser.Scene {
 
   // client-side prediction for self
   predictedSelf?: { x: number; y: number };
+  // smoothed camera target — lerps toward predictedSelf to absorb reconciliation jolts
+  camX?: number;
+  camY?: number;
 
   constructor(init: SceneInit) {
     super('arena');
@@ -973,14 +976,18 @@ export class ArenaScene extends Phaser.Scene {
           this.lastSelfSeenAt = arrivedAt;
           if (!this.predictedSelf) {
             this.predictedSelf = { x: self.x, y: self.y };
+            this.camX = self.x;
+            this.camY = self.y;
           } else {
             const dx = self.x - this.predictedSelf.x;
             const dy = self.y - this.predictedSelf.y;
             const drift = Math.hypot(dx, dy);
             if (drift > 80) {
-              // hard snap on big drift (knockback, respawn, teleport)
+              // hard snap on big drift (knockback, respawn, teleport) — reset camera too
               this.predictedSelf.x = self.x;
               this.predictedSelf.y = self.y;
+              this.camX = self.x;
+              this.camY = self.y;
             } else {
               // soft correct ~20% per snapshot
               this.predictedSelf.x += dx * 0.2;
@@ -2744,12 +2751,22 @@ export class ArenaScene extends Phaser.Scene {
       }
     }
 
-    // camera follow self — reuse already-found selfPlayer (no second .find())
+    // camera follow self — lerp toward predicted position to absorb reconciliation jolts
     const self = selfPlayer;
     if (self) {
-      const cx = this.predictedSelf?.x ?? self.x;
-      const cy = this.predictedSelf?.y ?? self.y;
-      this.cameras.main.centerOn(cx, cy);
+      const tx = this.predictedSelf?.x ?? self.x;
+      const ty = this.predictedSelf?.y ?? self.y;
+      if (this.camX === undefined || this.camY === undefined) {
+        // First frame — snap instantly
+        this.camX = tx;
+        this.camY = ty;
+      } else {
+        // Lerp at 0.25/frame (~4 frames to close 75% of gap). Fast enough to feel
+        // responsive, slow enough to smooth out the 2-5px reconciliation corrections.
+        this.camX += (tx - this.camX) * 0.25;
+        this.camY += (ty - this.camY) * 0.25;
+      }
+      this.cameras.main.centerOn(this.camX, this.camY);
     }
 
     // SFX: detect XP gain / HP loss / respawn for self
