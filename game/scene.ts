@@ -2332,8 +2332,16 @@ export class ArenaScene extends Phaser.Scene {
       // keep scale consistent if character changed (e.g. on respawn)
       const expectedScale = (PLAYER_SPRITE_SCALE[p.character] ?? 1.0) * SPRITE_SHRINK;
       if (Math.abs(body.scaleX - expectedScale) > 0.01) body.setScale(expectedScale);
-      const animKey = `${p.character}_walk_${p.facing}`;
-      const idleKey = `${p.character}_${p.facing}`;
+      // For self: derive facing from current client input so the sprite turns instantly
+      // on direction change instead of waiting for the server snapshot (moonwalk fix).
+      let facing = p.facing;
+      if (p.id === this.selfId && (this.inputDx !== 0 || this.inputDy !== 0)) {
+        const ax = Math.abs(this.inputDx), ay = Math.abs(this.inputDy);
+        facing = ax >= ay ? (this.inputDx > 0 ? 'east' : 'west')
+                           : (this.inputDy > 0 ? 'south' : 'north');
+      }
+      const animKey = `${p.character}_walk_${facing}`;
+      const idleKey = `${p.character}_${facing}`;
       if (moving && this.anims.exists(animKey)) {
         // play(key, ignoreIfPlaying) — ignoreIfPlaying=true means restart only if not already running
         body.anims.play(animKey, true);
