@@ -53,6 +53,7 @@ export const GEM_PICKUP_RADIUS = 60;
 export const PICKUP_RADIUS = 30;
 export const PICKUP_LIFETIME_MS = 30_000;
 export const MAGNET_RADIUS = 380;
+export const MIN_SAFE_SPAWN_DIST = 160; // minimum px between any spawn point and any alive player
 
 export const PROJECTILE_RADIUS = 6;
 export const PROJECTILE_LIFETIME_MS = 1500;

@@ -8,6 +8,7 @@ import {
   PICKUP_RADIUS,
   PICKUP_LIFETIME_MS,
   MAGNET_RADIUS,
+  MIN_SAFE_SPAWN_DIST,
   LEVEL_DAMAGE_CAP_LEVELS,
   LEVEL_DAMAGE_MUL,
   LEVEL_UP_INVULN_MS,
@@ -2282,6 +2283,37 @@ export default class GameServer implements Party.Server {
       : Math.max(0, WAVE_DURATION_MS + WAVE_COOLDOWN_MS - (now - p.pwWaveStartedAt));
   }
 
+  // Ensure a spawn point is at least MIN_SAFE_SPAWN_DIST away from every alive player.
+  // If not, push it radially away from the nearest player. Tries up to 3 random offsets
+  // before falling back to the hard push, so formations stay roughly intact.
+  safeSpawnPos(x: number, y: number): { x: number; y: number } {
+    const minDist = MIN_SAFE_SPAWN_DIST;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      let nearest: ServerPlayer | null = null;
+      let nearestDist = Infinity;
+      for (const p of this.players.values()) {
+        if (!p.alive) continue;
+        const d = Math.hypot(p.x - x, p.y - y);
+        if (d < nearestDist) { nearestDist = d; nearest = p; }
+      }
+      if (!nearest || nearestDist >= minDist) break;
+      if (attempt < 2) {
+        // Try a random push away from the nearest player
+        const angle = Math.random() * Math.PI * 2;
+        x = clamp(nearest.x + Math.cos(angle) * (minDist + 40 + Math.random() * 80), 20, ARENA_WIDTH - 20);
+        y = clamp(nearest.y + Math.sin(angle) * (minDist + 40 + Math.random() * 80), 20, ARENA_HEIGHT - 20);
+      } else {
+        // Hard push: move directly away from nearest player to exactly minDist
+        const dx = x - nearest.x;
+        const dy = y - nearest.y;
+        const len = Math.hypot(dx, dy) || 1;
+        x = clamp(nearest.x + (dx / len) * minDist, 20, ARENA_WIDTH - 20);
+        y = clamp(nearest.y + (dy / len) * minDist, 20, ARENA_HEIGHT - 20);
+      }
+    }
+    return { x, y };
+  }
+
   spawnInWave(p: ServerPlayer) {
     if (this.npcs.size >= NPC_MAX_COUNT) return;
     if (p.pwWaveSpawnedSoFar >= p.pwWaveTotal) return;
@@ -2323,6 +2355,8 @@ export default class GameServer implements Party.Server {
       x = clamp(anchor.x + (Math.random() - 0.5) * jitter, 20, ARENA_WIDTH - 20);
       y = clamp(anchor.y + (Math.random() - 0.5) * jitter, 20, ARENA_HEIGHT - 20);
     }
+
+    ({ x, y } = this.safeSpawnPos(x, y));
 
     const base = MONSTER_BASES[kind];
     // HP curve: linear up to wave 20, then a quadratic late-game term so
@@ -2802,8 +2836,9 @@ export default class GameServer implements Party.Server {
     if (p.pwWaveAnchors.length === 0) return;
     const anchor = p.pwWaveAnchors[Math.floor(Math.random() * p.pwWaveAnchors.length)];
     const jitter = MONSTER_GROUP_JITTER_OVERRIDE[kind] ?? 120;
-    const x = clamp(anchor.x + (Math.random() - 0.5) * jitter, 20, ARENA_WIDTH - 20);
-    const y = clamp(anchor.y + (Math.random() - 0.5) * jitter, 20, ARENA_HEIGHT - 20);
+    let x = clamp(anchor.x + (Math.random() - 0.5) * jitter, 20, ARENA_WIDTH - 20);
+    let y = clamp(anchor.y + (Math.random() - 0.5) * jitter, 20, ARENA_HEIGHT - 20);
+    ({ x, y } = this.safeSpawnPos(x, y));
     const base = MONSTER_BASES[kind];
     const waveDiffMul = 1 + (p.waveNumber - 1) * 0.13
       + Math.pow(Math.max(0, p.waveNumber - 20), 1.5) * 0.02;
@@ -3858,8 +3893,9 @@ export default class GameServer implements Party.Server {
 
     const angle = Math.random() * Math.PI * 2;
     const dist = 350 + Math.random() * 150;
-    const x = clamp(target.x + Math.cos(angle) * dist, 30, ARENA_WIDTH - 30);
-    const y = clamp(target.y + Math.sin(angle) * dist, 30, ARENA_HEIGHT - 30);
+    let x = clamp(target.x + Math.cos(angle) * dist, 30, ARENA_WIDTH - 30);
+    let y = clamp(target.y + Math.sin(angle) * dist, 30, ARENA_HEIGHT - 30);
+    ({ x, y } = this.safeSpawnPos(x, y));
 
     const id = genId('miniboss');
     this.miniBossId = id;
