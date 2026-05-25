@@ -1682,6 +1682,20 @@ export class ArenaScene extends Phaser.Scene {
         g.setDepth(9);
         this.hazardVisuals.set(h.id, g);
       }
+
+      // Throttle redraws to ~20fps — hazard animations (smoke puffs, pulses) don't need 60fps
+      const lastDraw = (g.getData('lastDraw') as number) ?? 0;
+      const skipRedraw = clientNow - lastDraw < 50;
+      if (skipRedraw) {
+        // Still need to update selfInSmoke even on skipped frames
+        if (h.kind === 'smoke_zone' && serverNow >= h.warningUntilMs && self) {
+          const dx = self.x - h.x, dy = self.y - h.y;
+          if (dx * dx + dy * dy < h.radius * h.radius) selfInSmoke = true;
+        }
+        continue;
+      }
+      g.setData('lastDraw', clientNow);
+
       g.clear();
       g.setBlendMode(Phaser.BlendModes.NORMAL);
 
