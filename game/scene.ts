@@ -95,7 +95,6 @@ const PARTY_HOST = (() => {
   return 'localhost:1999';
 })();
 
-const ALL_KINDS: readonly string[] = [...CHARACTERS, ...MONSTERS];
 const DIRS = ['south', 'north', 'east', 'west'] as const;
 const WALK_FRAMES = 8; // max frames we'll try to load per direction; missing ones are skipped
 
@@ -140,6 +139,13 @@ const VARIANT_BASE: Record<string, string> = {
   alpha_wolf: 'werewolf',
   death_titan: 'zombie_bear',
 };
+
+// Only preload sprite sheets for kinds that have their own assets.
+// VARIANT_BASE kinds reuse an existing base-kind sheet — skip them to avoid 404s.
+const ALL_KINDS: readonly string[] = [
+  ...CHARACTERS,
+  ...MONSTERS.filter(m => !(m in VARIANT_BASE)),
+];
 
 // Tint applied to variant kinds so they're visually distinct from their base.
 const VARIANT_TINT: Record<string, number> = {
@@ -326,7 +332,7 @@ export class ArenaScene extends Phaser.Scene {
     // Custom floor tiles (cache-bust)
     this.load.image('floor_green', '/sprites/floor_green.png?v=1');
     this.load.image('floor_dirt', '/sprites/floor_dirt.png?v=1');
-    this.load.image('floor_rocks', '/sprites/floor_rocks.png?v=1');
+    this.load.image('floor_rocks', '/sprites/floor_dirt.png?v=1'); // rocks tile missing, reuse dirt
     // Spirit Wolf head sprite — drawn over the procedural orb glow
     this.load.image('icon_wolf', '/sprites/icon_wolf.png');
     this.load.audio('bgm0', '/audio/bgm.mp3');
