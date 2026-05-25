@@ -2384,7 +2384,7 @@ export default class GameServer implements Party.Server {
     // Hard cap on speed so player can always run away
     const cappedSpeed = Math.min(
       PLAYER_SPEED * NPC_SPEED_CAP_FRAC,
-      NPC_BASE_SPEED * base.speedMul * Math.min(1.8, 0.88 + (p.waveNumber - 1) * 0.05),
+      NPC_BASE_SPEED * base.speedMul * Math.min(1.5, 1.0 + (p.waveNumber - 1) * 0.025),
     );
     const id = genId('npc');
     this.npcs.set(id, {
@@ -2861,7 +2861,7 @@ export default class GameServer implements Party.Server {
     const hp = NPC_BASE_HP * base.hpMul * waveDiffMul * levelDiffMul;
     const cappedSpeed = Math.min(
       PLAYER_SPEED * NPC_SPEED_CAP_FRAC,
-      NPC_BASE_SPEED * base.speedMul * Math.min(1.8, 0.88 + (p.waveNumber - 1) * 0.05),
+      NPC_BASE_SPEED * base.speedMul * Math.min(1.5, 1.0 + (p.waveNumber - 1) * 0.025),
     );
     const id = genId('npc');
     this.npcs.set(id, {

@@ -13,7 +13,7 @@ export const PLAYER_MAX_PER_ROOM = 4;
 
 // NPC speed can never exceed this fraction of base player speed —
 // guarantees players can always run away with a slight buffer.
-export const NPC_SPEED_CAP_FRAC = 0.92;
+export const NPC_SPEED_CAP_FRAC = 0.75;
 
 export const NPC_RADIUS = 14;
 export const NPC_BASE_SPEED = 50;
