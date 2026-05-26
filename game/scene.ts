@@ -337,9 +337,10 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   preload() {
-    // Single texture atlas replaces ~976 individual image loads.
-    // Frame names match old texture keys (e.g. 'zombie_bear_south', 'rat_walk_east_0').
+    // Two texture atlases replace ~976 individual image loads.
+    // atlas: standard sprites ≤56px. atlas_large: rat/dragon >56px.
     this.load.atlas('atlas', '/atlas.png', '/atlas.json');
+    this.load.atlas('atlas_large', '/atlas_large.png', '/atlas_large.json');
 
     this.load.audio('bgm0', '/audio/bgm.mp3');
     this.load.audio('bgm1', '/audio/bmg1.mp3');
@@ -355,10 +356,17 @@ export class ArenaScene extends Phaser.Scene {
     });
   }
 
-  // Returns true when the atlas is loaded and contains the given frame key.
   hasFrame(key: string): boolean {
     const tex = this.textures.get('atlas');
-    return !!tex && tex.has(key);
+    if (tex && tex.has(key)) return true;
+    const large = this.textures.get('atlas_large');
+    return !!large && large.has(key);
+  }
+
+  atlasFor(key: string): string {
+    const large = this.textures.get('atlas_large');
+    if (large && large.has(key)) return 'atlas_large';
+    return 'atlas';
   }
 
   // ── Procedural ground tile generation ─────────────────────────────────
@@ -585,7 +593,8 @@ export class ArenaScene extends Phaser.Scene {
       const npcScale = (NPC_SPRITE_SCALE[kind] ?? 1) * SPRITE_SHRINK;
       const pool: Phaser.GameObjects.Sprite[] = [];
       for (let i = 0; i < count; i++) {
-        const s = this.add.sprite(0, 0, 'atlas', this.hasFrame(tex) ? tex : 'skeleton_south');
+        const frameKey = this.hasFrame(tex) ? tex : 'skeleton_south';
+        const s = this.add.sprite(0, 0, this.atlasFor(frameKey), frameKey);
         s.setScale(npcScale).setData('baseScale', npcScale).setData('kind', kind);
         s.setDepth(10).setVisible(false).setActive(false);
         pool.push(s);
@@ -910,7 +919,7 @@ export class ArenaScene extends Phaser.Scene {
         const frames: Phaser.Types.Animations.AnimationFrame[] = [];
         for (let i = 0; i < dirFrames; i++) {
           const fk = `${c}_walk_${dir}_${i}`;
-          if (this.hasFrame(fk)) frames.push({ key: 'atlas', frame: fk });
+          if (this.hasFrame(fk)) frames.push({ key: this.atlasFor(fk), frame: fk });
         }
         if (frames.length >= 2) {
           this.anims.create({ key, frames, frameRate: 8, repeat: -1 });
@@ -2340,7 +2349,7 @@ export class ArenaScene extends Phaser.Scene {
         body.anims.play(animKey, true);
       } else {
         if (body.anims.isPlaying) body.anims.stop();
-        if (this.hasFrame(idleKey) && body.frame.name !== idleKey) body.setTexture('atlas', idleKey);
+        if (this.hasFrame(idleKey) && body.frame.name !== idleKey) body.setTexture(this.atlasFor(idleKey), idleKey);
       }
 
       // hit-flash: detect HP drop, override tint to red briefly
@@ -2511,10 +2520,12 @@ export class ArenaScene extends Phaser.Scene {
         const kindPool = this.npcPool.get(n.kind);
         if (kindPool && kindPool.length > 0) {
           s = kindPool.pop()!;
-          s.setTexture('atlas', this.hasFrame(tex) ? tex : 'skeleton_south');
+          const frameKey0 = this.hasFrame(tex) ? tex : 'skeleton_south';
+          s.setTexture(this.atlasFor(frameKey0), frameKey0);
           s.setVisible(true).setActive(true).setAlpha(1).clearTint();
         } else {
-          s = this.add.sprite(n.x, n.y, 'atlas', this.hasFrame(tex) ? tex : 'skeleton_south');
+          const frameKey0 = this.hasFrame(tex) ? tex : 'skeleton_south';
+          s = this.add.sprite(n.x, n.y, this.atlasFor(frameKey0), frameKey0);
           s.setDepth(10);
         }
         s.setScale(npcScale);
@@ -2542,7 +2553,7 @@ export class ArenaScene extends Phaser.Scene {
         s.anims.play(animKey, true);
       } else {
         if (s.anims.isPlaying) s.anims.stop();
-        if (this.hasFrame(idleKey) && s.frame.name !== idleKey) s.setTexture('atlas', idleKey);
+        if (this.hasFrame(idleKey) && s.frame.name !== idleKey) s.setTexture(this.atlasFor(idleKey), idleKey);
       }
 
       // hit flash for NPCs + floating damage number
@@ -3347,7 +3358,8 @@ export class ArenaScene extends Phaser.Scene {
   makePlayerContainer(p: PlayerState) {
     const container = this.add.container(p.x, p.y).setDepth(10);
     const charScale = (PLAYER_SPRITE_SCALE[p.character] ?? 1.0) * SPRITE_SHRINK;
-    const body = this.add.sprite(0, 0, 'atlas', `${p.character}_${p.facing}`).setName('body').setScale(charScale);
+    const initFrame = `${p.character}_${p.facing}`;
+    const body = this.add.sprite(0, 0, this.atlasFor(initFrame), initFrame).setName('body').setScale(charScale);
     body.setTint(hueToTint(p.hue ?? 0));
     // Aura Shield ring (visible when player has the aura_shield weapon)
     const aura = this.add.graphics().setName('aura').setVisible(false).setDepth(-1);
