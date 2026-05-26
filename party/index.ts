@@ -2344,17 +2344,19 @@ export default class GameServer implements Party.Server {
 
     if (isClear(x, y)) return { x, y };
 
-    // Try 8 random pushes, each time sampling a random alive player as the repulsion center
-    for (let i = 0; i < 8; i++) {
-      const ref = alive[Math.floor(Math.random() * alive.length)];
+    // 20 attempts, round-robin across all alive players so every player's
+    // exclusion zone is tested even in 4-player sessions.
+    for (let i = 0; i < 20; i++) {
+      const ref = alive[i % alive.length];
       const angle = Math.random() * Math.PI * 2;
-      const dist = minDist + 60 + Math.random() * 120;
+      const dist = minDist + 40 + Math.random() * 180;
       const tx = clamp(ref.x + Math.cos(angle) * dist, 20, ARENA_WIDTH - 20);
       const ty = clamp(ref.y + Math.sin(angle) * dist, 20, ARENA_HEIGHT - 20);
       if (isClear(tx, ty)) return { x: tx, y: ty };
     }
 
-    // Hard fallback: push directly away from the nearest player
+    // Hard fallback: push away from nearest player, try increasing distances
+    // until isClear passes — prevents landing on a different player.
     let nearest = alive[0];
     let nearestDist = Math.hypot(alive[0].x - x, alive[0].y - y);
     for (const p of alive) {
@@ -2364,6 +2366,11 @@ export default class GameServer implements Party.Server {
     const fdx = x !== nearest.x ? x - nearest.x : 1;
     const fdy = x !== nearest.x ? y - nearest.y : 0;
     const flen = Math.hypot(fdx, fdy) || 1;
+    for (const extra of [20, 120, 240, 380]) {
+      const tx = clamp(nearest.x + (fdx / flen) * (minDist + extra), 20, ARENA_WIDTH - 20);
+      const ty = clamp(nearest.y + (fdy / flen) * (minDist + extra), 20, ARENA_HEIGHT - 20);
+      if (isClear(tx, ty)) return { x: tx, y: ty };
+    }
     return {
       x: clamp(nearest.x + (fdx / flen) * (minDist + 20), 20, ARENA_WIDTH - 20),
       y: clamp(nearest.y + (fdy / flen) * (minDist + 20), 20, ARENA_HEIGHT - 20),
@@ -3559,18 +3566,21 @@ export default class GameServer implements Party.Server {
       }
     }
 
-    // Drop gems proportional to player level: a few greens + a gold
-    const greens = Math.max(2, Math.floor(p.level / 2) + 1);
-    const golds = Math.max(0, Math.floor(p.level / 4));
-    for (let i = 0; i < greens; i++) {
-      const a = Math.random() * Math.PI * 2;
-      const r = 10 + Math.random() * 30;
-      this.dropGem(p.x + Math.cos(a) * r, p.y + Math.sin(a) * r, 3);
-    }
-    for (let i = 0; i < golds; i++) {
-      const a = Math.random() * Math.PI * 2;
-      const r = 10 + Math.random() * 30;
-      this.dropGem(p.x + Math.cos(a) * r, p.y + Math.sin(a) * r, 5);
+    // Drop 30% of the player's accumulated XP as gems.
+    // Use larger gem values (10/5/3) to keep the count manageable.
+    const xpToDrop = Math.floor(p.xp * 0.3);
+    if (xpToDrop > 0) {
+      let rem = xpToDrop;
+      const epics  = Math.min(8,  Math.floor(rem / 10)); rem -= epics * 10;
+      const golds  = Math.min(10, Math.floor(rem / 5));  rem -= golds * 5;
+      const greens = Math.min(12, rem > 0 ? Math.max(1, Math.ceil(rem / 3)) : 0);
+      for (const [count, val] of [[epics, 10], [golds, 5], [greens, 3]] as [number, number][]) {
+        for (let i = 0; i < count; i++) {
+          const a = Math.random() * Math.PI * 2;
+          const r = 10 + Math.random() * 40;
+          this.dropGem(p.x + Math.cos(a) * r, p.y + Math.sin(a) * r, val);
+        }
+      }
     }
     const msg: ServerToClient = { type: 'died', playerId: p.id };
     this.room.broadcast(JSON.stringify(msg));
