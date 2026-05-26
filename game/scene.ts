@@ -96,7 +96,21 @@ const PARTY_HOST = (() => {
 })();
 
 const DIRS = ['south', 'north', 'east', 'west'] as const;
-const WALK_FRAMES = 8; // max frames we'll try to load per direction; missing ones are skipped
+const WALK_FRAMES = 8; // default; used by animation builder (guards with textures.exists)
+
+// Per-kind walk frame count. 0 = static sprites only, no walk animation.
+// Anything not listed defaults to WALK_FRAMES (8).
+const KIND_WALK_FRAMES: Record<string, number> = {
+  // Static only (no walk sheet)
+  dragon: 0, wraith: 0,
+  // 4-frame kinds
+  rat: 4, zombie_bear: 4, spider: 4, werewolf: 4,
+  // All player characters: 4 frames
+  blue_wizard: 4, fire_wizard: 4, salamander_wizard: 4, lightning_wizard: 4,
+  earth_wizard: 4, forest_wizard: 4, shadow_wizard: 4, frog_wizard: 4,
+  cat_wizard: 4, owl_wizard: 4, old_man_wizard: 4, mouse_apprentice: 4,
+  knight: 4, rogue: 4, mage: 4,
+};
 
 // Per-character render scale — default 1.0. All 12 wizards at 56×56.
 const PLAYER_SPRITE_SCALE: Record<string, number> = {};
@@ -314,9 +328,10 @@ export class ArenaScene extends Phaser.Scene {
 
   preload() {
     for (const c of ALL_KINDS) {
+      const frames = KIND_WALK_FRAMES[c] ?? WALK_FRAMES;
       for (const dir of DIRS) {
         this.load.image(`${c}_${dir}`, `/sprites/${c}_${dir}.png`);
-        for (let i = 0; i < WALK_FRAMES; i++) {
+        for (let i = 0; i < frames; i++) {
           this.load.image(`${c}_walk_${dir}_${i}`, `/sprites/${c}_walk_${dir}_${i}.png`);
         }
       }
