@@ -20,7 +20,9 @@ const OUT_JSON = join(ROOT, 'public', 'atlas.json');
 
 const ATLAS_W = 2048;
 const ATLAS_H = 2048;
-const PADDING = 1; // 1px gap between sprites to avoid bleeding
+// 4px gap prevents sub-pixel UV bleeding when camera has fractional offsets
+// (camera.setRoundPixels(false) + 0.72x scale can cause ~1-2px UV error)
+const PADDING = 4;
 
 async function main() {
   // 1. Collect all PNG files
