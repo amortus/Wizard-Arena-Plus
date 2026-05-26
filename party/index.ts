@@ -303,6 +303,10 @@ type ServerBlackHole = {
 
 export default class GameServer implements Party.Server {
   players = new Map<string, ServerPlayer>();
+  // Ghost players: alive players who disconnected within the last 10s. Keyed
+  // by "name::character" so a reconnecting client restores full state instead
+  // of spawning fresh.
+  ghostPlayers = new Map<string, { player: ServerPlayer; expiresAt: number }>();
   npcs = new Map<string, ServerNpc>();
   gems = new Map<string, GemState>();
   projectiles = new Map<string, ServerProjectile>();
@@ -968,6 +972,13 @@ export default class GameServer implements Party.Server {
   }
 
   onClose(conn: Party.Connection) {
+    // Save ghost so a quick reconnect restores full state (non-ARAM only).
+    if (this.gameMode !== 'aram') {
+      const p = this.players.get(conn.id);
+      if (p && p.alive) {
+        this.ghostPlayers.set(`${p.name}::${p.character}`, { player: { ...p }, expiresAt: Date.now() + 10_000 });
+      }
+    }
     this.players.delete(conn.id);
     if (this.players.size === 0) {
       this.stopTicking();
@@ -1062,33 +1073,49 @@ export default class GameServer implements Party.Server {
       const chosenChar = this.gameMode === 'aram'
         ? CHARACTERS[Math.floor(Math.random() * CHARACTERS.length)]
         : msg.character;
-      this.spawnPlayer(sender.id, msg.name, chosenChar, msg.color, msg.hue ?? 0, msg.country);
-      // MOBA: assign team and move player to team spawn
-      if (this.gameMode === 'moba') {
-        const p = this.players.get(sender.id)!;
-        const blueCount = [...this.players.values()].filter(q => q.mobaTeam === 'blue').length;
-        p.mobaTeam = blueCount <= 3 ? 'blue' : 'red';
-        p.mobaGold = 0;
-        p.mobaRespawnAt = 0;
-        p.mobaItems = [];
-        const spawn = p.mobaTeam === 'blue' ? MOBA_BLUE_SPAWN : MOBA_RED_SPAWN;
-        p.x = spawn.x + (Math.random() - 0.5) * 120;
-        p.y = spawn.y + (Math.random() - 0.5) * 120;
-        // Override hue: blue team gets blue hue, red team keeps original (warm)
-        if (p.mobaTeam === 'blue') p.hue = 4.2;
-      }
-      // ARAM: assign team and spawn on mid-lane base
-      if (this.gameMode === 'aram') {
-        const p = this.players.get(sender.id)!;
-        const blueCount = [...this.players.values()].filter(q => q.mobaTeam === 'blue').length;
-        p.mobaTeam = blueCount < 3 ? 'blue' : 'red';
-        p.mobaGold = 0;
-        p.mobaRespawnAt = 0;
-        p.mobaItems = [];
-        const spawn = p.mobaTeam === 'blue' ? ARAM_BLUE_SPAWN : ARAM_RED_SPAWN;
-        p.x = spawn.x + (Math.random() - 0.5) * 100;
-        p.y = spawn.y + (Math.random() - 0.5) * 100;
-        if (p.mobaTeam === 'blue') p.hue = 4.2;
+
+      // Ghost restore: if this player disconnected within the last 10s, bring
+      // back their full state (HP, XP, level, weapons) instead of a fresh spawn.
+      const ghostName = isBlockedName(msg.name) ? 'Player' : (msg.name || 'Player').slice(0, 16);
+      const ghostKey = `${ghostName}::${chosenChar}`;
+      const ghost = this.ghostPlayers.get(ghostKey);
+      const isGhostRestore = !!(ghost && Date.now() < ghost.expiresAt);
+      if (isGhostRestore && ghost) {
+        this.ghostPlayers.delete(ghostKey);
+        const restored: ServerPlayer = { ...ghost.player, id: sender.id, lastTouchAt: Date.now() };
+        for (const w of this.wolves.values()) {
+          if (w.ownerId === ghost.player.id) w.ownerId = sender.id;
+        }
+        this.players.set(sender.id, restored);
+      } else {
+        this.spawnPlayer(sender.id, msg.name, chosenChar, msg.color, msg.hue ?? 0, msg.country);
+        // MOBA: assign team and move player to team spawn
+        if (this.gameMode === 'moba') {
+          const p = this.players.get(sender.id)!;
+          const blueCount = [...this.players.values()].filter(q => q.mobaTeam === 'blue').length;
+          p.mobaTeam = blueCount <= 3 ? 'blue' : 'red';
+          p.mobaGold = 0;
+          p.mobaRespawnAt = 0;
+          p.mobaItems = [];
+          const spawn = p.mobaTeam === 'blue' ? MOBA_BLUE_SPAWN : MOBA_RED_SPAWN;
+          p.x = spawn.x + (Math.random() - 0.5) * 120;
+          p.y = spawn.y + (Math.random() - 0.5) * 120;
+          // Override hue: blue team gets blue hue, red team keeps original (warm)
+          if (p.mobaTeam === 'blue') p.hue = 4.2;
+        }
+        // ARAM: assign team and spawn on mid-lane base
+        if (this.gameMode === 'aram') {
+          const p = this.players.get(sender.id)!;
+          const blueCount = [...this.players.values()].filter(q => q.mobaTeam === 'blue').length;
+          p.mobaTeam = blueCount < 3 ? 'blue' : 'red';
+          p.mobaGold = 0;
+          p.mobaRespawnAt = 0;
+          p.mobaItems = [];
+          const spawn = p.mobaTeam === 'blue' ? ARAM_BLUE_SPAWN : ARAM_RED_SPAWN;
+          p.x = spawn.x + (Math.random() - 0.5) * 100;
+          p.y = spawn.y + (Math.random() - 0.5) * 100;
+          if (p.mobaTeam === 'blue') p.hue = 4.2;
+        }
       }
       this.reportToLobby();
     } else if (msg.type === 'input') {
@@ -1592,10 +1619,14 @@ export default class GameServer implements Party.Server {
   //  2. Drop players who haven't sent any message in ZOMBIE_TIMEOUT_MS — they
   //     might still appear "live" to PartyKit but are effectively gone.
   reapZombiePlayers() {
+    const now = Date.now();
+    // Expire stale ghosts first
+    for (const [key, ghost] of this.ghostPlayers) {
+      if (now > ghost.expiresAt) this.ghostPlayers.delete(key);
+    }
     if (this.players.size === 0) return;
     const live = new Set<string>();
     for (const c of this.room.getConnections()) live.add(c.id);
-    const now = Date.now();
     const ZOMBIE_TIMEOUT_MS = 60_000;
     for (const [id, p] of this.players) {
       const noConn = !live.has(id);

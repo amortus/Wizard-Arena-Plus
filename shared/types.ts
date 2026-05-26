@@ -246,7 +246,8 @@ export type ClientToServer =
   | { type: 'input'; dx: number; dy: number }
   | { type: 'pickPowerup'; choiceIdx: number }
   | { type: 'buyItem'; itemId: string }
-  | { type: 'respawn' };
+  | { type: 'respawn' }
+  | { type: 'ping' };
 
 export type ServerToClient =
   | Snapshot

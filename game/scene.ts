@@ -1009,6 +1009,16 @@ export class ArenaScene extends Phaser.Scene {
     socket.addEventListener('error', (e) => {
       console.error('[party] error', e);
     });
+
+    // Heartbeat: send a ping every 5s so the server keeps lastTouchAt fresh
+    // and zombie-reaper doesn't remove an idle-but-connected player.
+    this.time.addEvent({
+      delay: 5000,
+      loop: true,
+      callback: () => {
+        if (socket.readyState === 1) socket.send(JSON.stringify({ type: 'ping' } satisfies ClientToServer));
+      },
+    });
   }
 
   handleServerMessage(msg: ServerToClient) {
