@@ -247,6 +247,8 @@ export class ArenaScene extends Phaser.Scene {
   trailPool: Phaser.GameObjects.Graphics[] = [];
   hazardVisuals = new Map<string, Phaser.GameObjects.Graphics>();
   hazardLabels = new Map<string, Phaser.GameObjects.Text>();
+  // Last known facing per NPC — prevents snapping to 'south' when entity is stopped.
+  npcFacing = new Map<string, Facing>();
   pickupVisuals = new Map<string, Phaser.GameObjects.Graphics>();
   bossProjectileVisuals = new Map<string, Phaser.GameObjects.Graphics>();
   bossAlertUntil = 0;
@@ -335,35 +337,15 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   preload() {
-    for (const c of ALL_KINDS) {
-      const kindFrames = KIND_WALK_FRAMES[c] ?? WALK_FRAMES;
-      for (const dir of DIRS) {
-        this.load.image(`${c}_${dir}`, `/sprites/${c}_${dir}.png`);
-        const dirFrames = KIND_DIR_FRAMES[c]?.[dir] ?? kindFrames;
-        for (let i = 0; i < dirFrames; i++) {
-          this.load.image(`${c}_walk_${dir}_${i}`, `/sprites/${c}_walk_${dir}_${i}.png`);
-        }
-      }
-    }
-    // PixelLab projectile sprites (10 of 10 ready) — overrides procedural fallbacks
-    for (const elem of ['arcane', 'fire', 'lightning', 'earth', 'forest', 'shadow']) {
-      this.load.image(`proj_${elem}`, `/sprites/proj_${elem}.png?v=2`);
-    }
-    // PixelLab gem sprites by tier (green is amethyst purple — contrasts with grass)
-    for (const tier of ['blue', 'green', 'gold', 'epic']) {
-      this.load.image(`gem_${tier}`, `/sprites/gem_${tier}.png?v=3`);
-    }
-    // Custom floor tiles (cache-bust)
-    this.load.image('floor_green', '/sprites/floor_green.png?v=1');
-    this.load.image('floor_dirt', '/sprites/floor_dirt.png?v=1');
-    this.load.image('floor_rocks', '/sprites/floor_dirt.png?v=1'); // rocks tile missing, reuse dirt
-    // Spirit Wolf head sprite — drawn over the procedural orb glow
-    this.load.image('icon_wolf', '/sprites/icon_wolf.png');
+    // Single texture atlas replaces ~976 individual image loads.
+    // Frame names match old texture keys (e.g. 'zombie_bear_south', 'rat_walk_east_0').
+    this.load.atlas('atlas', '/atlas.png', '/atlas.json');
+
     this.load.audio('bgm0', '/audio/bgm.mp3');
     this.load.audio('bgm1', '/audio/bmg1.mp3');
     this.load.audio('bgm2', '/audio/bmg2.mp3');
 
-    // MOBA/ARAM scene objects
+    // MOBA/ARAM scene objects (not in atlas — separate folder)
     for (const name of ['Bush1', 'Bush2', 'SmallTree1', 'SmallTree2', 'Tree1', 'Tree2', 'TowerBlue', 'TowerRed', 'InibidorBlue', 'InibidorRed']) {
       this.load.image(`scene_${name}`, `/Scene/${name}.png`);
     }
@@ -371,6 +353,12 @@ export class ArenaScene extends Phaser.Scene {
     this.load.on('loaderror', (file: Phaser.Loader.File) => {
       void file;
     });
+  }
+
+  // Returns true when the atlas is loaded and contains the given frame key.
+  hasFrame(key: string): boolean {
+    const tex = this.textures.get('atlas');
+    return !!tex && tex.has(key);
   }
 
   // ── Procedural ground tile generation ─────────────────────────────────
@@ -597,7 +585,7 @@ export class ArenaScene extends Phaser.Scene {
       const npcScale = (NPC_SPRITE_SCALE[kind] ?? 1) * SPRITE_SHRINK;
       const pool: Phaser.GameObjects.Sprite[] = [];
       for (let i = 0; i < count; i++) {
-        const s = this.add.sprite(0, 0, this.textures.exists(tex) ? tex : 'skeleton_south');
+        const s = this.add.sprite(0, 0, 'atlas', this.hasFrame(tex) ? tex : 'skeleton_south');
         s.setScale(npcScale).setData('baseScale', npcScale).setData('kind', kind);
         s.setDepth(10).setVisible(false).setActive(false);
         pool.push(s);
@@ -609,7 +597,7 @@ export class ArenaScene extends Phaser.Scene {
     const projElements = ['arcane', 'fire', 'lightning', 'earth', 'forest', 'shadow'];
     for (const elem of projElements) {
       for (let i = 0; i < 20; i++) {
-        const s = this.add.sprite(0, 0, `proj_${elem}`);
+        const s = this.add.sprite(0, 0, 'atlas', `proj_${elem}`);
         s.setBlendMode(elem === 'earth' ? Phaser.BlendModes.NORMAL : Phaser.BlendModes.ADD);
         s.setVisible(false).setActive(false);
         this.projPool.push(s);
@@ -619,7 +607,7 @@ export class ArenaScene extends Phaser.Scene {
     // Pre-allocate gem sprites — more of common tiers.
     for (const [tex, count] of [['gem_blue', 20], ['gem_green', 15], ['gem_gold', 10], ['gem_epic', 5]] as const) {
       for (let i = 0; i < count; i++) {
-        const s = this.add.sprite(0, 0, tex);
+        const s = this.add.sprite(0, 0, 'atlas', tex);
         s.setBlendMode(Phaser.BlendModes.NORMAL).setVisible(false).setActive(false);
         this.gemPool.push(s);
       }
@@ -641,8 +629,8 @@ export class ArenaScene extends Phaser.Scene {
       container.setDepth(20);
       const glow = this.add.graphics().setName('glow').setBlendMode(Phaser.BlendModes.ADD);
       container.add(glow);
-      if (this.textures.exists('icon_wolf')) {
-        const head = this.add.sprite(0, 0, 'icon_wolf').setName('head').setScale(0.55);
+      if (this.hasFrame('icon_wolf')) {
+        const head = this.add.sprite(0, 0, 'atlas', 'icon_wolf').setName('head').setScale(0.55);
         container.add(head);
       }
       container.setVisible(false).setActive(false);
@@ -660,8 +648,9 @@ export class ArenaScene extends Phaser.Scene {
 
   makeFallbackTextures() {
     const g = this.add.graphics();
+    // Skip procedural fallback if atlas already provides this frame or a standalone texture exists.
     const ensure = (key: string, draw: (g: Phaser.GameObjects.Graphics) => void, w = 32, h = 32) => {
-      if (this.textures.exists(key)) return;
+      if (this.textures.exists(key) || this.hasFrame(key)) return;
       g.clear();
       draw(g);
       g.generateTexture(key, w, h);
@@ -913,50 +902,47 @@ export class ArenaScene extends Phaser.Scene {
 
   registerAnimations() {
     for (const c of ALL_KINDS) {
+      const kindFrames = KIND_WALK_FRAMES[c] ?? WALK_FRAMES;
       for (const dir of DIRS) {
         const key = `${c}_walk_${dir}`;
-        // Skip if anim already exists or no frames loaded
         if (this.anims.exists(key)) continue;
-        const frames: { key: string }[] = [];
-        for (let i = 0; i < WALK_FRAMES; i++) {
+        const dirFrames = KIND_DIR_FRAMES[c]?.[dir] ?? kindFrames;
+        const frames: Phaser.Types.Animations.AnimationFrame[] = [];
+        for (let i = 0; i < dirFrames; i++) {
           const fk = `${c}_walk_${dir}_${i}`;
-          if (this.textures.exists(fk)) frames.push({ key: fk });
+          if (this.hasFrame(fk)) frames.push({ key: 'atlas', frame: fk });
         }
         if (frames.length >= 2) {
-          this.anims.create({
-            key,
-            frames,
-            frameRate: 8,
-            repeat: -1,
-          });
+          this.anims.create({ key, frames, frameRate: 8, repeat: -1 });
         }
       }
     }
   }
 
   makeArenaBackground() {
-    // Main green tile across the whole arena
-    const baseTexture = this.textures.exists('floor_green') ? 'floor_green' : 'floor';
+    // Main green tile across the whole arena — use atlas frame if loaded, else procedural
+    const hasGreen = this.hasFrame('floor_green');
     const ts = this.add.tileSprite(
       ARENA_WIDTH / 2,
       ARENA_HEIGHT / 2,
       ARENA_WIDTH,
       ARENA_HEIGHT,
-      baseTexture,
+      hasGreen ? 'atlas' : 'floor',
+      hasGreen ? 'floor_green' : undefined,
     );
     ts.setDepth(-100);
 
     // Sparse decoration patches (deterministic so they don't reshuffle each frame)
     const seed = (i: number) => ((i * 9301 + 49297) % 233280) / 233280;
     const placePatches = (key: string, count: number, seedOffset: number, scaleMin: number, scaleMax: number) => {
-      if (!this.textures.exists(key)) return;
+      if (!this.hasFrame(key)) return;
       for (let i = 0; i < count; i++) {
         const x = seed((i + seedOffset) * 2) * ARENA_WIDTH;
         const y = seed((i + seedOffset) * 2 + 1) * ARENA_HEIGHT;
         const scale = scaleMin + seed((i + seedOffset) * 3 + 7) * (scaleMax - scaleMin);
         const rot = seed((i + seedOffset) * 5 + 11) * Math.PI * 2;
         this.add
-          .image(x, y, key)
+          .image(x, y, 'atlas', key)
           .setScale(scale)
           .setRotation(rot)
           .setDepth(-99)
@@ -2354,7 +2340,7 @@ export class ArenaScene extends Phaser.Scene {
         body.anims.play(animKey, true);
       } else {
         if (body.anims.isPlaying) body.anims.stop();
-        if (this.textures.exists(idleKey) && body.texture.key !== idleKey) body.setTexture(idleKey);
+        if (this.hasFrame(idleKey) && body.frame.name !== idleKey) body.setTexture('atlas', idleKey);
       }
 
       // hit-flash: detect HP drop, override tint to red briefly
@@ -2525,10 +2511,10 @@ export class ArenaScene extends Phaser.Scene {
         const kindPool = this.npcPool.get(n.kind);
         if (kindPool && kindPool.length > 0) {
           s = kindPool.pop()!;
-          s.setTexture(this.textures.exists(tex) ? tex : 'skeleton_south');
+          s.setTexture('atlas', this.hasFrame(tex) ? tex : 'skeleton_south');
           s.setVisible(true).setActive(true).setAlpha(1).clearTint();
         } else {
-          s = this.add.sprite(n.x, n.y, this.textures.exists(tex) ? tex : 'skeleton_south');
+          s = this.add.sprite(n.x, n.y, 'atlas', this.hasFrame(tex) ? tex : 'skeleton_south');
           s.setDepth(10);
         }
         s.setScale(npcScale);
@@ -2538,16 +2524,17 @@ export class ArenaScene extends Phaser.Scene {
       }
       const prevN = prevNpcById.get(n.id);
       const interpPos = lerpEntity(prevN, n, interp);
-      let facing: Facing = 'south';
-      if (prevN) {
-        const dx = n.x - prevN.x;
-        const dy = n.y - prevN.y;
-        if (Math.abs(dx) > Math.abs(dy)) facing = dx > 0 ? 'east' : 'west';
-        else if (dy !== 0) facing = dy > 0 ? 'south' : 'north';
-      }
       const moving = prevN
         ? (Math.abs(n.x - prevN.x) + Math.abs(n.y - prevN.y)) > 0.5
         : false;
+      let facing: Facing = this.npcFacing.get(n.id) ?? 'south';
+      if (prevN && moving) {
+        const dx = n.x - prevN.x;
+        const dy = n.y - prevN.y;
+        if (Math.abs(dx) > Math.abs(dy)) facing = dx > 0 ? 'east' : 'west';
+        else facing = dy > 0 ? 'south' : 'north';
+        this.npcFacing.set(n.id, facing);
+      }
       const spriteKind = VARIANT_BASE[n.kind] ?? n.kind;
       const animKey = `${spriteKind}_walk_${facing}`;
       const idleKey = `${spriteKind}_${facing}`;
@@ -2555,7 +2542,7 @@ export class ArenaScene extends Phaser.Scene {
         s.anims.play(animKey, true);
       } else {
         if (s.anims.isPlaying) s.anims.stop();
-        if (this.textures.exists(idleKey) && s.texture.key !== idleKey) s.setTexture(idleKey);
+        if (this.hasFrame(idleKey) && s.frame.name !== idleKey) s.setTexture('atlas', idleKey);
       }
 
       // hit flash for NPCs + floating damage number
@@ -2589,6 +2576,7 @@ export class ArenaScene extends Phaser.Scene {
         if (!kindPool) { kindPool = []; this.npcPool.set(kind, kindPool); }
         kindPool.push(s);
         this.npcHpTrack.delete(id);
+        this.npcFacing.delete(id);
         this.npcSprites.delete(id);
       }
     }
@@ -2615,15 +2603,15 @@ export class ArenaScene extends Phaser.Scene {
       if (!s) {
         if (this.gemPool.length > 0) {
           s = this.gemPool.pop()!;
-          s.setTexture(tex).setVisible(true).setActive(true).setAlpha(1);
+          s.setTexture('atlas', tex).setVisible(true).setActive(true).setAlpha(1);
         } else {
-          s = this.add.sprite(g.x, g.y, tex);
+          s = this.add.sprite(g.x, g.y, 'atlas', tex);
           s.setBlendMode(Phaser.BlendModes.NORMAL);
         }
         s.setData('baseScale', baseScale);
         this.gemSprites.set(g.id, s);
-      } else if (s.texture.key !== tex) {
-        s.setTexture(tex);
+      } else if (s.frame.name !== tex) {
+        s.setTexture('atlas', tex);
         s.setData('baseScale', baseScale);
       }
       s.x = g.x;
@@ -2670,9 +2658,9 @@ export class ArenaScene extends Phaser.Scene {
         const baseScale = weaponScale * elementScale * GLOBAL_SCALE;
         if (this.projPool.length > 0) {
           s = this.projPool.pop()!;
-          s.setTexture(tex).setPosition(pr.x, pr.y).setVisible(true).setActive(true).setAlpha(1).clearTint();
+          s.setTexture('atlas', tex).setPosition(pr.x, pr.y).setVisible(true).setActive(true).setAlpha(1).clearTint();
         } else {
-          s = this.add.sprite(pr.x, pr.y, tex);
+          s = this.add.sprite(pr.x, pr.y, 'atlas', tex);
         }
         s.setData('baseScale', baseScale);
         s.setBlendMode(elem === 'earth' ? Phaser.BlendModes.NORMAL : Phaser.BlendModes.ADD);
@@ -2742,8 +2730,8 @@ export class ArenaScene extends Phaser.Scene {
           container.setDepth(20);
           const glow = this.add.graphics().setName('glow').setBlendMode(Phaser.BlendModes.ADD);
           container.add(glow);
-          if (this.textures.exists('icon_wolf')) {
-            const head = this.add.sprite(0, 0, 'icon_wolf').setName('head').setScale(0.55);
+          if (this.hasFrame('icon_wolf')) {
+            const head = this.add.sprite(0, 0, 'atlas', 'icon_wolf').setName('head').setScale(0.55);
             container.add(head);
           }
         }
@@ -3359,7 +3347,7 @@ export class ArenaScene extends Phaser.Scene {
   makePlayerContainer(p: PlayerState) {
     const container = this.add.container(p.x, p.y).setDepth(10);
     const charScale = (PLAYER_SPRITE_SCALE[p.character] ?? 1.0) * SPRITE_SHRINK;
-    const body = this.add.sprite(0, 0, `${p.character}_${p.facing}`).setName('body').setScale(charScale);
+    const body = this.add.sprite(0, 0, 'atlas', `${p.character}_${p.facing}`).setName('body').setScale(charScale);
     body.setTint(hueToTint(p.hue ?? 0));
     // Aura Shield ring (visible when player has the aura_shield weapon)
     const aura = this.add.graphics().setName('aura').setVisible(false).setDepth(-1);
