@@ -284,4 +284,5 @@ export type ServerToClient =
   | { type: 'mobaVictory'; winnerTeam: MobaTeam }
   | { type: 'bossAlert'; bossName: string }
   | { type: 'authError'; reason: string }
-  | { type: 'nova' };
+  | { type: 'nova' }
+  | { type: 'waveSpawn'; anchors: { x: number; y: number }[]; waveName: string; waveNumber: number };

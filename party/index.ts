@@ -176,6 +176,7 @@ type ServerPlayer = PlayerState & {
   pwWaveTotal: number;
   pwWaveLastTrickleAt: number;
   pwWaveAnchors: { x: number; y: number }[];
+  pwWaveSpawnStartAt: number;
   pwWaveKind: MonsterKind;
   // AI mode applied to all NPCs spawned in this wave. Most waves are 'chase',
   // a small fraction get a varied AI (regroup pauses, flank from the side).
@@ -1262,6 +1263,7 @@ export default class GameServer implements Party.Server {
       pwWaveTotal: 0,
       pwWaveLastTrickleAt: 0,
       pwWaveAnchors: [],
+      pwWaveSpawnStartAt: 0,
       pwWaveKind: 'goblin',
       pwWaveAi: 'chase',
       pwBonusBearTarget: 0,
@@ -2270,6 +2272,13 @@ export default class GameServer implements Party.Server {
       if (sizeOverride !== undefined) p.pwWaveTotal = sizeOverride;
       // Spawn anchors are positioned around THIS player (not random arena edges)
       p.pwWaveAnchors = pickAnchorsAround(p.x, p.y, WAVE_ANCHORS_AT(p.waveNumber));
+      // 3-second warning before first NPC appears
+      p.pwWaveSpawnStartAt = now + 3_000;
+      const warnConn = this.room.getConnection(p.id);
+      if (warnConn) {
+        const warnMsg: ServerToClient = { type: 'waveSpawn', anchors: p.pwWaveAnchors, waveName: p.waveName, waveNumber: p.waveNumber };
+        warnConn.send(JSON.stringify(warnMsg));
+      }
 
       // High-wave bonus injection targets. These spawn ALONGSIDE the regular
       // wave theme as extras — they don't replace anything, they just pile on.
@@ -2282,8 +2291,6 @@ export default class GameServer implements Party.Server {
       p.pwBonusBearLastAt = now;
       p.pwBonusRatLastAt = now;
 
-      const initial = Math.max(1, Math.floor(p.pwWaveTotal * WAVE_INITIAL_BURST_FRAC));
-      for (let i = 0; i < initial; i++) this.spawnInWave(p);
     } else {
       // Freeze wave progress while the roster boss is alive — resume after it dies.
       // maybeSpawnBoss() deactivates the wave and resets the timer on boss death.
@@ -2378,6 +2385,7 @@ export default class GameServer implements Party.Server {
   }
 
   spawnInWave(p: ServerPlayer) {
+    if (Date.now() < p.pwWaveSpawnStartAt) return;
     if (this.npcs.size >= NPC_MAX_COUNT) return;
     if (p.pwWaveSpawnedSoFar >= p.pwWaveTotal) return;
     const anchor = p.pwWaveAnchors[p.pwWaveSpawnedSoFar % Math.max(1, p.pwWaveAnchors.length)];
@@ -2895,6 +2903,7 @@ export default class GameServer implements Party.Server {
   // wave anchors, sharing the regular wave HP curve. Doesn't count toward
   // pwWaveTotal — these are extras layered on top of the theme.
   spawnBonusMonster(p: ServerPlayer, kind: MonsterKind) {
+    if (Date.now() < p.pwWaveSpawnStartAt) return;
     if (this.npcs.size >= NPC_MAX_COUNT) return;
     if (p.pwWaveAnchors.length === 0) return;
     const anchor = p.pwWaveAnchors[Math.floor(Math.random() * p.pwWaveAnchors.length)];

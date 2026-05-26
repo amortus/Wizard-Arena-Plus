@@ -247,6 +247,7 @@ export class ArenaScene extends Phaser.Scene {
   trailPool: Phaser.GameObjects.Graphics[] = [];
   hazardVisuals = new Map<string, Phaser.GameObjects.Graphics>();
   hazardLabels = new Map<string, Phaser.GameObjects.Text>();
+  waveAlerts: { x: number; y: number; bornAt: number }[] = [];
   // Last known facing per NPC — prevents snapping to 'south' when entity is stopped.
   npcFacing = new Map<string, Facing>();
   pickupVisuals = new Map<string, Phaser.GameObjects.Graphics>();
@@ -1142,6 +1143,11 @@ export class ArenaScene extends Phaser.Scene {
       this.bus.emit('bossAlert', msg.bossName);
     } else if (msg.type === 'nova') {
       this.bus.emit('nova');
+    } else if (msg.type === 'waveSpawn') {
+      const now = performance.now();
+      for (const anchor of msg.anchors) {
+        this.waveAlerts.push({ x: anchor.x, y: anchor.y, bornAt: now });
+      }
     } else if (msg.type === 'authError') {
       this.bus.emit('authError', (msg as any).reason);
     }
@@ -2036,18 +2042,18 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   // Floating damage text — rises and fades over ~700ms.
-  spawnDamageNumber(x: number, y: number, dmg: number) {
+  spawnDamageNumber(x: number, y: number, dmg: number, color?: string) {
     const isCrit = dmg >= 20;
-    const color = isCrit ? '#ff3333' : '#ffe080';
-    const size = isCrit ? '14px' : '12px';
+    const resolvedColor = color ?? (isCrit ? '#ff3333' : '#ffe080');
+    const size = isCrit && !color ? '14px' : '12px';
     let txt: Phaser.GameObjects.Text;
     if (this.dmgNumPool.length > 0) {
       txt = this.dmgNumPool.pop()!;
-      txt.setStyle({ fontFamily: 'monospace', fontSize: size, color, stroke: '#000000', strokeThickness: 3 });
+      txt.setStyle({ fontFamily: 'monospace', fontSize: size, color: resolvedColor, stroke: '#000000', strokeThickness: 3 });
       txt.setText(String(dmg)).setPosition(x, y).setAlpha(1).setVisible(true).setActive(true);
     } else {
       txt = this.add.text(x, y, String(dmg), {
-        fontFamily: 'monospace', fontSize: size, color, stroke: '#000000', strokeThickness: 3,
+        fontFamily: 'monospace', fontSize: size, color: resolvedColor, stroke: '#000000', strokeThickness: 3,
       });
       txt.setOrigin(0.5, 0.5).setDepth(50);
     }
@@ -2366,6 +2372,9 @@ export class ArenaScene extends Phaser.Scene {
       const track = this.playerHpTrack.get(p.id) ?? { lastHp: p.hp, flashUntilMs: 0 };
       if (p.hp < track.lastHp - 0.01 && p.alive) {
         track.flashUntilMs = renderNow + 220;
+      } else if (p.hp > track.lastHp + 0.5 && p.alive) {
+        const healed = Math.round(p.hp - track.lastHp);
+        if (healed >= 1) this.spawnDamageNumber(p.x, p.y - 10, healed, '#44ff88');
       }
       track.lastHp = p.hp;
       this.playerHpTrack.set(p.id, track);
@@ -2921,6 +2930,28 @@ export class ArenaScene extends Phaser.Scene {
       bossMaxHp: snap.bossMaxHp,
       bossHp: snap.bossHp,
     });
+
+    this.renderWaveAlerts(performance.now());
+  }
+
+  renderWaveAlerts(clientNow: number) {
+    const DURATION = 3000;
+    this.waveAlerts = this.waveAlerts.filter(a => clientNow - a.bornAt < DURATION);
+    for (const alert of this.waveAlerts) {
+      const age = clientNow - alert.bornAt;
+      const alpha = Math.max(0, 1 - age / DURATION);
+      const pulse = 0.6 + Math.sin(age * 0.012) * 0.4;
+      const radius = 80 + Math.sin(age * 0.008) * 20;
+      const g = this.add.graphics();
+      g.setDepth(8);
+      g.lineStyle(2, 0xff4400, alpha * pulse);
+      g.strokeCircle(alert.x, alert.y, radius);
+      g.fillStyle(0xff2200, alpha * 0.12 * pulse);
+      g.fillCircle(alert.x, alert.y, radius);
+      g.lineStyle(2, 0xffaa00, alpha);
+      g.strokeCircle(alert.x, alert.y, 12);
+      this.time.delayedCall(50, () => g.destroy());
+    }
   }
 
   updateCastleGraphics(castle: { hp: number; maxHp: number; x: number; y: number }) {
