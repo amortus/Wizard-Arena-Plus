@@ -1082,7 +1082,7 @@ export default class GameServer implements Party.Server {
       const isGhostRestore = !!(ghost && Date.now() < ghost.expiresAt);
       if (isGhostRestore && ghost) {
         this.ghostPlayers.delete(ghostKey);
-        const restored: ServerPlayer = { ...ghost.player, id: sender.id, lastTouchAt: Date.now() };
+        const restored: ServerPlayer = { ...ghost.player, id: sender.id, lastTouchAt: Date.now(), invulnerableUntil: Date.now() + 4_000 };
         for (const w of this.wolves.values()) {
           if (w.ownerId === ghost.player.id) w.ownerId = sender.id;
         }
