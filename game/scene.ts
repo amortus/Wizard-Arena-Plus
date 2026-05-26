@@ -112,6 +112,14 @@ const KIND_WALK_FRAMES: Record<string, number> = {
   knight: 4, rogue: 4, mage: 4,
 };
 
+// Per-kind per-direction overrides (takes priority over KIND_WALK_FRAMES).
+// Used when a kind is missing walk frames for specific directions only.
+const KIND_DIR_FRAMES: Record<string, Partial<Record<string, number>>> = {
+  lightning_wizard: { north: 0 },
+  forest_wizard:    { north: 0 },
+  frog_wizard:      { north: 0 },
+};
+
 // Per-character render scale — default 1.0. All 12 wizards at 56×56.
 const PLAYER_SPRITE_SCALE: Record<string, number> = {};
 
@@ -328,10 +336,11 @@ export class ArenaScene extends Phaser.Scene {
 
   preload() {
     for (const c of ALL_KINDS) {
-      const frames = KIND_WALK_FRAMES[c] ?? WALK_FRAMES;
+      const kindFrames = KIND_WALK_FRAMES[c] ?? WALK_FRAMES;
       for (const dir of DIRS) {
         this.load.image(`${c}_${dir}`, `/sprites/${c}_${dir}.png`);
-        for (let i = 0; i < frames; i++) {
+        const dirFrames = KIND_DIR_FRAMES[c]?.[dir] ?? kindFrames;
+        for (let i = 0; i < dirFrames; i++) {
           this.load.image(`${c}_walk_${dir}_${i}`, `/sprites/${c}_walk_${dir}_${i}.png`);
         }
       }
