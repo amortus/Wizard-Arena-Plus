@@ -4,10 +4,11 @@ import type { LeaderboardEntry } from './types';
 // then sort descending by score. Used by the leaderboard page and the death
 // screen rank lookup so they agree on what "rank" means.
 export function dedupeBestByName(entries: LeaderboardEntry[]): LeaderboardEntry[] {
-  const bestByName = new Map<string, LeaderboardEntry>();
+  const best = new Map<string, LeaderboardEntry>();
   for (const e of entries) {
-    const prev = bestByName.get(e.name);
-    if (!prev || e.score > prev.score) bestByName.set(e.name, e);
+    const key = `${e.name}::${e.character ?? ''}`;
+    const prev = best.get(key);
+    if (!prev || e.score > prev.score) best.set(key, e);
   }
-  return [...bestByName.values()].sort((a, b) => b.score - a.score);
+  return [...best.values()].sort((a, b) => b.score - a.score);
 }

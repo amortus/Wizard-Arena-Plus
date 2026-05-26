@@ -16,6 +16,7 @@ function partyKitHost(): string {
   if (env) return env;
   const host = window.location.hostname;
   if (host === 'localhost' || host === '127.0.0.1') return 'localhost:1999';
+  console.error('[leaderboard] NEXT_PUBLIC_PARTYKIT_HOST is not set — leaderboard will not load.');
   return 'localhost:1999';
 }
 
@@ -52,7 +53,7 @@ export default function LeaderboardPage() {
           alt="Madness Arena"
           className="menu-logo"
         />
-        <h1 className="lb-page-title">All-Time Leaderboard</h1>
+        <h1 className="lb-page-title">Arena Leaderboard</h1>
         <p className="sub">Top survivors of the arena · best score per wizard</p>
 
         {loading ? (
