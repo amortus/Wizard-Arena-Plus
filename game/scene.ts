@@ -1030,6 +1030,19 @@ export class ArenaScene extends Phaser.Scene {
     } else if (msg.type === 'snapshot') {
       const arrivedAt = performance.now();
       this.snapshotQueue.push({ snap: msg, t: arrivedAt });
+      // npcDR atualizado aqui (na chegada do pacote) e não durante a renderização
+      // interpolada, pois npcUpdate=true aparece apenas a 10Hz enquanto o broadcast
+      // roda a 25Hz — processar no render fazia o npcDR ficar vazio na maioria dos frames.
+      if (msg.npcUpdate) {
+        const incomingIds = new Set<string>();
+        for (const n of msg.npcs) {
+          incomingIds.add(n.id);
+          this.npcDR.set(n.id, { x: n.x, y: n.y, vx: n.vx, vy: n.vy, t: arrivedAt, hp: n.hp, kind: n.kind, ownerPlayerId: n.ownerPlayerId });
+        }
+        for (const id of this.npcDR.keys()) {
+          if (!incomingIds.has(id)) this.npcDR.delete(id);
+        }
+      }
       // Keep ~10 snapshots of history (~200ms at 50Hz). Drop anything older than
       // 4× INTERP_DELAY since it can never be needed for interpolation.
       const cutoff = arrivedAt - INTERP_DELAY_MS * 4;
@@ -2525,20 +2538,6 @@ export class ArenaScene extends Phaser.Scene {
       if (!seenPlayers.has(id)) {
         sprite.destroy();
         this.playerSprites.delete(id);
-      }
-    }
-
-    // npcs — dead reckoning: atualiza dados de DR quando o servidor envia update (10Hz)
-    // Entre updates, extrapola posição localmente a 60fps usando vx/vy do último update.
-    if (snap.npcUpdate) {
-      const arrivedAt = performance.now();
-      const incomingIds = new Set<string>();
-      for (const n of snap.npcs) {
-        incomingIds.add(n.id);
-        this.npcDR.set(n.id, { x: n.x, y: n.y, vx: n.vx, vy: n.vy, t: arrivedAt, hp: n.hp, kind: n.kind, ownerPlayerId: n.ownerPlayerId });
-      }
-      for (const id of this.npcDR.keys()) {
-        if (!incomingIds.has(id)) this.npcDR.delete(id);
       }
     }
 
