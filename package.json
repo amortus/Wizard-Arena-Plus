@@ -8,21 +8,26 @@
     "dev:party": "partykit dev",
     "build": "next build",
     "start": "next start",
-    "deploy:party": "partykit deploy"
+    "deploy:party": "partykit deploy",
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "test:report": "playwright show-report"
   },
   "dependencies": {
     "next": "^15.0.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
+    "partysocket": "^1.0.2",
     "phaser": "^3.87.0",
-    "partysocket": "^1.0.2"
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "concurrently": "^9.0.0",
     "partykit": "^0.0.114",
+    "sharp": "^0.34.5",
     "typescript": "^5.6.0"
   }
 }
