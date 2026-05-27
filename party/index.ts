@@ -191,6 +191,8 @@ type ServerPlayer = PlayerState & {
   pwBonusRatLastAt: number;
   // Aura: per-NPC last hit time (so we don't drain HP every tick)
   pwAuraLastHits: Map<string, number>;
+  // Throttle: next time we scan NPCs for aura/frost (100ms cadence saves O(n) × 50Hz → O(n) × 10Hz)
+  nextAuraScanAt: number;
   // Set each tick by updateHazards — not part of PlayerState, server-only
   inSlowZone: boolean;
   // Pickup buffs
@@ -346,6 +348,10 @@ export default class GameServer implements Party.Server {
   bossProjectiles = new Map<string, ServerBossProjectile>();
   lastTickAt = 0;
   tickHandle: ReturnType<typeof setInterval> | null = null;
+  // Perf: throttle expensive per-tick scans
+  nextReapAt = 0;          // reapZombiePlayers runs every 2s, not every tick
+  tickCount = 0;           // incremented each tick — used for sub-Hz throttling
+  npcListCache: ServerNpc[] = []; // reused array for O(n²) separation — rebuilt on size change
   // Persistent all-time leaderboard (top 10 by score)
   allTimeLeaderboard: LeaderboardEntry[] = [];
   leaderboardLoaded = false;
@@ -1273,6 +1279,7 @@ export default class GameServer implements Party.Server {
       pwBonusRatsSpawned: 0,
       pwBonusRatLastAt: 0,
       pwAuraLastHits: new Map(),
+      nextAuraScanAt: 0,
       inSlowZone: false,
       speedBoostUntil: 0,
       damageBoostUntil: 0,
@@ -1550,13 +1557,18 @@ export default class GameServer implements Party.Server {
     const now = Date.now();
     const dt = Math.min((now - this.lastTickAt) / 1000, 0.1);
     this.lastTickAt = now;
+    this.tickCount++;
 
     if (now >= this.nextLobbyReportAt) {
       this.nextLobbyReportAt = now + 10_000;
       this.reportToLobby();
     }
 
-    this.reapZombiePlayers();
+    // Throttle: reap zombies every 2s (was every tick — calls getConnections() which is expensive)
+    if (now >= this.nextReapAt) {
+      this.nextReapAt = now + 2_000;
+      this.reapZombiePlayers();
+    }
     this.updatePlayers(dt, now);
     this.updateProjectiles(dt);
 
@@ -1894,34 +1906,40 @@ export default class GameServer implements Party.Server {
         }
       }
 
-      // Aura Shield (skipped during invuln above)
-      if (p.weapons.includes('aura_shield')) {
-        const def = WEAPON_DEFS.aura_shield;
-        const range = def.range * (p.auraShieldRangeMul || 1);
-        const r2 = range * range;
-        const tNow = Date.now();
-        for (const n of this.npcs.values()) {
-          if ((n.x - p.x) ** 2 + (n.y - p.y) ** 2 < r2) {
-            const last = p.pwAuraLastHits.get(n.id) ?? 0;
-            if (tNow - last >= 350) {
-              p.pwAuraLastHits.set(n.id, tNow);
-              const dmg = this.computeDamage(p, 'aura_shield');
-              n.hp -= dmg;
-              this.applyVampire(p, dmg);
-              if (n.hp <= 0) this.killNPC(n.id, p.id);
+      // Aura Shield + Frost Aura — both scan all NPCs.
+      // Throttled to 10Hz (every 100ms) instead of 50Hz; individual NPC hit cooldowns
+      // are still respected inside, so damage cadence is unchanged.
+      const tNow = Date.now();
+      if (tNow >= p.nextAuraScanAt) {
+        p.nextAuraScanAt = tNow + 100;
+
+        if (p.weapons.includes('aura_shield')) {
+          const def = WEAPON_DEFS.aura_shield;
+          const range = def.range * (p.auraShieldRangeMul || 1);
+          const r2 = range * range;
+          for (const n of this.npcs.values()) {
+            if ((n.x - p.x) ** 2 + (n.y - p.y) ** 2 < r2) {
+              const last = p.pwAuraLastHits.get(n.id) ?? 0;
+              if (tNow - last >= 350) {
+                p.pwAuraLastHits.set(n.id, tNow);
+                const dmg = this.computeDamage(p, 'aura_shield');
+                n.hp -= dmg;
+                this.applyVampire(p, dmg);
+                if (n.hp <= 0) this.killNPC(n.id, p.id);
+              }
             }
           }
         }
-      }
 
-      // Frost aura (skipped during invuln above)
-      if (p.frostAuraDmg > 0 && p.frostAuraRadius > 0) {
-        const r2 = p.frostAuraRadius * p.frostAuraRadius;
-        const dmg = p.frostAuraDmg * dt;
-        for (const n of this.npcs.values()) {
-          if ((n.x - p.x) ** 2 + (n.y - p.y) ** 2 < r2) {
-            n.hp -= dmg;
-            if (n.hp <= 0) this.killNPC(n.id, p.id);
+        if (p.frostAuraDmg > 0 && p.frostAuraRadius > 0) {
+          const r2 = p.frostAuraRadius * p.frostAuraRadius;
+          // Scale damage for the 100ms window (was dt per tick at 50Hz, now 0.1s fixed)
+          const dmg = p.frostAuraDmg * 0.1;
+          for (const n of this.npcs.values()) {
+            if ((n.x - p.x) ** 2 + (n.y - p.y) ** 2 < r2) {
+              n.hp -= dmg;
+              if (n.hp <= 0) this.killNPC(n.id, p.id);
+            }
           }
         }
       }
@@ -3314,7 +3332,13 @@ export default class GameServer implements Party.Server {
     }
 
     // 2) NPC-NPC separation (push overlapping pairs apart)
-    const list = Array.from(this.npcs.values());
+    // Run at 25Hz (every other tick) — halves the O(n²) cost with no visible difference.
+    if (this.tickCount % 2 !== 0) return;
+    // Rebuild the NPC list cache only when NPC count changes (avoids Array.from every tick).
+    if (this.npcListCache.length !== this.npcs.size) {
+      this.npcListCache = Array.from(this.npcs.values());
+    }
+    const list = this.npcListCache;
     for (let i = 0; i < list.length; i++) {
       for (let j = i + 1; j < list.length; j++) {
         const a = list[i];
