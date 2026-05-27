@@ -1052,10 +1052,12 @@ export default class GameServer implements Party.Server {
   }
 
   onClose(conn: Party.Connection) {
-    // Save ghost so a quick reconnect restores full state (non-ARAM only).
-    if (this.gameMode !== 'aram') {
-      const p = this.players.get(conn.id);
-      if (p && p.alive) {
+    const p = this.players.get(conn.id);
+    if (p && p.alive) {
+      // Record score immediately on disconnect — the player won't die in-game.
+      this.recordDeath(p);
+      // Also save ghost so a quick reconnect restores full state (non-ARAM only).
+      if (this.gameMode !== 'aram') {
         this.ghostPlayers.set(`${p.name}::${p.character}`, { player: { ...p }, expiresAt: Date.now() + 30_000 });
       }
     }
@@ -1745,7 +1747,7 @@ export default class GameServer implements Party.Server {
   //     might still appear "live" to PartyKit but are effectively gone.
   reapZombiePlayers() {
     const now = Date.now();
-    // Expire stale ghosts first
+    // Expire stale ghosts (score already recorded in onClose).
     for (const [key, ghost] of this.ghostPlayers) {
       if (now > ghost.expiresAt) this.ghostPlayers.delete(key);
     }
@@ -1757,11 +1759,16 @@ export default class GameServer implements Party.Server {
       const noConn = !live.has(id);
       const idle = now - p.lastTouchAt > ZOMBIE_TIMEOUT_MS;
       if (noConn || idle) {
-        // Save ghost so the player can restore state on reconnect (onClose may not have fired)
         if (this.gameMode !== 'aram' && p.alive) {
           const key = `${p.name}::${p.character}`;
-          if (!this.ghostPlayers.has(key)) {
-            this.ghostPlayers.set(key, { player: { ...p }, expiresAt: now + 30_000 });
+          if (noConn && !this.ghostPlayers.has(key)) {
+            // onClose never fired (e.g. server restart) — record score and skip ghost.
+            this.recordDeath(p);
+          } else if (!noConn) {
+            // Idle but still connected: give a 30s ghost window for reconnect.
+            if (!this.ghostPlayers.has(key)) {
+              this.ghostPlayers.set(key, { player: { ...p }, expiresAt: now + 30_000 });
+            }
           }
         }
         this.players.delete(id);
