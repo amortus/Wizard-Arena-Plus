@@ -203,7 +203,7 @@ export type Snapshot = {
   players: PlayerState[];
   npcs: NPCState[];
   gems: GemState[];
-  projectiles: ProjectileState[];
+  projectiles: ProjectileState[]; // only contains homing projectiles; others use projCreate/projDestroy events
   wolves?: WolfState[];
   hazards?: HazardState[];
   pickups?: PickupState[];
@@ -285,4 +285,24 @@ export type ServerToClient =
   | { type: 'bossAlert'; bossName: string }
   | { type: 'authError'; reason: string }
   | { type: 'nova' }
-  | { type: 'waveSpawn'; anchors: { x: number; y: number }[]; waveName: string; waveNumber: number };
+  | { type: 'waveSpawn'; anchors: { x: number; y: number }[]; waveName: string; waveNumber: number }
+  | {
+      type: 'projCreate';
+      id: string;
+      ownerId: string;
+      x: number;
+      y: number;
+      vx: number;
+      vy: number;
+      weapon: WeaponKind;
+      lifetime: number;
+      pattern: 'straight' | 'wave' | 'orbital';
+      // wave-specific
+      perpX?: number;
+      perpY?: number;
+      // orbital-specific
+      orbitRadius?: number;
+      orbitAngle?: number;
+      orbitSpinSpeed?: number;
+    }
+  | { type: 'projDestroy'; id: string };

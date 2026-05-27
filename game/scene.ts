@@ -288,6 +288,16 @@ export class ArenaScene extends Phaser.Scene {
   _seenHazards    = new Set<string>();
   _cachedSelfPlayer: PlayerState | undefined = undefined;
 
+  // Client-simulated projectiles (straight/wave/orbital) — no longer in snapshot
+  clientProjs = new Map<string, {
+    id: string; ownerId: string; x: number; y: number; vx: number; vy: number;
+    weapon: string; lifetime: number; pattern: string;
+    // orbital
+    orbitAngle?: number; orbitSpinSpeed?: number; orbitRadius?: number;
+    // wave
+    perpX?: number; perpY?: number; baseX?: number; baseY?: number; waveTime?: number;
+  }>();
+
   cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
   keyW!: Phaser.Input.Keyboard.Key;
   keyA!: Phaser.Input.Keyboard.Key;
@@ -1150,6 +1160,35 @@ export class ArenaScene extends Phaser.Scene {
       }
     } else if (msg.type === 'authError') {
       this.bus.emit('authError', (msg as any).reason);
+    } else if (msg.type === 'projCreate') {
+      this.clientProjs.set(msg.id, {
+        id: msg.id,
+        ownerId: msg.ownerId,
+        x: msg.x,
+        y: msg.y,
+        vx: msg.vx,
+        vy: msg.vy,
+        weapon: msg.weapon,
+        lifetime: msg.lifetime,
+        pattern: msg.pattern,
+        orbitAngle: msg.orbitAngle,
+        orbitSpinSpeed: msg.orbitSpinSpeed,
+        orbitRadius: msg.orbitRadius,
+        perpX: msg.perpX,
+        perpY: msg.perpY,
+        baseX: msg.x,
+        baseY: msg.y,
+        waveTime: 0,
+      });
+      if (msg.ownerId === this.selfId) this.sfxFire(msg.weapon as any);
+    } else if (msg.type === 'projDestroy') {
+      this.clientProjs.delete(msg.id);
+      const s = this.projSprites.get(msg.id);
+      if (s) {
+        s.setVisible(false).setActive(false);
+        this.projPool.push(s);
+        this.projSprites.delete(msg.id);
+      }
     }
   }
 
@@ -2131,7 +2170,40 @@ export class ArenaScene extends Phaser.Scene {
 
   update(_time: number, delta: number) {
     this.handleInput(delta);
+    this.updateClientProjs(delta);
     this.renderSnapshot();
+  }
+
+  updateClientProjs(dt: number) {
+    const dtSec = dt / 1000;
+    for (const [id, proj] of this.clientProjs) {
+      proj.lifetime -= dt;
+      if (proj.lifetime <= 0) {
+        this.clientProjs.delete(id);
+        const s = this.projSprites.get(id);
+        if (s) { s.setVisible(false).setActive(false); this.projPool.push(s); this.projSprites.delete(id); }
+        continue;
+      }
+      if (proj.pattern === 'orbital') {
+        proj.orbitAngle = (proj.orbitAngle ?? 0) + (proj.orbitSpinSpeed ?? 3) * dtSec;
+        // Resolve position from owner's latest snapshot position
+        const owner = this.latestSnapshot?.players.find((p) => p.id === proj.ownerId);
+        if (owner) {
+          proj.x = owner.x + Math.cos(proj.orbitAngle!) * (proj.orbitRadius ?? 80);
+          proj.y = owner.y + Math.sin(proj.orbitAngle!) * (proj.orbitRadius ?? 80);
+        }
+      } else if (proj.pattern === 'wave') {
+        proj.baseX! += proj.vx * dtSec;
+        proj.baseY! += proj.vy * dtSec;
+        proj.waveTime! += dtSec;
+        const off = Math.sin(proj.waveTime! * 12) * 22;
+        proj.x = proj.baseX! + (proj.perpX ?? 0) * off;
+        proj.y = proj.baseY! + (proj.perpY ?? 0) * off;
+      } else {
+        proj.x += proj.vx * dtSec;
+        proj.y += proj.vy * dtSec;
+      }
+    }
   }
 
   handleInput(deltaMs: number) {
@@ -2668,14 +2740,18 @@ export class ArenaScene extends Phaser.Scene {
     this._seenProj.clear();
     const seenProj = this._seenProj;
     const tNow = performance.now();
-    for (const pr of snap.projectiles) {
+    // Render clientProjs (straight/wave/orbital — simulated locally) + snap.projectiles (homing only)
+    const allProjectiles: { id: string; ownerId: string; x: number; y: number; vx: number; vy: number; weapon: string }[] = [];
+    for (const cp of this.clientProjs.values()) allProjectiles.push(cp);
+    for (const sp of snap.projectiles) allProjectiles.push(sp);
+    for (const pr of allProjectiles) {
       seenProj.add(pr.id);
-      const elem = WEAPON_ELEMENT[pr.weapon] ?? 'arcane';
+      const elem = (WEAPON_ELEMENT as Record<string, string>)[pr.weapon] ?? 'arcane';
       const tex = `proj_${elem}`;
       let s = this.projSprites.get(pr.id);
       if (!s) {
-        // New projectile — if it's mine, play the fire SFX
-        if (pr.ownerId === this.selfId) this.sfxFire(pr.weapon);
+        // Homing projectiles (from snapshot) need SFX here — non-homing already handled by projCreate
+        if (pr.ownerId === this.selfId && !this.clientProjs.has(pr.id)) this.sfxFire(pr.weapon as any);
         const GLOBAL_SCALE = 0.65 * SPRITE_SHRINK;
         const weaponScale =
           pr.weapon === 'sword' ? 1.15 :

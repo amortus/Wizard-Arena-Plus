@@ -1,6 +1,6 @@
-// Server runs the simulation 50 times/sec (20ms tick). Higher = smoother
-// movement on remote clients, at the cost of ~2× the network/CPU vs 30Hz.
-export const TICK_RATE = 50;
+// Server runs the simulation 30 times/sec (33ms tick). Budget allows up to
+// ~28ms of game logic before the next tick — much safer than the old 20ms.
+export const TICK_RATE = 30;
 export const TICK_MS = 1000 / TICK_RATE;
 
 export const ARENA_WIDTH = 3200;

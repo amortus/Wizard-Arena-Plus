@@ -217,6 +217,9 @@ type ServerProjectile = ProjectileState & {
   orbitRadius?: number;
   // Per-NPC hit cooldowns (for orbitals — they can hit each enemy every X ms)
   hitCooldowns?: Map<string, number>;
+  // Homing: cached target to avoid scanning all NPCs every tick (100ms TTL)
+  homingTargetId?: string;
+  homingTargetCachedAt?: number;
 };
 
 let nextId = 1;
@@ -304,6 +307,63 @@ type ServerBlackHole = {
   lastTickDamageAt: number;
 };
 
+class SpatialHash {
+  private cells = new Map<number, string[]>();
+  private w: number;
+  readonly cellSize: number;
+
+  constructor(cellSize: number, arenaWidth: number) {
+    this.cellSize = cellSize;
+    this.w = Math.ceil(arenaWidth / cellSize) + 2;
+  }
+
+  private key(x: number, y: number): number {
+    return Math.floor(x / this.cellSize) + Math.floor(y / this.cellSize) * this.w;
+  }
+
+  clear() { this.cells.clear(); }
+
+  insert(id: string, x: number, y: number) {
+    const k = this.key(x, y);
+    const cell = this.cells.get(k);
+    if (cell) cell.push(id);
+    else this.cells.set(k, [id]);
+  }
+
+  query(x: number, y: number, radius: number, out: string[]) {
+    const r = Math.ceil(radius / this.cellSize);
+    const cx = Math.floor(x / this.cellSize);
+    const cy = Math.floor(y / this.cellSize);
+    for (let dx = -r; dx <= r; dx++) {
+      for (let dy = -r; dy <= r; dy++) {
+        const ids = this.cells.get((cx + dx) + (cy + dy) * this.w);
+        if (ids) for (const id of ids) out.push(id);
+      }
+    }
+  }
+}
+
+class PerfMonitor {
+  private buckets: Record<string, number[]> = {};
+
+  time<T>(label: string, fn: () => T): T {
+    const t0 = performance.now();
+    const r = fn();
+    const ms = performance.now() - t0;
+    (this.buckets[label] ??= []).push(ms);
+    if (this.buckets[label].length > 300) this.buckets[label].shift();
+    return r;
+  }
+
+  report(): string {
+    return Object.entries(this.buckets).map(([k, v]) => {
+      const s = [...v].sort((a, b) => a - b);
+      const avg = v.reduce((a, b) => a + b, 0) / v.length;
+      return `${k}: avg=${avg.toFixed(1)} p99=${s[Math.floor(s.length * 0.99)]?.toFixed(1)} max=${s[s.length - 1]?.toFixed(1)}ms`;
+    }).join('\n');
+  }
+}
+
 export default class GameServer implements Party.Server {
   players = new Map<string, ServerPlayer>();
   // Ghost players: alive players who disconnected within the last 10s. Keyed
@@ -353,6 +413,15 @@ export default class GameServer implements Party.Server {
   nextBroadcastAt = 0;     // broadcastSnapshot at 25Hz instead of 50Hz
   tickCount = 0;           // incremented each tick — used for sub-Hz throttling
   npcListCache: ServerNpc[] = []; // reused array for O(n²) separation — rebuilt on size change
+  // Performance monitoring
+  perf = new PerfMonitor();
+  // Pooled Set to avoid allocating new Set() per projectile in updateProjectiles
+  hitNpcsPool = new Set<string>();
+  // Pooled Maps to avoid allocating new Map() per orbital projectile in fireWeapon
+  hitCooldownPool: Map<string, number>[] = [];
+  // Spatial hashes: rebuilt once per tick for O(n·k) collision/separation
+  npcHash = new SpatialHash(64, ARENA_WIDTH);
+  queryBuf: string[] = []; // reusable query result buffer (avoids per-query array allocation)
   // Persistent all-time leaderboard (top 10 by score)
   allTimeLeaderboard: LeaderboardEntry[] = [];
   leaderboardLoaded = false;
@@ -1555,6 +1624,7 @@ export default class GameServer implements Party.Server {
   }
 
   tick() {
+    const tickStart = performance.now();
     const now = Date.now();
     const dt = Math.min((now - this.lastTickAt) / 1000, 0.1);
     this.lastTickAt = now;
@@ -1565,19 +1635,23 @@ export default class GameServer implements Party.Server {
       this.reportToLobby();
     }
 
+    // Rebuild NPC spatial hash once per tick — O(n) amortized, enables O(n·k) separation and collision
+    this.npcHash.clear();
+    for (const n of this.npcs.values()) this.npcHash.insert(n.id, n.x, n.y);
+
     // Throttle: reap zombies every 2s (was every tick — calls getConnections() which is expensive)
     if (now >= this.nextReapAt) {
       this.nextReapAt = now + 2_000;
       this.reapZombiePlayers();
     }
-    this.updatePlayers(dt, now);
-    this.updateProjectiles(dt);
+    this.perf.time('updatePlayers',     () => this.updatePlayers(dt, now));
+    this.perf.time('updateProjectiles', () => this.updateProjectiles(dt));
 
     if (this.gameMode === 'castle') {
       // Castle Defender: shared room-wide wave, NPCs march to castle
       if (!this.castleDefeated) {
         this.runCastleWave(now);
-        this.updateNPCs(dt, now);
+        this.perf.time('updateNPCs', () => this.updateNPCs(dt, now));
         this.checkCastleNpcs(now);
       }
     } else if (this.gameMode === 'moba') {
@@ -1585,7 +1659,7 @@ export default class GameServer implements Party.Server {
       if (!this.mobaWinner) {
         this.runMobaMinions(now);
         this.updateMinionCombat(now);
-        this.updateNPCs(dt, now);
+        this.perf.time('updateNPCs', () => this.updateNPCs(dt, now));
         this.updateTowers(now);
         this.checkMobaStructures();
       }
@@ -1596,7 +1670,7 @@ export default class GameServer implements Party.Server {
       if (!this.mobaWinner) {
         this.runAramMinions(now);
         this.updateMinionCombat(now);
-        this.updateNPCs(dt, now);
+        this.perf.time('updateNPCs', () => this.updateNPCs(dt, now));
         this.updateTowers(now);
         this.checkMobaStructures();
         this.spawnAramHealthRelics(now);
@@ -1611,7 +1685,7 @@ export default class GameServer implements Party.Server {
       this.retargetBoss();
       this.maybeSpawnBoss(now);
       this.maybeSpawnMiniBoss(now);
-      this.updateNPCs(dt, now);
+      this.perf.time('updateNPCs', () => this.updateNPCs(dt, now));
       this.scheduleHazard(now);
       this.scheduleBeams(now);
       this.scheduleBeamCurtain(now);
@@ -1624,11 +1698,36 @@ export default class GameServer implements Party.Server {
     this.updatePickups(now);
     this.updateBossProjectiles(dt, now);
 
-    // Broadcast at 25Hz (every 40ms) — halves JSON.stringify cost.
-    // Physics stays at 50Hz; client interpolation at 60ms delay handles 40ms gap smoothly.
+    // Broadcast at 20Hz (every 50ms) — reduces JSON.stringify cost.
+    // Physics runs at 30Hz; client interpolation at 60ms delay handles the 50ms gap smoothly.
     if (now >= this.nextBroadcastAt) {
-      this.nextBroadcastAt = now + 40;
-      this.broadcastSnapshot(now);
+      this.nextBroadcastAt = now + 50;
+      this.perf.time('broadcastSnapshot', () => this.broadcastSnapshot(now));
+    }
+
+    const tickTotal = performance.now() - tickStart;
+    if (tickTotal > TICK_MS * 1.5) {
+      console.warn(`[PERF] Slow tick: ${tickTotal.toFixed(1)}ms (budget=${TICK_MS}ms) projs=${this.projectiles.size} npcs=${this.npcs.size}`);
+    }
+    if (this.tickCount % 1500 === 0) {
+      console.log('[PERF REPORT]\n' + this.perf.report());
+    }
+  }
+
+  private acquireHitCooldown(): Map<string, number> {
+    return this.hitCooldownPool.pop() ?? new Map<string, number>();
+  }
+
+  private releaseHitCooldown(m: Map<string, number>) {
+    m.clear();
+    this.hitCooldownPool.push(m);
+  }
+
+  private deleteProjectile(proj: ServerProjectile) {
+    if (proj.hitCooldowns) this.releaseHitCooldown(proj.hitCooldowns);
+    this.projectiles.delete(proj.id);
+    if (proj.pattern !== 'homing') {
+      this.room.broadcast(JSON.stringify({ type: 'projDestroy', id: proj.id }));
     }
   }
 
@@ -1961,8 +2060,8 @@ export default class GameServer implements Party.Server {
       const totalProjectiles = def.projectiles + p.projectileBonus;
       if (this.projectiles.size + totalProjectiles > MAX_PROJECTILES) {
         let toEvict = this.projectiles.size + totalProjectiles - MAX_PROJECTILES;
-        for (const key of this.projectiles.keys()) {
-          this.projectiles.delete(key);
+        for (const [key, evicted] of this.projectiles) {
+          this.deleteProjectile(evicted);
           if (--toEvict <= 0) break;
         }
       }
@@ -1984,9 +2083,23 @@ export default class GameServer implements Party.Server {
           orbitAngle: initAngle,
           orbitSpinSpeed: spinSpeed,
           orbitRadius,
-          hitCooldowns: new Map(),
+          hitCooldowns: this.acquireHitCooldown(),
         };
         this.projectiles.set(proj.id, proj);
+        this.room.broadcast(JSON.stringify({
+          type: 'projCreate',
+          id: proj.id,
+          ownerId: proj.ownerId,
+          x: Math.round(proj.x),
+          y: Math.round(proj.y),
+          vx: 0, vy: 0,
+          weapon: proj.weapon,
+          lifetime: proj.lifetime,
+          pattern: 'orbital',
+          orbitRadius: proj.orbitRadius,
+          orbitAngle: proj.orbitAngle,
+          orbitSpinSpeed: proj.orbitSpinSpeed,
+        }));
       }
       return;
     }
@@ -1997,8 +2110,8 @@ export default class GameServer implements Party.Server {
     const totalProjectiles = def.projectiles + p.projectileBonus;
     if (this.projectiles.size + totalProjectiles > MAX_PROJECTILES) {
       let toEvict = this.projectiles.size + totalProjectiles - MAX_PROJECTILES;
-      for (const key of this.projectiles.keys()) {
-        this.projectiles.delete(key);
+      for (const [, evicted] of this.projectiles) {
+        this.deleteProjectile(evicted);
         if (--toEvict <= 0) break;
       }
     }
@@ -2029,6 +2142,22 @@ export default class GameServer implements Party.Server {
         proj.waveTime = i * 0.15; // phase offset between bolts so they don't overlap
       }
       this.projectiles.set(proj.id, proj);
+      // Broadcast creation event for non-homing patterns (client simulates locally)
+      if (pattern !== 'homing') {
+        this.room.broadcast(JSON.stringify({
+          type: 'projCreate',
+          id: proj.id,
+          ownerId: proj.ownerId,
+          x: Math.round(proj.x),
+          y: Math.round(proj.y),
+          vx: Math.round(proj.vx * 10) / 10,
+          vy: Math.round(proj.vy * 10) / 10,
+          weapon: proj.weapon,
+          lifetime: proj.lifetime,
+          pattern: pattern as 'straight' | 'wave',
+          ...(pattern === 'wave' ? { perpX: proj.perpX, perpY: proj.perpY } : {}),
+        }));
+      }
     }
   }
 
@@ -2131,19 +2260,33 @@ export default class GameServer implements Party.Server {
       if (proj.pattern === 'orbital') {
         const owner = this.players.get(proj.ownerId);
         if (!owner || !owner.alive) {
-          this.projectiles.delete(proj.id);
+          this.deleteProjectile(proj);
           continue;
         }
         proj.orbitAngle = (proj.orbitAngle ?? 0) + (proj.orbitSpinSpeed ?? 3) * dt;
         proj.x = owner.x + Math.cos(proj.orbitAngle) * (proj.orbitRadius ?? 80);
         proj.y = owner.y + Math.sin(proj.orbitAngle) * (proj.orbitRadius ?? 80);
       } else if (proj.pattern === 'homing') {
-        // Gradually turn velocity toward nearest NPC within search range
+        // Gradually turn velocity toward nearest NPC within search range.
+        // Re-find target at most every 100ms using the spatial hash (avoids O(n) scan per tick).
         let bestN: { x: number; y: number } | null = null;
-        let bestD2 = 320 * 320;
-        for (const n of this.npcs.values()) {
-          const d2 = (n.x - proj.x) ** 2 + (n.y - proj.y) ** 2;
-          if (d2 < bestD2) { bestD2 = d2; bestN = n; }
+        const cachedTarget = proj.homingTargetId && now - (proj.homingTargetCachedAt ?? 0) < 100
+          ? this.npcs.get(proj.homingTargetId)
+          : null;
+        if (cachedTarget) {
+          bestN = cachedTarget;
+        } else {
+          let bestD2 = 320 * 320;
+          this.queryBuf.length = 0;
+          this.npcHash.query(proj.x, proj.y, 320, this.queryBuf);
+          for (const nId of this.queryBuf) {
+            const n = this.npcs.get(nId);
+            if (!n) continue;
+            const d2 = (n.x - proj.x) ** 2 + (n.y - proj.y) ** 2;
+            if (d2 < bestD2) { bestD2 = d2; bestN = n; }
+          }
+          proj.homingTargetId = (bestN as any)?.id;
+          proj.homingTargetCachedAt = now;
         }
         if (bestN) {
           const desired = Math.atan2(bestN.y - proj.y, bestN.x - proj.x);
@@ -2179,7 +2322,7 @@ export default class GameServer implements Party.Server {
         proj.x < 0 || proj.x > ARENA_WIDTH ||
         proj.y < 0 || proj.y > ARENA_HEIGHT
       ) {
-        this.projectiles.delete(proj.id);
+        this.deleteProjectile(proj);
         continue;
       }
       // hit NPC (collision radius scales with owner's bigHitMul)
@@ -2187,10 +2330,14 @@ export default class GameServer implements Party.Server {
       const owner0 = this.players.get(proj.ownerId);
       const collR = NPC_RADIUS + PROJECTILE_RADIUS * (owner0?.bigHitMul ?? 1);
       const collR2 = collR * collR;
-      const hitNpcs = new Set<string>();
+      this.hitNpcsPool.clear();
+      this.queryBuf.length = 0;
+      this.npcHash.query(proj.x, proj.y, collR + 8, this.queryBuf);
       const isMobaProj = (this.gameMode === 'moba' || this.gameMode === 'aram') && !!owner0?.mobaTeam;
-      for (const n of this.npcs.values()) {
-        if (hitNpcs.has(n.id)) continue;
+      for (const nId of this.queryBuf) {
+        const n = this.npcs.get(nId);
+        if (!n) continue;
+        if (this.hitNpcsPool.has(n.id)) continue;
         // MOBA/ARAM: player projectiles must not hit friendly minions
         if (isMobaProj && n.ownerPlayerId === owner0!.mobaTeam) continue;
         if ((n.x - proj.x) ** 2 + (n.y - proj.y) ** 2 < collR2) {
@@ -2216,7 +2363,7 @@ export default class GameServer implements Party.Server {
               ally.minionPlayerAggroUntil = now + 3000;
             }
           }
-          hitNpcs.add(n.id);
+          this.hitNpcsPool.add(n.id);
           if (proj.pattern === 'orbital') {
             // orbitals never consume — they keep spinning
             continue;
@@ -2230,7 +2377,7 @@ export default class GameServer implements Party.Server {
         }
       }
       if (consumed) {
-        this.projectiles.delete(proj.id);
+        this.deleteProjectile(proj);
         continue;
       }
 
@@ -2255,7 +2402,7 @@ export default class GameServer implements Party.Server {
         }
       }
 
-      if (consumed) this.projectiles.delete(proj.id);
+      if (consumed) this.deleteProjectile(proj);
     }
   }
 
@@ -3338,23 +3485,21 @@ export default class GameServer implements Party.Server {
     }
 
     // 2) NPC-NPC separation (push overlapping pairs apart)
-    // Rebuild the NPC list cache only when NPC count changes (avoids Array.from every tick).
-    if (this.npcListCache.length !== this.npcs.size) {
-      this.npcListCache = Array.from(this.npcs.values());
-    }
-    const list = this.npcListCache;
-    for (let i = 0; i < list.length; i++) {
-      for (let j = i + 1; j < list.length; j++) {
-        const a = list[i];
-        const b = list[j];
+    // Uses spatial hash to check only nearby NPCs — O(n·k) instead of O(n²).
+    for (const a of this.npcs.values()) {
+      const aMin = MONSTER_SEPARATION_RADIUS_OVERRIDE[a.kind] ?? NPC_SEPARATION_RADIUS;
+      const searchR = aMin * 2;
+      this.queryBuf.length = 0;
+      this.npcHash.query(a.x, a.y, searchR, this.queryBuf);
+      for (const bId of this.queryBuf) {
+        if (bId <= a.id) continue; // process each pair only once (a.id < b.id)
+        const b = this.npcs.get(bId);
+        if (!b) continue;
         const dx = b.x - a.x;
-        if (dx > NPC_SEPARATION_RADIUS || dx < -NPC_SEPARATION_RADIUS) continue;
         const dy = b.y - a.y;
-        if (dy > NPC_SEPARATION_RADIUS || dy < -NPC_SEPARATION_RADIUS) continue;
         const distSq = dx * dx + dy * dy;
         // Per-pair separation radius: minimum of the two monsters' overrides.
         // Lets rats bunch tightly while still spreading from larger monsters they overlap with.
-        const aMin = MONSTER_SEPARATION_RADIUS_OVERRIDE[a.kind] ?? NPC_SEPARATION_RADIUS;
         const bMin = MONSTER_SEPARATION_RADIUS_OVERRIDE[b.kind] ?? NPC_SEPARATION_RADIUS;
         const minDist = Math.min(aMin, bMin);
         if (distSq < minDist * minDist && distSq > 0.01) {
@@ -3375,7 +3520,7 @@ export default class GameServer implements Party.Server {
       }
     }
     // Clamp to arena bounds after separation
-    for (const n of list) {
+    for (const n of this.npcs.values()) {
       n.x = clamp(n.x, NPC_RADIUS, ARENA_WIDTH - NPC_RADIUS);
       n.y = clamp(n.y, NPC_RADIUS, ARENA_HEIGHT - NPC_RADIUS);
     }
@@ -3712,9 +3857,9 @@ export default class GameServer implements Party.Server {
         color: p.color,
         hue: p.hue,
         country: p.country,
-        x: p.x,
-        y: p.y,
-        hp: p.hp,
+        x: Math.round(p.x),
+        y: Math.round(p.y),
+        hp: Math.round(p.hp),
         maxHp: p.maxHp,
         level: p.level,
         xp: p.xp,
@@ -3791,7 +3936,7 @@ export default class GameServer implements Party.Server {
     const npcs = [];
     for (const n of this.npcs.values()) {
       npcs.push({
-        id: n.id, kind: n.kind, x: n.x, y: n.y, hp: n.hp,
+        id: n.id, kind: n.kind, x: Math.round(n.x), y: Math.round(n.y), hp: Math.round(n.hp),
         ...(n.ai === 'moba_march' ? { ownerPlayerId: n.ownerPlayerId } : {}),
       });
     }
@@ -3799,9 +3944,12 @@ export default class GameServer implements Party.Server {
     for (const g of this.gems.values()) {
       gems.push(g);
     }
+    // Only homing projectiles go in the snapshot — all others use projCreate/projDestroy events
     const projectiles = [];
     for (const p of this.projectiles.values()) {
-      projectiles.push({ id: p.id, ownerId: p.ownerId, x: p.x, y: p.y, vx: p.vx, vy: p.vy, weapon: p.weapon });
+      if (p.pattern === 'homing') {
+        projectiles.push({ id: p.id, ownerId: p.ownerId, x: Math.round(p.x), y: Math.round(p.y), vx: Math.round(p.vx * 10) / 10, vy: Math.round(p.vy * 10) / 10, weapon: p.weapon });
+      }
     }
     const wolves = [];
     for (const w of this.wolves.values()) {
@@ -3864,7 +4012,11 @@ export default class GameServer implements Party.Server {
       bossMaxHp: this.activeBossId ? (this.npcs.get(this.activeBossId) as any)?.baseHp ?? undefined : undefined,
       bossHp: this.activeBossId ? this.npcs.get(this.activeBossId)?.hp ?? undefined : undefined,
     };
-    this.room.broadcast(JSON.stringify(snap));
+    const msg = JSON.stringify(snap);
+    if (this.tickCount % 500 === 0) {
+      console.log(`[NET] snapshot=${msg.length}B players=${snap.players.length} npcs=${snap.npcs.length} projs=${snap.projectiles.length}`);
+    }
+    this.room.broadcast(msg);
   }
 
   scheduleHazard(now: number) {
