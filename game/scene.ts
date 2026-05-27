@@ -249,7 +249,9 @@ export class ArenaScene extends Phaser.Scene {
   hazardLabels = new Map<string, Phaser.GameObjects.Text>();
   waveAlerts: { x: number; y: number; bornAt: number }[] = [];
   // Last known facing per NPC — prevents snapping to 'south' when entity is stopped.
-  npcFacing = new Map<string, Facing>();
+  npcFacing    = new Map<string, Facing>();
+  // Smoothed movement velocity per NPC — exponential moving average to filter crowd-separation noise.
+  npcSmoothVel = new Map<string, [number, number]>();
   pickupVisuals = new Map<string, Phaser.GameObjects.Graphics>();
   bossProjectileVisuals = new Map<string, Phaser.GameObjects.Graphics>();
   bossAlertUntil = 0;
@@ -2634,19 +2636,24 @@ export class ArenaScene extends Phaser.Scene {
         : false;
       let facing: Facing = this.npcFacing.get(n.id) ?? 'south';
       if (prevN && moving) {
-        const dx = n.x - prevN.x;
-        const dy = n.y - prevN.y;
-        const absDx = Math.abs(dx);
-        const absDy = Math.abs(dy);
+        const rawDx = n.x - prevN.x;
+        const rawDy = n.y - prevN.y;
+        // Exponential moving average (alpha=0.25) to smooth out crowd-separation noise.
+        // Raw deltas oscillate per-snapshot when NPCs push each other; smoothed values are stable.
+        const prevVel = this.npcSmoothVel.get(n.id) ?? [rawDx, rawDy];
+        const sdx = prevVel[0] * 0.75 + rawDx * 0.25;
+        const sdy = prevVel[1] * 0.75 + rawDy * 0.25;
+        this.npcSmoothVel.set(n.id, [sdx, sdy]);
+        const absDx = Math.abs(sdx);
+        const absDy = Math.abs(sdy);
         // Hysteresis: only switch axis when new axis dominates by 40%+.
-        // Prevents flickering on near-diagonal movement.
         const isHorizontal = facing === 'east' || facing === 'west';
         if (isHorizontal) {
-          if (absDy > absDx * 1.4) facing = dy > 0 ? 'south' : 'north';
-          else if (absDx > 0) facing = dx > 0 ? 'east' : 'west';
+          if (absDy > absDx * 1.4) facing = sdy > 0 ? 'south' : 'north';
+          else if (absDx > 0) facing = sdx > 0 ? 'east' : 'west';
         } else {
-          if (absDx > absDy * 1.4) facing = dx > 0 ? 'east' : 'west';
-          else if (absDy > 0) facing = dy > 0 ? 'south' : 'north';
+          if (absDx > absDy * 1.4) facing = sdx > 0 ? 'east' : 'west';
+          else if (absDy > 0) facing = sdy > 0 ? 'south' : 'north';
         }
         this.npcFacing.set(n.id, facing);
       }
@@ -2692,6 +2699,7 @@ export class ArenaScene extends Phaser.Scene {
         kindPool.push(s);
         this.npcHpTrack.delete(id);
         this.npcFacing.delete(id);
+        this.npcSmoothVel.delete(id);
         this.npcSprites.delete(id);
       }
     }
