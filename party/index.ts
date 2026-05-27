@@ -3332,8 +3332,6 @@ export default class GameServer implements Party.Server {
     }
 
     // 2) NPC-NPC separation (push overlapping pairs apart)
-    // Run at 25Hz (every other tick) — halves the O(n²) cost with no visible difference.
-    if (this.tickCount % 2 !== 0) return;
     // Rebuild the NPC list cache only when NPC count changes (avoids Array.from every tick).
     if (this.npcListCache.length !== this.npcs.size) {
       this.npcListCache = Array.from(this.npcs.values());
