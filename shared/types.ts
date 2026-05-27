@@ -156,8 +156,6 @@ export type NPCState = {
   x: number;
   y: number;
   hp: number;
-  vx: number; // velocidade X em px/s — dead reckoning no cliente
-  vy: number; // velocidade Y em px/s
   ownerPlayerId?: string; // 'blue' | 'red' for MOBA/ARAM minions
 };
 
@@ -204,7 +202,6 @@ export type Snapshot = {
   waveTimeLeftMs: number;
   players: PlayerState[];
   npcs: NPCState[];
-  npcUpdate: boolean; // true = npcs[] tem posições frescas; false = cliente usa dead reckoning
   gems: GemState[];
   projectiles: ProjectileState[];
   wolves?: WolfState[];

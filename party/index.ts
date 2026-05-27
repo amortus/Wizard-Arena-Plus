@@ -351,8 +351,6 @@ export default class GameServer implements Party.Server {
   // Perf: throttle expensive per-tick scans
   nextReapAt = 0;          // reapZombiePlayers runs every 2s, not every tick
   nextBroadcastAt = 0;     // broadcastSnapshot at 25Hz instead of 50Hz
-  nextNpcPhysicsAt = 0;    // updateNPCs() roda a 10Hz — reduz custo O(n²)
-  nextNpcSnapshotAt = 0;   // dados de NPC incluídos no snapshot a 10Hz
   tickCount = 0;           // incremented each tick — used for sub-Hz throttling
   npcListCache: ServerNpc[] = []; // reused array for O(n²) separation — rebuilt on size change
   // Persistent all-time leaderboard (top 10 by score)
@@ -526,7 +524,6 @@ export default class GameServer implements Party.Server {
       aiPhase: 'pursue',
       aiPhaseEndsAt: 0,
       flankSide: 1,
-      vx: 0, vy: 0,
     };
     this.npcs.set(id, npc);
   }
@@ -557,7 +554,6 @@ export default class GameServer implements Party.Server {
       aiPhase: 'pursue',
       aiPhaseEndsAt: 0,
       flankSide: 1,
-      vx: 0, vy: 0,
     };
     this.npcs.set(id, npc);
     this.activeBossId = id;
@@ -670,7 +666,6 @@ export default class GameServer implements Party.Server {
             retargetAt: Number.MAX_SAFE_INTEGER,
             ai: 'moba_march',
             aiPhase: 'pursue', aiPhaseEndsAt: 0, flankSide: 1,
-            vx: 0, vy: 0,
           };
           this.npcs.set(id, npc);
           this.mobaMinionWaypoints.set(id, { waypoints, waypointIdx: 1 });
@@ -911,7 +906,6 @@ export default class GameServer implements Party.Server {
           retargetAt: Number.MAX_SAFE_INTEGER,
           ai: 'moba_march',
           aiPhase: 'pursue', aiPhaseEndsAt: 0, flankSide: 1,
-          vx: 0, vy: 0,
         };
         this.npcs.set(id, npc);
         this.mobaMinionWaypoints.set(id, { waypoints, waypointIdx: 1 });
@@ -1579,15 +1573,11 @@ export default class GameServer implements Party.Server {
     this.updatePlayers(dt, now);
     this.updateProjectiles(dt);
 
-    const doNpcPhysics = now >= this.nextNpcPhysicsAt;
-    if (doNpcPhysics) this.nextNpcPhysicsAt = now + 100; // 10Hz
-
     if (this.gameMode === 'castle') {
       // Castle Defender: shared room-wide wave, NPCs march to castle
       if (!this.castleDefeated) {
         this.runCastleWave(now);
-        if (doNpcPhysics) this.updateNPCs(dt, now);
-        else this.extrapolateNpcs(dt);
+        this.updateNPCs(dt, now);
         this.checkCastleNpcs(now);
       }
     } else if (this.gameMode === 'moba') {
@@ -1595,8 +1585,7 @@ export default class GameServer implements Party.Server {
       if (!this.mobaWinner) {
         this.runMobaMinions(now);
         this.updateMinionCombat(now);
-        if (doNpcPhysics) this.updateNPCs(dt, now);
-        else this.extrapolateNpcs(dt);
+        this.updateNPCs(dt, now);
         this.updateTowers(now);
         this.checkMobaStructures();
       }
@@ -1607,8 +1596,7 @@ export default class GameServer implements Party.Server {
       if (!this.mobaWinner) {
         this.runAramMinions(now);
         this.updateMinionCombat(now);
-        if (doNpcPhysics) this.updateNPCs(dt, now);
-        else this.extrapolateNpcs(dt);
+        this.updateNPCs(dt, now);
         this.updateTowers(now);
         this.checkMobaStructures();
         this.spawnAramHealthRelics(now);
@@ -1623,8 +1611,7 @@ export default class GameServer implements Party.Server {
       this.retargetBoss();
       this.maybeSpawnBoss(now);
       this.maybeSpawnMiniBoss(now);
-      if (doNpcPhysics) this.updateNPCs(dt, now);
-      else this.extrapolateNpcs(dt);
+      this.updateNPCs(dt, now);
       this.scheduleHazard(now);
       this.scheduleBeams(now);
       this.scheduleBeamCurtain(now);
@@ -2503,7 +2490,6 @@ export default class GameServer implements Party.Server {
       // First regroup pause comes 5-7s in so NPCs reach the player before pausing
       aiPhaseEndsAt: Date.now() + 5000 + Math.random() * 2000,
       flankSide: Math.random() < 0.5 ? -1 : 1,
-      vx: 0, vy: 0,
     });
     p.pwWaveSpawnedSoFar += 1;
   }
@@ -2606,7 +2592,6 @@ export default class GameServer implements Party.Server {
       aiPhase: 'pursue',
       aiPhaseEndsAt: 0,
       flankSide: 1,
-      vx: 0, vy: 0,
     });
   }
 
@@ -2684,7 +2669,6 @@ export default class GameServer implements Party.Server {
       bossPhaseNum: this.bossGeneration >= 4 ? 0 : undefined,
       bossComboIdx: this.bossGeneration >= 5 ? 0 : undefined,
       bossComboFireAt: this.bossGeneration >= 5 ? now + 3000 : undefined,
-      vx: 0, vy: 0,
     });
 
     this.room.broadcast(JSON.stringify({ type: 'bossAlert', bossName: boss.name } satisfies ServerToClient));
@@ -2941,7 +2925,6 @@ export default class GameServer implements Party.Server {
         aiPhase: 'pursue',
         aiPhaseEndsAt: now + 3000,
         flankSide: Math.random() < 0.5 ? -1 : 1,
-        vx: 0, vy: 0,
       });
     }
     boss.bossNextSummonAt = now + (boss.bossSummonIntervalMs ?? 8000);
@@ -2984,19 +2967,7 @@ export default class GameServer implements Party.Server {
       aiPhase: 'pursue',
       aiPhaseEndsAt: Date.now() + 5000 + Math.random() * 2000,
       flankSide: Math.random() < 0.5 ? -1 : 1,
-      vx: 0, vy: 0,
     });
-  }
-
-  // Entre ticks de IA (10Hz), aplica extrapolação linear com a velocidade armazenada.
-  // Mantém posições suficientemente corretas para detecção de dano no servidor.
-  extrapolateNpcs(dt: number) {
-    for (const n of this.npcs.values()) {
-      if (n.vx !== 0 || n.vy !== 0) {
-        n.x = clamp(n.x + n.vx * dt, NPC_RADIUS, ARENA_WIDTH - NPC_RADIUS);
-        n.y = clamp(n.y + n.vy * dt, NPC_RADIUS, ARENA_HEIGHT - NPC_RADIUS);
-      }
-    }
   }
 
   updateNPCs(dt: number, now: number) {
@@ -3059,10 +3030,8 @@ export default class GameServer implements Party.Server {
               const td = Math.hypot(target.x - n.x, target.y - n.y);
               if (td > MINION_ATTACK_RANGE) {
                 const capped = Math.min(spd, PLAYER_SPEED * NPC_SPEED_CAP_FRAC);
-                n.vx = (target.x - n.x) / td * capped;
-                n.vy = (target.y - n.y) / td * capped;
-                n.x += n.vx * dt;
-                n.y += n.vy * dt;
+                n.x += ((target.x - n.x) / td) * capped * dt;
+                n.y += ((target.y - n.y) / td) * capped * dt;
               } else if (now >= (n.minionLastAttackAt ?? 0) + MINION_ATTACK_COOLDOWN) {
                 target.hp -= MINION_DAMAGE;
                 n.minionLastAttackAt = now;
@@ -3095,16 +3064,12 @@ export default class GameServer implements Party.Server {
             const pd = Math.hypot(pTarget.x - n.x, pTarget.y - n.y);
             if (pd > PLAYER_RADIUS + NPC_RADIUS) {
               const capped = Math.min(spd, PLAYER_SPEED * NPC_SPEED_CAP_FRAC);
-              n.vx = (pTarget.x - n.x) / pd * capped;
-              n.vy = (pTarget.y - n.y) / pd * capped;
-              n.x += n.vx * dt;
-              n.y += n.vy * dt;
+              n.x += ((pTarget.x - n.x) / pd) * capped * dt;
+              n.y += ((pTarget.y - n.y) / pd) * capped * dt;
               n.x = clamp(n.x, 20, ARENA_WIDTH - 20);
               n.y = clamp(n.y, 20, ARENA_HEIGHT - 20);
               const col = resolveCollision(n.x, n.y, NPC_RADIUS, MOBA_COLLISION_RECTS);
               n.x = col.x; n.y = col.y;
-            } else {
-              n.vx = 0; n.vy = 0;
             }
             if (now >= n.lastHitAt + NPC_TOUCH_COOLDOWN_MS && pTarget.alive
               && now >= pTarget.invulnerableUntil && now >= pTarget.damageImmuneUntil) {
@@ -3155,10 +3120,8 @@ export default class GameServer implements Party.Server {
                 }
               } else {
                 const capped = Math.min(spd, PLAYER_SPEED * NPC_SPEED_CAP_FRAC);
-                n.vx = (dx / dist) * capped;
-                n.vy = (dy / dist) * capped;
-                n.x += n.vx * dt;
-                n.y += n.vy * dt;
+                n.x += (dx / dist) * capped * dt;
+                n.y += (dy / dist) * capped * dt;
                 n.x = clamp(n.x, 20, ARENA_WIDTH - 20);
                 n.y = clamp(n.y, 20, ARENA_HEIGHT - 20);
                 const col = resolveCollision(n.x, n.y, NPC_RADIUS, MOBA_COLLISION_RECTS);
@@ -3197,14 +3160,10 @@ export default class GameServer implements Party.Server {
           const dy = this.castle.y - n.y;
           const dist = Math.hypot(dx, dy) || 1;
           spd = Math.min(spd, PLAYER_SPEED * NPC_SPEED_CAP_FRAC);
-          n.vx = (dx / dist) * spd;
-          n.vy = (dy / dist) * spd;
-          n.x += n.vx * dt;
-          n.y += n.vy * dt;
+          n.x += (dx / dist) * spd * dt;
+          n.y += (dy / dist) * spd * dt;
           n.x = clamp(n.x, 20, ARENA_WIDTH - 20);
           n.y = clamp(n.y, 20, ARENA_HEIGHT - 20);
-        } else {
-          n.vx = 0; n.vy = 0;
         }
         // Touch damage to players in the path
         if (now >= n.lastHitAt + NPC_TOUCH_COOLDOWN_MS) {
@@ -3297,13 +3256,11 @@ export default class GameServer implements Party.Server {
         if (n.bossPhase === 'windup' || n.bossPhase === 'recover') {
           speedNow = 0;
         } else if (n.bossPhase === 'dash' && n.bossDashVx != null && n.bossDashVy != null) {
-          n.vx = n.bossDashVx * n.baseSpeed * 3;
-          n.vy = n.bossDashVy * n.baseSpeed * 3;
-          n.x += n.vx * dt;
-          n.y += n.vy * dt;
+          n.x += n.bossDashVx * n.baseSpeed * 3 * dt;
+          n.y += n.bossDashVy * n.baseSpeed * 3 * dt;
           n.x = clamp(n.x, 20, ARENA_WIDTH - 20);
           n.y = clamp(n.y, 20, ARENA_HEIGHT - 20);
-          speedNow = 0; // position already updated — skip main movement below
+          speedNow = 0; // position already updated
         } else {
           speedNow = n.baseSpeed * 0.5; // slow idle chase
         }
@@ -3348,13 +3305,8 @@ export default class GameServer implements Party.Server {
       const dy = aimY - n.y;
       const dist = Math.hypot(dx, dy) || 1;
       speedNow = Math.min(speedNow, PLAYER_SPEED * NPC_SPEED_CAP_FRAC);
-      // Armazenar vx/vy para dead reckoning — boss_charge em dash já setou acima
-      if (n.bossPhase !== 'dash') {
-        n.vx = (dx / dist) * speedNow;
-        n.vy = (dy / dist) * speedNow;
-      }
-      n.x += n.vx * dt;
-      n.y += n.vy * dt;
+      n.x += (dx / dist) * speedNow * dt;
+      n.y += (dy / dist) * speedNow * dt;
 
       // Black-hole pull: any active black hole drags this NPC toward its center.
       for (const bh of this.blackHoles.values()) {
@@ -3836,18 +3788,12 @@ export default class GameServer implements Party.Server {
         mobaCrystals.push({ team: c.team, hp: c.hp, maxHp: c.maxHp, x: c.x, y: c.y, alive: c.alive });
       }
     }
-    const npcUpdate = now >= this.nextNpcSnapshotAt;
-    if (npcUpdate) this.nextNpcSnapshotAt = now + 100; // 10Hz
-    const npcs: NPCState[] = [];
-    if (npcUpdate) {
-      for (const n of this.npcs.values()) {
-        npcs.push({
-          id: n.id, kind: n.kind, x: n.x, y: n.y, hp: n.hp,
-          vx: Math.round(n.vx * 10) / 10,
-          vy: Math.round(n.vy * 10) / 10,
-          ...(n.ai === 'moba_march' ? { ownerPlayerId: n.ownerPlayerId } : {}),
-        });
-      }
+    const npcs = [];
+    for (const n of this.npcs.values()) {
+      npcs.push({
+        id: n.id, kind: n.kind, x: n.x, y: n.y, hp: n.hp,
+        ...(n.ai === 'moba_march' ? { ownerPlayerId: n.ownerPlayerId } : {}),
+      });
     }
     const gems = [];
     for (const g of this.gems.values()) {
@@ -3902,7 +3848,6 @@ export default class GameServer implements Party.Server {
       waveTimeLeftMs: roomWaveTimeLeftMs,
       players,
       npcs,
-      npcUpdate,
       gems,
       projectiles,
       wolves,
@@ -4173,7 +4118,6 @@ export default class GameServer implements Party.Server {
       ai: 'boss_enrage',
       aiPhase: 'pursue', aiPhaseEndsAt: 0, flankSide: 1,
       bossEnraged: false,
-      vx: 0, vy: 0,
     });
     this.nextMiniBossWave = wave + 5;
   }
