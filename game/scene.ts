@@ -282,6 +282,8 @@ export class ArenaScene extends Phaser.Scene {
   _seenNpcs       = new Set<string>();
   _seenGems       = new Set<string>();
   _seenProj       = new Set<string>();
+  _renderProjBuf: { id: string; ownerId: string; x: number; y: number; vx: number; vy: number; weapon: string }[] = [];
+  _playerById     = new Map<string, { id: string; x: number; y: number }>();
   _seenWolves     = new Set<string>();
   _seenPickups    = new Set<string>();
   _seenBossProj   = new Set<string>();
@@ -1048,6 +1050,8 @@ export class ArenaScene extends Phaser.Scene {
       this.prevSnapshotTime = this.snapshotTime;
       this.latestSnapshot = msg;
       this.snapshotTime = arrivedAt;
+      this._playerById.clear();
+      for (const p of msg.players) this._playerById.set(p.id, p);
       // reconcile predicted self toward server position
       if (this.selfId) {
         const self = msg.players.find((p) => p.id === this.selfId);
@@ -2186,8 +2190,7 @@ export class ArenaScene extends Phaser.Scene {
       }
       if (proj.pattern === 'orbital') {
         proj.orbitAngle = (proj.orbitAngle ?? 0) + (proj.orbitSpinSpeed ?? 3) * dtSec;
-        // Resolve position from owner's latest snapshot position
-        const owner = this.latestSnapshot?.players.find((p) => p.id === proj.ownerId);
+        const owner = this._playerById.get(proj.ownerId);
         if (owner) {
           proj.x = owner.x + Math.cos(proj.orbitAngle!) * (proj.orbitRadius ?? 80);
           proj.y = owner.y + Math.sin(proj.orbitAngle!) * (proj.orbitRadius ?? 80);
@@ -2633,8 +2636,18 @@ export class ArenaScene extends Phaser.Scene {
       if (prevN && moving) {
         const dx = n.x - prevN.x;
         const dy = n.y - prevN.y;
-        if (Math.abs(dx) > Math.abs(dy)) facing = dx > 0 ? 'east' : 'west';
-        else facing = dy > 0 ? 'south' : 'north';
+        const absDx = Math.abs(dx);
+        const absDy = Math.abs(dy);
+        // Hysteresis: only switch axis when new axis dominates by 40%+.
+        // Prevents flickering on near-diagonal movement.
+        const isHorizontal = facing === 'east' || facing === 'west';
+        if (isHorizontal) {
+          if (absDy > absDx * 1.4) facing = dy > 0 ? 'south' : 'north';
+          else if (absDx > 0) facing = dx > 0 ? 'east' : 'west';
+        } else {
+          if (absDx > absDy * 1.4) facing = dx > 0 ? 'east' : 'west';
+          else if (absDy > 0) facing = dy > 0 ? 'south' : 'north';
+        }
         this.npcFacing.set(n.id, facing);
       }
       const spriteKind = VARIANT_BASE[n.kind] ?? n.kind;
@@ -2741,7 +2754,9 @@ export class ArenaScene extends Phaser.Scene {
     const seenProj = this._seenProj;
     const tNow = performance.now();
     // Render clientProjs (straight/wave/orbital — simulated locally) + snap.projectiles (homing only)
-    const allProjectiles: { id: string; ownerId: string; x: number; y: number; vx: number; vy: number; weapon: string }[] = [];
+    // Reuse class-level buffer to avoid per-frame allocation.
+    const allProjectiles = this._renderProjBuf;
+    allProjectiles.length = 0;
     for (const cp of this.clientProjs.values()) allProjectiles.push(cp);
     for (const sp of snap.projectiles) allProjectiles.push(sp);
     for (const pr of allProjectiles) {
