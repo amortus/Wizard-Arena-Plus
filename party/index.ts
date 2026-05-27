@@ -347,9 +347,9 @@ class PerfMonitor {
   private buckets: Record<string, number[]> = {};
 
   time<T>(label: string, fn: () => T): T {
-    const t0 = performance.now();
+    const t0 = Date.now();
     const r = fn();
-    const ms = performance.now() - t0;
+    const ms = Date.now() - t0;
     (this.buckets[label] ??= []).push(ms);
     if (this.buckets[label].length > 300) this.buckets[label].shift();
     return r;
@@ -1624,7 +1624,7 @@ export default class GameServer implements Party.Server {
   }
 
   tick() {
-    const tickStart = performance.now();
+    const tickStart = Date.now();
     const now = Date.now();
     const dt = Math.min((now - this.lastTickAt) / 1000, 0.1);
     this.lastTickAt = now;
@@ -1705,7 +1705,7 @@ export default class GameServer implements Party.Server {
       this.perf.time('broadcastSnapshot', () => this.broadcastSnapshot(now));
     }
 
-    const tickTotal = performance.now() - tickStart;
+    const tickTotal = Date.now() - tickStart;
     if (tickTotal > TICK_MS * 1.5) {
       console.warn(`[PERF] Slow tick: ${tickTotal.toFixed(1)}ms (budget=${TICK_MS}ms) projs=${this.projectiles.size} npcs=${this.npcs.size}`);
     }
