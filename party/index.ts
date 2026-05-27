@@ -350,6 +350,7 @@ export default class GameServer implements Party.Server {
   tickHandle: ReturnType<typeof setInterval> | null = null;
   // Perf: throttle expensive per-tick scans
   nextReapAt = 0;          // reapZombiePlayers runs every 2s, not every tick
+  nextBroadcastAt = 0;     // broadcastSnapshot at 25Hz instead of 50Hz
   tickCount = 0;           // incremented each tick — used for sub-Hz throttling
   npcListCache: ServerNpc[] = []; // reused array for O(n²) separation — rebuilt on size change
   // Persistent all-time leaderboard (top 10 by score)
@@ -1623,7 +1624,12 @@ export default class GameServer implements Party.Server {
     this.updatePickups(now);
     this.updateBossProjectiles(dt, now);
 
-    this.broadcastSnapshot(now);
+    // Broadcast at 25Hz (every 40ms) — halves JSON.stringify cost.
+    // Physics stays at 50Hz; client interpolation at 60ms delay handles 40ms gap smoothly.
+    if (now >= this.nextBroadcastAt) {
+      this.nextBroadcastAt = now + 40;
+      this.broadcastSnapshot(now);
+    }
   }
 
   // Cloudflare hibernation can leave phantom players in our map: their
@@ -3183,7 +3189,7 @@ export default class GameServer implements Party.Server {
         n.retargetAt = now + 30000 + Math.random() * 60000;
       }
 
-      const target = this.targetForNpc(n);
+      const target = this.targetForNpc(n, now);
       // Freeze (Time Stop): hard-stop while > now. Slow + freeze are independent;
       // freeze takes precedence because it's a stronger effect.
       const frozen = now < n.freezeUntil;
@@ -3378,8 +3384,7 @@ export default class GameServer implements Party.Server {
   // NPCs prefer their owner (the player whose wave spawned them).
   // If the owner is dead/invulnerable, fall back to the nearest non-invuln player.
   // If everyone is invuln, returns null and the NPC stands still.
-  targetForNpc(n: { x: number; y: number; ownerPlayerId: string }): ServerPlayer | null {
-    const wallNow = Date.now();
+  targetForNpc(n: { x: number; y: number; ownerPlayerId: string }, wallNow: number): ServerPlayer | null {
     // MOBA minions: ownerPlayerId stores team string, not a player id
     if (n.ownerPlayerId === 'blue' || n.ownerPlayerId === 'red') {
       const enemyTeam: MobaTeam = n.ownerPlayerId === 'blue' ? 'red' : 'blue';
