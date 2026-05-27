@@ -250,6 +250,8 @@ export class ArenaScene extends Phaser.Scene {
   waveAlerts: { x: number; y: number; bornAt: number }[] = [];
   // Last known facing per NPC — prevents snapping to 'south' when entity is stopped.
   npcFacing = new Map<string, Facing>();
+  // Dead reckoning: último estado recebido do servidor por NPC
+  npcDR = new Map<string, { x: number; y: number; vx: number; vy: number; t: number; hp: number; kind: string; ownerPlayerId?: string }>();
   pickupVisuals = new Map<string, Phaser.GameObjects.Graphics>();
   bossProjectileVisuals = new Map<string, Phaser.GameObjects.Graphics>();
   bossAlertUntil = 0;
@@ -2526,17 +2528,36 @@ export class ArenaScene extends Phaser.Scene {
       }
     }
 
-    // npcs
+    // npcs — dead reckoning: atualiza dados de DR quando o servidor envia update (10Hz)
+    // Entre updates, extrapola posição localmente a 60fps usando vx/vy do último update.
+    if (snap.npcUpdate) {
+      const arrivedAt = performance.now();
+      const incomingIds = new Set<string>();
+      for (const n of snap.npcs) {
+        incomingIds.add(n.id);
+        this.npcDR.set(n.id, { x: n.x, y: n.y, vx: n.vx, vy: n.vy, t: arrivedAt, hp: n.hp, kind: n.kind, ownerPlayerId: n.ownerPlayerId });
+      }
+      for (const id of this.npcDR.keys()) {
+        if (!incomingIds.has(id)) this.npcDR.delete(id);
+      }
+    }
+
+    const nowMs = performance.now();
     this._seenNpcs.clear();
     const seenNpcs = this._seenNpcs;
-    for (const n of snap.npcs) {
-      seenNpcs.add(n.id);
-      let s = this.npcSprites.get(n.id);
+
+    for (const [id, dr] of this.npcDR) {
+      seenNpcs.add(id);
+      const elapsed = Math.min((nowMs - dr.t) / 1000, 0.15);
+      const ex = dr.x + dr.vx * elapsed;
+      const ey = dr.y + dr.vy * elapsed;
+
+      let s = this.npcSprites.get(id);
       if (!s) {
-        const baseKind = VARIANT_BASE[n.kind] ?? n.kind;
+        const baseKind = VARIANT_BASE[dr.kind] ?? dr.kind;
         const tex = `${baseKind}_south`;
-        const npcScale = (NPC_SPRITE_SCALE[n.kind] ?? 1) * SPRITE_SHRINK;
-        const kindPool = this.npcPool.get(n.kind);
+        const npcScale = (NPC_SPRITE_SCALE[dr.kind] ?? 1) * SPRITE_SHRINK;
+        const kindPool = this.npcPool.get(dr.kind);
         if (kindPool && kindPool.length > 0) {
           s = kindPool.pop()!;
           const frameKey0 = this.hasFrame(tex) ? tex : 'skeleton_south';
@@ -2544,28 +2565,23 @@ export class ArenaScene extends Phaser.Scene {
           s.setVisible(true).setActive(true).setAlpha(1).clearTint();
         } else {
           const frameKey0 = this.hasFrame(tex) ? tex : 'skeleton_south';
-          s = this.add.sprite(n.x, n.y, this.atlasFor(frameKey0), frameKey0);
+          s = this.add.sprite(ex, ey, this.atlasFor(frameKey0), frameKey0);
           s.setDepth(10);
         }
         s.setScale(npcScale);
         s.setData('baseScale', npcScale);
-        s.setData('kind', n.kind);
-        this.npcSprites.set(n.id, s);
+        s.setData('kind', dr.kind);
+        this.npcSprites.set(id, s);
       }
-      const prevN = prevNpcById.get(n.id);
-      const interpPos = lerpEntity(prevN, n, interp);
-      const moving = prevN
-        ? (Math.abs(n.x - prevN.x) + Math.abs(n.y - prevN.y)) > 0.5
-        : false;
-      let facing: Facing = this.npcFacing.get(n.id) ?? 'south';
-      if (prevN && moving) {
-        const dx = n.x - prevN.x;
-        const dy = n.y - prevN.y;
-        if (Math.abs(dx) > Math.abs(dy)) facing = dx > 0 ? 'east' : 'west';
-        else facing = dy > 0 ? 'south' : 'north';
-        this.npcFacing.set(n.id, facing);
+
+      const moving = (Math.abs(dr.vx) + Math.abs(dr.vy)) > 1;
+      let facing: Facing = this.npcFacing.get(id) ?? 'south';
+      if (moving) {
+        if (Math.abs(dr.vx) > Math.abs(dr.vy)) facing = dr.vx > 0 ? 'east' : 'west';
+        else facing = dr.vy > 0 ? 'south' : 'north';
+        this.npcFacing.set(id, facing);
       }
-      const spriteKind = VARIANT_BASE[n.kind] ?? n.kind;
+      const spriteKind = VARIANT_BASE[dr.kind] ?? dr.kind;
       const animKey = `${spriteKind}_walk_${facing}`;
       const idleKey = `${spriteKind}_${facing}`;
       if (moving && this.anims.exists(animKey)) {
@@ -2575,27 +2591,23 @@ export class ArenaScene extends Phaser.Scene {
         if (this.hasFrame(idleKey) && s.frame.name !== idleKey) s.setTexture(this.atlasFor(idleKey), idleKey);
       }
 
-      // hit flash for NPCs + floating damage number
-      const ntrack = this.npcHpTrack.get(n.id) ?? { lastHp: n.hp, flashUntilMs: 0 };
-      if (n.hp < ntrack.lastHp - 0.01) {
+      // hit flash + número de dano (HP vem do último update do servidor)
+      const ntrack = this.npcHpTrack.get(id) ?? { lastHp: dr.hp, flashUntilMs: 0 };
+      if (dr.hp < ntrack.lastHp - 0.01) {
         ntrack.flashUntilMs = renderNow + 150;
-        const dmg = Math.max(1, Math.round(ntrack.lastHp - n.hp));
-        this.spawnDamageNumber(n.x, n.y - 6, dmg);
+        const dmg = Math.max(1, Math.round(ntrack.lastHp - dr.hp));
+        this.spawnDamageNumber(ex, ey - 6, dmg);
       }
-      ntrack.lastHp = n.hp;
-      this.npcHpTrack.set(n.id, ntrack);
-      // MOBA/ARAM team tint: blue team = blue hue, red team = red hue
-      const teamBaseTint = n.ownerPlayerId === 'blue' ? 0x88bbff
-        : n.ownerPlayerId === 'red'  ? 0xff8866
-        : (VARIANT_TINT[n.kind] ?? 0xffffff);
-      if (renderNow < ntrack.flashUntilMs) {
-        s.setTint(0xffffff);
-      } else {
-        s.setTint(teamBaseTint);
-      }
+      ntrack.lastHp = dr.hp;
+      this.npcHpTrack.set(id, ntrack);
 
-      s.x = interpPos.x;
-      s.y = interpPos.y;
+      const teamBaseTint = dr.ownerPlayerId === 'blue' ? 0x88bbff
+        : dr.ownerPlayerId === 'red'  ? 0xff8866
+        : (VARIANT_TINT[dr.kind] ?? 0xffffff);
+      s.setTint(renderNow < ntrack.flashUntilMs ? 0xffffff : teamBaseTint);
+
+      s.x = ex;
+      s.y = ey;
     }
     for (const [id, s] of this.npcSprites) {
       if (!seenNpcs.has(id)) {
@@ -2607,6 +2619,7 @@ export class ArenaScene extends Phaser.Scene {
         kindPool.push(s);
         this.npcHpTrack.delete(id);
         this.npcFacing.delete(id);
+        this.npcDR.delete(id);
         this.npcSprites.delete(id);
       }
     }
