@@ -397,6 +397,9 @@ export default class GameServer implements Party.Server {
   nextBeamAt = 0;
   nextBeamCurtainAt = 0;
   currentRoomWave = 0;
+  // Peak wave ever reached in this room — never decreases so new joiners sync here
+  // and the displayed wave never resets when the high-wave player leaves.
+  peakRoomWave = 0;
   // Mini-boss — spawns every 5 waves
   miniBossId: string | null = null;
   nextMiniBossWave = 5;
@@ -1078,6 +1081,7 @@ export default class GameServer implements Party.Server {
     this.dragonId = null;
     this.nextDragonAllowedAt = 0;
     this.activeBossId = null;
+    this.peakRoomWave = 0;
     this.nextBossWave = 10;
     this.bossRosterIdx = 0;
     this.bossGeneration = 0;
@@ -1278,7 +1282,9 @@ export default class GameServer implements Party.Server {
       pickupMul: 1,
       cooldownMul: 1,
       weapons: [base.weapon],
-      waveNumber: 0,
+      // Start at the room's peak wave so late joiners sync to the room's progress.
+      // waveNumber is the LAST completed wave; runWaveForPlayer() increments before spawning.
+      waveNumber: Math.max(0, this.peakRoomWave - 1),
       waveName: '',
       waveTimeLeftMs: 0,
       invulnerableUntil: Date.now() + SPAWN_INVULN_MS,
@@ -3682,6 +3688,7 @@ export default class GameServer implements Party.Server {
       x: x + Math.cos(angle) * r,
       y: y + Math.sin(angle) * r,
       value,
+      bornAt: Date.now(),
     });
   }
 
@@ -3779,8 +3786,12 @@ export default class GameServer implements Party.Server {
   }
 
   updateGems() {
+    const nowMs = Date.now();
     for (const gem of this.gems.values()) {
-      // find any player within pickup range
+      const isOld = nowMs - gem.bornAt > 90_000;
+      // find any player within pickup range (or nearest player if gem is old)
+      let nearestP: ServerPlayer | null = null;
+      let nearestD2 = Infinity;
       for (const p of this.players.values()) {
         if (!p.alive) continue;
         const range = GEM_PICKUP_RADIUS * p.pickupMul;
@@ -3789,15 +3800,20 @@ export default class GameServer implements Party.Server {
           // collected
           this.collectGem(p, gem);
           this.gems.delete(gem.id);
+          nearestP = null;
           break;
-        } else if (d2 < range * range) {
-          // vacuum toward player
-          const dx = p.x - gem.x;
-          const dy = p.y - gem.y;
-          const len = Math.hypot(dx, dy) || 1;
-          gem.x += (dx / len) * 220 * (TICK_MS / 1000);
-          gem.y += (dy / len) * 220 * (TICK_MS / 1000);
+        } else if (d2 < range * range || isOld) {
+          // vacuum candidate
+          if (d2 < nearestD2) { nearestD2 = d2; nearestP = p; }
         }
+      }
+      if (nearestP) {
+        const dx = nearestP.x - gem.x;
+        const dy = nearestP.y - gem.y;
+        const len = Math.hypot(dx, dy) || 1;
+        const speed = isOld ? 500 : 220;
+        gem.x += (dx / len) * speed * (TICK_MS / 1000);
+        gem.y += (dy / len) * speed * (TICK_MS / 1000);
       }
     }
   }
@@ -3967,7 +3983,9 @@ export default class GameServer implements Party.Server {
     for (const bp of this.bossProjectiles.values()) {
       bossProjectiles.push({ id: bp.id, x: bp.x, y: bp.y, vx: bp.vx, vy: bp.vy, radius: bp.radius, generation: bp.generation });
     }
-    // Room wave = castle wave (castle mode) or highest alive-player wave (arena mode)
+    // Room wave = castle wave (castle mode) or highest alive-player wave (arena mode).
+    // peakRoomWave never decreases so the displayed wave never resets when a high-wave
+    // player leaves/dies and a lower-wave player is still alive.
     let roomWave = 0;
     let roomWaveName = '';
     let roomWaveTimeLeftMs = 0;
@@ -3984,6 +4002,11 @@ export default class GameServer implements Party.Server {
           roomWaveName = p.waveName;
           roomWaveTimeLeftMs = p.waveTimeLeftMs;
         }
+      }
+      // Freeze the peak — never display a lower wave than what was reached.
+      this.peakRoomWave = Math.max(this.peakRoomWave, roomWave);
+      if (this.peakRoomWave > roomWave) {
+        roomWave = this.peakRoomWave;
       }
     }
     this.currentRoomWave = roomWave;
@@ -4332,7 +4355,7 @@ export default class GameServer implements Party.Server {
 
   tryDropPickup(npc: ServerNpc, now: number) {
     const tier = MONSTER_BASES[npc.kind].tier;
-    const dropChance = tier === 'boss' ? 0.42 : tier === 'elite' ? 0.18 : 0.025;
+    const dropChance = tier === 'boss' ? 0.13 : tier === 'elite' ? 0.054 : 0.0075;
     if (Math.random() > dropChance) return;
 
     const pools: Record<string, PickupKind[]> = {

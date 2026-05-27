@@ -164,6 +164,7 @@ export type GemState = {
   x: number;
   y: number;
   value: number;
+  bornAt: number;
 };
 
 export type ProjectileState = {
