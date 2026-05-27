@@ -977,7 +977,7 @@ export default class GameServer implements Party.Server {
     if (this.gameMode !== 'aram') {
       const p = this.players.get(conn.id);
       if (p && p.alive) {
-        this.ghostPlayers.set(`${p.name}::${p.character}`, { player: { ...p }, expiresAt: Date.now() + 10_000 });
+        this.ghostPlayers.set(`${p.name}::${p.character}`, { player: { ...p }, expiresAt: Date.now() + 30_000 });
       }
     }
     this.players.delete(conn.id);
@@ -1634,6 +1634,13 @@ export default class GameServer implements Party.Server {
       const noConn = !live.has(id);
       const idle = now - p.lastTouchAt > ZOMBIE_TIMEOUT_MS;
       if (noConn || idle) {
+        // Save ghost so the player can restore state on reconnect (onClose may not have fired)
+        if (this.gameMode !== 'aram' && p.alive) {
+          const key = `${p.name}::${p.character}`;
+          if (!this.ghostPlayers.has(key)) {
+            this.ghostPlayers.set(key, { player: { ...p }, expiresAt: now + 30_000 });
+          }
+        }
         this.players.delete(id);
         for (const [wid, w] of this.wolves) if (w.ownerId === id) this.wolves.delete(wid);
       }
