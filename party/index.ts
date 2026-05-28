@@ -3343,7 +3343,7 @@ export default class GameServer implements Party.Server {
               const npcTouchFinal = NPC_DAMAGE * berserkerPenalty;
               p.hp -= npcTouchFinal;
               n.lastHitAt = now;
-              if (p.hp <= 0) this.killPlayer(p, '__npc__', npcTouchFinal);
+              if (p.hp <= 0) this.killPlayer(p, n.id, npcTouchFinal);
               break;
             }
           }
@@ -3503,7 +3503,7 @@ export default class GameServer implements Party.Server {
         const npcAreaFinal = NPC_DAMAGE * dmgMul * berserkerPenalty;
         target.hp -= npcAreaFinal;
         n.lastHitAt = now;
-        if (target.hp <= 0) this.killPlayer(target, '__npc__', npcAreaFinal);
+        if (target.hp <= 0) this.killPlayer(target, n.id, npcAreaFinal);
       }
     }
 

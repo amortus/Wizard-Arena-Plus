@@ -221,3 +221,63 @@ export const T = {
 } as const;
 
 export type Translations = typeof T.en;
+
+export const POWERUP_PT: Record<string, { name: string; desc: string }> = {
+  // Damage
+  damage_up:        { name: 'Dano +25%',             desc: 'Todas as armas acertam mais forte.' },
+  mega_damage:      { name: 'Mega Dano',              desc: '+50% de dano. Nível 5+.' },
+  crit:             { name: 'Golpe Crítico',          desc: '+15% de chance de dano duplo.' },
+  // Speed / Cooldown
+  speed_up:         { name: 'Velocidade +5%',         desc: 'Corra mais rápido.' },
+  cooldown_down:    { name: 'Recarga -15%',           desc: 'Ataque com mais frequência.' },
+  fast_hands:       { name: 'Mãos Rápidas',           desc: '-25% de recarga. Nível 5+.' },
+  // Health
+  hp_up:            { name: '+25 Vida Máxima',        desc: 'Mais vida máxima e cura total.' },
+  regen:            { name: 'Regeneração',            desc: '+1 HP/s de cura passiva.' },
+  vampire:          { name: 'Mordida Vampírica',      desc: 'Cura 10% do dano causado. Nível 3+.' },
+  // Pickup / Magic
+  pickup_up:        { name: 'Alcance de Coleta +50%', desc: 'Colete gemas de maior distância.' },
+  // Range
+  extended_range:   { name: 'Alcance Estendido',      desc: 'Projéteis viajam 35% mais longe.' },
+  // Pierce / Aura / Risk
+  piercing:         { name: 'Tiro Perfurante',        desc: 'Projéteis atravessam +1 inimigo.' },
+  frost_aura:       { name: 'Aura Gélida',            desc: 'Causa dano aos inimigos próximos. Nível 3+.' },
+  lucky_gems:       { name: 'Gemas da Sorte',         desc: '+50% de XP de cada gema.' },
+  bigger_heart:     { name: 'Coração Maior',          desc: '+50 de vida máxima e cura total. Nível 3+.' },
+  glass_cannon:     { name: 'Canhão de Vidro',        desc: '-25% de vida máxima, +60% de dano. Nível 5+.' },
+  time_shield:      { name: 'Escudo Temporal',        desc: 'A cada 30s, receba 0 dano por 5s. Nível 4+.' },
+  lightning_strike: { name: 'Raio',                   desc: 'Um raio atinge um inimigo aleatório a cada 4s. Nível 3+.' },
+  meteor_shower:    { name: 'Chuva de Meteoros',      desc: '3 meteoros caem em inimigos a cada 8s. Nível 4+.' },
+  frost_nova:       { name: 'Nova Gélida',            desc: 'Um anel de gelo explode a cada 6s, causando dano e desacelerando. Nível 3+.' },
+  holy_smite:       { name: 'Golpe Sagrado',          desc: 'Um pilar de luz vaporiza um inimigo a cada 5s. Nível 4+.' },
+  black_hole:       { name: 'Buraco Negro',           desc: 'Um vórtice puxa e tritura inimigos por 3s a cada 18s. Nível 6+.' },
+  phoenix_rebirth:  { name: 'Renascimento da Fênix',  desc: 'Ao morrer, revive uma vez com vida total e explosão de fogo. Nível 5+.' },
+  chain_reaction:   { name: 'Reação em Cadeia',       desc: 'Inimigos mortos têm 25% de chance de explodir.' },
+  missile_barrage:  { name: 'Rajada de Mísseis',      desc: '8 mísseis teleguiados disparam a cada 12s. Nível 4+.' },
+  earthquake:       { name: 'Terremoto',              desc: 'Uma onda de choque empurra e causa dano a cada 12s. Nível 4+.' },
+  spirit_wolves:    { name: 'Lobo Espírito',          desc: 'Um lobo fantasma orbita e ataca inimigos próximos. Nível 4+.' },
+  spirit_wolves_more: { name: 'Uivo da Matilha',      desc: '+1 Lobo Espírito. Máximo de 3 no total.' },
+  bloodbath:        { name: 'Banho de Sangue',        desc: 'Abaixo de 30% de vida, cause +30% de dano.' },
+  soul_harvest:     { name: 'Colheita de Almas',      desc: 'Cada abate concede +0,1% de dano permanente (máx. +50%). Nível 3+.' },
+  trail_of_fire:    { name: 'Rastro de Fogo',         desc: 'Deixa um rastro que queima inimigos. Nível 3+.' },
+  time_stop:        { name: 'Parada do Tempo',        desc: 'Congela inimigos próximos por 2s a cada 25s. Nível 5+.' },
+  // Tier-2
+  aura_shield_wider:    { name: 'Aura Expandida',     desc: '+50% no raio da Aura. Acumula até 2,5×.' },
+  trail_of_fire_longer: { name: 'Rastro Duradouro',   desc: 'Rastro de Fogo dura 50% mais. Acumula até 2,5×.' },
+  frost_nova_bigger:    { name: 'Explosão Glacial',   desc: '+40% no raio da Nova Gélida. Acumula até 2,2×.' },
+  lightning_faster:     { name: 'Relâmpagos Rápidos', desc: '-30% na recarga do Raio. Mínimo 0,4×.' },
+  // Projectile shape
+  extra_projectile:   { name: '+1 Projétil',          desc: 'Cada arma dispara +1 projétil.' },
+  extra_projectile_2: { name: '+2 Projéteis',         desc: 'Cada arma dispara +2 projéteis. Nível 5+.' },
+  big_hit:            { name: 'Tiros Maiores',         desc: '+30% no tamanho dos projéteis.' },
+  splash:             { name: 'Dano em Área',          desc: 'Projéteis explodem no impacto. Nível 4+.' },
+  // Weapon adds
+  add_sword:          { name: 'Lançamento de Pedra',  desc: 'Lança uma pedra pesada no inimigo mais próximo.' },
+  add_orb:            { name: 'Orbe Arcano',           desc: 'Um orbe brilhante de energia arcana.' },
+  add_dagger:         { name: 'Corta-Folhas',          desc: 'Dispara duas folhas em leque fechado.' },
+  add_fireball:       { name: 'Bola de Fogo',          desc: 'Uma chama lenta que causa muito dano.' },
+  add_lightning_bolt: { name: 'Raio Elétrico',         desc: 'Três raios faíscantes de luz.' },
+  add_shadow_bolt:    { name: 'Raio Sombrio',          desc: 'Um raio de trevas que persegue sua presa.' },
+  add_orbital_spark:  { name: 'Faíscas Orbitais',      desc: 'Três faíscas orbitam você, atingindo inimigos ao toque.' },
+  add_aura_shield:    { name: 'Escudo de Aura',        desc: 'Um anel brilhante ao seu redor que queima inimigos próximos.' },
+};

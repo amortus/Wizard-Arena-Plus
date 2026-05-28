@@ -5,7 +5,7 @@ import type { CastleState, GameMode, LeaderboardEntry, MobaCrystalState, MobaTea
 import { MOBA_ITEMS } from '../shared/items';
 import { dedupeBestByName } from '../shared/leaderboard';
 import { POWERUPS } from '../shared/powerups';
-import { T, type Lang } from '../shared/i18n';
+import { T, POWERUP_PT, type Lang } from '../shared/i18n';
 
 function PowerupsPanel({ powerups }: { powerups: string[] }) {
   const counts = powerups.reduce<Record<string, number>>((acc, id) => {
@@ -513,8 +513,8 @@ export default function Game({ name, character, color, hue, room, country, roomN
                     <div className="choice-icon">
                       {sprite ? <img src={sprite} alt="" className="choice-sprite" /> : (c as any).icon ?? ''}
                     </div>
-                    <div className="name">{c.name}</div>
-                    <div className="desc">{c.description}</div>
+                    <div className="name">{lang === 'pt' ? (POWERUP_PT[c.id]?.name ?? c.name) : c.name}</div>
+                    <div className="desc">{lang === 'pt' ? (POWERUP_PT[c.id]?.desc ?? c.description) : c.description}</div>
                   </button>
                 );
               })}
