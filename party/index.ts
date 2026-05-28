@@ -423,6 +423,15 @@ export default class GameServer implements Party.Server {
   hitNpcsPool = new Set<string>();
   // Pooled Maps to avoid allocating new Map() per orbital projectile in fireWeapon
   hitCooldownPool: Map<string, number>[] = [];
+  // Batched proj events flushed into each snapshot instead of broadcasting immediately
+  pendingProjCreates: Array<{
+    id: string; ownerId: string; x: number; y: number;
+    vx: number; vy: number; weapon: string; lifetime: number;
+    pattern: 'straight' | 'wave' | 'orbital';
+    perpX?: number; perpY?: number;
+    orbitRadius?: number; orbitAngle?: number; orbitSpinSpeed?: number;
+  }> = [];
+  pendingProjDestroys: string[] = [];
   // Spatial hashes: rebuilt once per tick for O(n·k) collision/separation
   npcHash = new SpatialHash(64, ARENA_WIDTH);
   queryBuf: string[] = []; // reusable query result buffer (avoids per-query array allocation)
@@ -1740,7 +1749,7 @@ export default class GameServer implements Party.Server {
     if (proj.hitCooldowns) this.releaseHitCooldown(proj.hitCooldowns);
     this.projectiles.delete(proj.id);
     if (proj.pattern !== 'homing') {
-      this.room.broadcast(JSON.stringify({ type: 'projDestroy', id: proj.id }));
+      this.pendingProjDestroys.push(proj.id);
     }
   }
 
@@ -2104,8 +2113,7 @@ export default class GameServer implements Party.Server {
           hitCooldowns: this.acquireHitCooldown(),
         };
         this.projectiles.set(proj.id, proj);
-        this.room.broadcast(JSON.stringify({
-          type: 'projCreate',
+        this.pendingProjCreates.push({
           id: proj.id,
           ownerId: proj.ownerId,
           x: Math.round(proj.x),
@@ -2117,7 +2125,7 @@ export default class GameServer implements Party.Server {
           orbitRadius: proj.orbitRadius,
           orbitAngle: proj.orbitAngle,
           orbitSpinSpeed: proj.orbitSpinSpeed,
-        }));
+        });
       }
       return;
     }
@@ -2160,10 +2168,8 @@ export default class GameServer implements Party.Server {
         proj.waveTime = i * 0.15; // phase offset between bolts so they don't overlap
       }
       this.projectiles.set(proj.id, proj);
-      // Broadcast creation event for non-homing patterns (client simulates locally)
       if (pattern !== 'homing') {
-        this.room.broadcast(JSON.stringify({
-          type: 'projCreate',
+        this.pendingProjCreates.push({
           id: proj.id,
           ownerId: proj.ownerId,
           x: Math.round(proj.x),
@@ -2174,7 +2180,7 @@ export default class GameServer implements Party.Server {
           lifetime: proj.lifetime,
           pattern: pattern as 'straight' | 'wave',
           ...(pattern === 'wave' ? { perpX: proj.perpX, perpY: proj.perpY } : {}),
-        }));
+        });
       }
     }
   }
@@ -3986,18 +3992,19 @@ export default class GameServer implements Party.Server {
         mobaCrystals.push({ team: c.team, hp: c.hp, maxHp: c.maxHp, x: c.x, y: c.y, alive: c.alive });
       }
     }
-    const npcs = [];
+    // Full arrays used for dead/spectator players (no AOI culling)
+    const fullNpcs = [];
     for (const n of this.npcs.values()) {
-      npcs.push({
+      fullNpcs.push({
         id: n.id, kind: n.kind, x: Math.round(n.x), y: Math.round(n.y), hp: Math.round(n.hp),
         ...(n.ai === 'moba_march' ? { ownerPlayerId: n.ownerPlayerId } : {}),
       });
     }
-    const gems = [];
+    const fullGems: GemState[] = [];
     for (const g of this.gems.values()) {
-      gems.push(g);
+      fullGems.push(g);
     }
-    // Only homing projectiles go in the snapshot — all others use projCreate/projDestroy events
+    // Only homing projectiles go in the snapshot — all others batched in newProjs/deadProjs
     const projectiles = [];
     for (const p of this.projectiles.values()) {
       if (p.pattern === 'homing') {
@@ -4016,9 +4023,9 @@ export default class GameServer implements Party.Server {
     for (const pk of this.pickups.values()) {
       pickups.push({ id: pk.id, kind: pk.kind, x: pk.x, y: pk.y });
     }
-    const bossProjectiles: BossProjectileState[] = [];
+    const fullBossProjectiles: BossProjectileState[] = [];
     for (const bp of this.bossProjectiles.values()) {
-      bossProjectiles.push({ id: bp.id, x: bp.x, y: bp.y, vx: bp.vx, vy: bp.vy, radius: bp.radius, generation: bp.generation });
+      fullBossProjectiles.push({ id: bp.id, x: bp.x, y: bp.y, vx: bp.vx, vy: bp.vy, radius: bp.radius, generation: bp.generation });
     }
     // Room wave = castle wave (castle mode) or highest alive-player wave (arena mode).
     // peakRoomWave never decreases so the displayed wave never resets when a high-wave
@@ -4048,20 +4055,23 @@ export default class GameServer implements Party.Server {
     }
     this.currentRoomWave = roomWave;
 
-    const snap: Snapshot = {
-      type: 'snapshot',
+    // Drain pending proj batches into this snapshot
+    const newProjs = this.pendingProjCreates.length ? this.pendingProjCreates.splice(0) : undefined;
+    const deadProjs = this.pendingProjDestroys.length ? this.pendingProjDestroys.splice(0) : undefined;
+
+    const base = {
+      type: 'snapshot' as const,
       t: now,
       wave: roomWave,
       waveName: roomWaveName,
       waveTimeLeftMs: roomWaveTimeLeftMs,
       players,
-      npcs,
-      gems,
-      projectiles,
       wolves,
       hazards,
       pickups,
-      bossProjectiles,
+      projectiles,
+      newProjs,
+      deadProjs,
       arenaElement: this.arenaElement,
       gameMode: this.gameMode,
       castle: this.castle ?? undefined,
@@ -4072,11 +4082,43 @@ export default class GameServer implements Party.Server {
       bossMaxHp: this.activeBossId ? (this.npcs.get(this.activeBossId) as any)?.baseHp ?? undefined : undefined,
       bossHp: this.activeBossId ? this.npcs.get(this.activeBossId)?.hp ?? undefined : undefined,
     };
-    const msg = JSON.stringify(snap);
-    if (this.tickCount % 500 === 0) {
-      console.log(`[NET] snapshot=${msg.length}B players=${snap.players.length} npcs=${snap.npcs.length} projs=${snap.projectiles.length}`);
+
+    const AOI_R2 = 900 * 900;
+    let logOnce = this.tickCount % 500 === 0;
+    for (const conn of this.room.getConnections()) {
+      const p = this.players.get(conn.id);
+      let msg: string;
+      if (!p || !p.alive) {
+        msg = JSON.stringify({ ...base, npcs: fullNpcs, gems: fullGems, bossProjectiles: fullBossProjectiles });
+      } else {
+        const cx = p.x, cy = p.y;
+        const aoiNpcs = [];
+        for (const n of this.npcs.values()) {
+          const dx = n.x - cx, dy = n.y - cy;
+          if (dx * dx + dy * dy <= AOI_R2) {
+            aoiNpcs.push({ id: n.id, kind: n.kind, x: Math.round(n.x), y: Math.round(n.y), hp: Math.round(n.hp),
+              ...(n.ai === 'moba_march' ? { ownerPlayerId: n.ownerPlayerId } : {}) });
+          }
+        }
+        const aoiGems: GemState[] = [];
+        for (const g of this.gems.values()) {
+          const dx = g.x - cx, dy = g.y - cy;
+          if (dx * dx + dy * dy <= AOI_R2) aoiGems.push(g);
+        }
+        const aoiBossProjs: BossProjectileState[] = [];
+        for (const bp of this.bossProjectiles.values()) {
+          const dx = bp.x - cx, dy = bp.y - cy;
+          if (dx * dx + dy * dy <= AOI_R2) aoiBossProjs.push({ id: bp.id, x: bp.x, y: bp.y, vx: bp.vx, vy: bp.vy, radius: bp.radius, generation: bp.generation });
+        }
+        msg = JSON.stringify({ ...base, npcs: aoiNpcs, gems: aoiGems, bossProjectiles: aoiBossProjs });
+      }
+      if (logOnce) {
+        logOnce = false;
+        const parsed = JSON.parse(msg) as Snapshot;
+        console.log(`[NET] snapshot=${msg.length}B players=${parsed.players.length} npcs=${parsed.npcs.length} projs=${parsed.projectiles.length}`);
+      }
+      conn.send(msg);
     }
-    this.room.broadcast(msg);
   }
 
   scheduleHazard(now: number) {

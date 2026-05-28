@@ -1060,6 +1060,25 @@ export class ArenaScene extends Phaser.Scene {
       this.snapshotTime = arrivedAt;
       this._playerById.clear();
       for (const p of msg.players) this._playerById.set(p.id, p);
+      if (msg.newProjs) {
+        for (const proj of msg.newProjs) {
+          this.clientProjs.set(proj.id, {
+            id: proj.id, ownerId: proj.ownerId, x: proj.x, y: proj.y,
+            vx: proj.vx, vy: proj.vy, weapon: proj.weapon, lifetime: proj.lifetime,
+            pattern: proj.pattern, orbitAngle: proj.orbitAngle, orbitSpinSpeed: proj.orbitSpinSpeed,
+            orbitRadius: proj.orbitRadius, perpX: proj.perpX, perpY: proj.perpY,
+            baseX: proj.x, baseY: proj.y, waveTime: 0,
+          });
+          if (proj.ownerId === this.selfId) this.sfxFire(proj.weapon as any);
+        }
+      }
+      if (msg.deadProjs) {
+        for (const id of msg.deadProjs) {
+          this.clientProjs.delete(id);
+          const s = this.projSprites.get(id);
+          if (s) { s.setVisible(false).setActive(false); this.projPool.push(s); this.projSprites.delete(id); }
+        }
+      }
       // reconcile predicted self toward server position
       if (this.selfId) {
         const self = msg.players.find((p) => p.id === this.selfId);
@@ -1172,35 +1191,6 @@ export class ArenaScene extends Phaser.Scene {
       }
     } else if (msg.type === 'authError') {
       this.bus.emit('authError', (msg as any).reason);
-    } else if (msg.type === 'projCreate') {
-      this.clientProjs.set(msg.id, {
-        id: msg.id,
-        ownerId: msg.ownerId,
-        x: msg.x,
-        y: msg.y,
-        vx: msg.vx,
-        vy: msg.vy,
-        weapon: msg.weapon,
-        lifetime: msg.lifetime,
-        pattern: msg.pattern,
-        orbitAngle: msg.orbitAngle,
-        orbitSpinSpeed: msg.orbitSpinSpeed,
-        orbitRadius: msg.orbitRadius,
-        perpX: msg.perpX,
-        perpY: msg.perpY,
-        baseX: msg.x,
-        baseY: msg.y,
-        waveTime: 0,
-      });
-      if (msg.ownerId === this.selfId) this.sfxFire(msg.weapon as any);
-    } else if (msg.type === 'projDestroy') {
-      this.clientProjs.delete(msg.id);
-      const s = this.projSprites.get(msg.id);
-      if (s) {
-        s.setVisible(false).setActive(false);
-        this.projPool.push(s);
-        this.projSprites.delete(msg.id);
-      }
     }
   }
 
@@ -2791,7 +2781,7 @@ export class ArenaScene extends Phaser.Scene {
       const tex = `proj_${elem}`;
       let s = this.projSprites.get(pr.id);
       if (!s) {
-        // Homing projectiles (from snapshot) need SFX here — non-homing already handled by projCreate
+        // Homing projectiles (from snapshot) need SFX here — non-homing handled via newProjs in snapshot
         if (pr.ownerId === this.selfId && !this.clientProjs.has(pr.id)) this.sfxFire(pr.weapon as any);
         const GLOBAL_SCALE = 0.65 * SPRITE_SHRINK;
         const weaponScale =

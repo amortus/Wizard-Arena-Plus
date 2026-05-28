@@ -205,7 +205,15 @@ export type Snapshot = {
   players: PlayerState[];
   npcs: NPCState[];
   gems: GemState[];
-  projectiles: ProjectileState[]; // only contains homing projectiles; others use projCreate/projDestroy events
+  projectiles: ProjectileState[]; // only contains homing projectiles; others batched in newProjs/deadProjs
+  newProjs?: Array<{
+    id: string; ownerId: string; x: number; y: number;
+    vx: number; vy: number; weapon: string; lifetime: number;
+    pattern: 'straight' | 'wave' | 'orbital';
+    perpX?: number; perpY?: number;
+    orbitRadius?: number; orbitAngle?: number; orbitSpinSpeed?: number;
+  }>;
+  deadProjs?: string[];
   wolves?: WolfState[];
   hazards?: HazardState[];
   pickups?: PickupState[];
@@ -287,24 +295,4 @@ export type ServerToClient =
   | { type: 'bossAlert'; bossName: string }
   | { type: 'authError'; reason: string }
   | { type: 'nova' }
-  | { type: 'waveSpawn'; anchors: { x: number; y: number }[]; waveName: string; waveNumber: number }
-  | {
-      type: 'projCreate';
-      id: string;
-      ownerId: string;
-      x: number;
-      y: number;
-      vx: number;
-      vy: number;
-      weapon: WeaponKind;
-      lifetime: number;
-      pattern: 'straight' | 'wave' | 'orbital';
-      // wave-specific
-      perpX?: number;
-      perpY?: number;
-      // orbital-specific
-      orbitRadius?: number;
-      orbitAngle?: number;
-      orbitSpinSpeed?: number;
-    }
-  | { type: 'projDestroy'; id: string };
+  | { type: 'waveSpawn'; anchors: { x: number; y: number }[]; waveName: string; waveNumber: number };
