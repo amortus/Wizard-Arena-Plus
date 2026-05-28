@@ -169,6 +169,7 @@ type ServerPlayer = PlayerState & {
   trailBreadcrumbs: { x: number; y: number; expiresAt: number; hitNpcs: Set<string> }[];
   trailLastDropAt: number;
   pendingChoices: { id: string; name: string; description: string; icon: string; iconSprite?: string }[][];
+  collectedPowerups: string[];
   // Per-player wave engine
   pwWaveStartedAt: number;
   pwWaveActive: boolean;
@@ -664,7 +665,7 @@ export default class GameServer implements Party.Server {
         this.room.broadcast(JSON.stringify(fx));
         // Kill all players to trigger game-over flow
         for (const p of this.players.values()) {
-          if (p.alive) this.killPlayer(p, '__castle__');
+          if (p.alive) this.killPlayer(p, '__castle__', p.hp <= 0 ? 0 : p.hp);
         }
         return;
       }
@@ -840,7 +841,7 @@ export default class GameServer implements Party.Server {
         tower.lastAttackAt = now;
         const shotFx: ServerToClient = { type: 'effect', effect: 'towerShot', x: tower.x, y: tower.y, tx: closestPlayer.x, ty: closestPlayer.y, team: tower.team };
         this.room.broadcast(JSON.stringify(shotFx));
-        if (closestPlayer.hp <= 0) this.killPlayer(closestPlayer, tower.id);
+        if (closestPlayer.hp <= 0) this.killPlayer(closestPlayer, tower.id, attackDmg * damageMul);
       }
     }
   }
@@ -1224,7 +1225,10 @@ export default class GameServer implements Party.Server {
         const choice = choices[msg.choiceIdx];
         if (choice) {
           const powerup = POWERUPS.find((pw) => pw.id === choice.id);
-          if (powerup) powerup.apply(p);
+          if (powerup) {
+            powerup.apply(p);
+            p.collectedPowerups.push(choice.id);
+          }
         }
         p.pendingLevelUps = p.pendingChoices.length;
         if (p.pendingChoices.length > 0) {
@@ -1284,6 +1288,7 @@ export default class GameServer implements Party.Server {
       pickupMul: 1,
       cooldownMul: 1,
       weapons: [base.weapon],
+      collectedPowerups: [],
       // Start at the room's peak wave so late joiners sync to the room's progress.
       // waveNumber is the LAST completed wave; runWaveForPlayer() increments before spawning.
       waveNumber: Math.max(0, this.peakRoomWave - 1),
@@ -2404,7 +2409,7 @@ export default class GameServer implements Party.Server {
           if ((p.x - proj.x) ** 2 + (p.y - proj.y) ** 2 < pCollR2) {
             const dmg = this.computeDamage(owner0, proj.weapon);
             p.hp -= dmg;
-            if (p.hp <= 0) this.killPlayer(p, owner0.id);
+            if (p.hp <= 0) this.killPlayer(p, owner0.id, dmg);
             if (proj.piercesLeft > 0) {
               proj.piercesLeft -= 1;
             } else {
@@ -3210,9 +3215,10 @@ export default class GameServer implements Party.Server {
                 if (Math.hypot(p.x - n.x, p.y - n.y) < PLAYER_RADIUS + NPC_RADIUS) {
                   const berserkerPenalty = now < p.berserkerUntil ? 1.5 : 1;
                   const minionTouchDmg = this.gameMode === 'aram' ? ARAM_MINION_DAMAGE : MOBA_MINION_DAMAGE;
-                  p.hp -= minionTouchDmg * berserkerPenalty;
+                  const minionTouchFinal = minionTouchDmg * berserkerPenalty;
+                  p.hp -= minionTouchFinal;
                   n.lastHitAt = now;
-                  if (p.hp <= 0) this.killPlayer(p, n.id);
+                  if (p.hp <= 0) this.killPlayer(p, n.id, minionTouchFinal);
                   break;
                 }
               }
@@ -3236,9 +3242,10 @@ export default class GameServer implements Party.Server {
               if (pd < PLAYER_RADIUS + NPC_RADIUS) {
                 const berserkerPenalty = now < pTarget.berserkerUntil ? 1.5 : 1;
                 const minionTouchDmg = this.gameMode === 'aram' ? ARAM_MINION_DAMAGE : MOBA_MINION_DAMAGE;
-                pTarget.hp -= minionTouchDmg * berserkerPenalty;
+                const minionTouchFinalPt = minionTouchDmg * berserkerPenalty;
+                pTarget.hp -= minionTouchFinalPt;
                 n.lastHitAt = now;
-                if (pTarget.hp <= 0) this.killPlayer(pTarget, n.id);
+                if (pTarget.hp <= 0) this.killPlayer(pTarget, n.id, minionTouchFinalPt);
               }
             }
           }
@@ -3297,9 +3304,10 @@ export default class GameServer implements Party.Server {
                 if (Math.hypot(p.x - n.x, p.y - n.y) < PLAYER_RADIUS + NPC_RADIUS) {
                   const berserkerPenalty = now < p.berserkerUntil ? 1.5 : 1;
                   const minionTouchDmg = this.gameMode === 'aram' ? ARAM_MINION_DAMAGE : MOBA_MINION_DAMAGE;
-                  p.hp -= minionTouchDmg * berserkerPenalty;
+                  const minionTouchFinal = minionTouchDmg * berserkerPenalty;
+                  p.hp -= minionTouchFinal;
                   n.lastHitAt = now;
-                  if (p.hp <= 0) this.killPlayer(p, n.id);
+                  if (p.hp <= 0) this.killPlayer(p, n.id, minionTouchFinal);
                   break;
                 }
               }
@@ -3332,9 +3340,10 @@ export default class GameServer implements Party.Server {
             const pdist = Math.hypot(p.x - n.x, p.y - n.y);
             if (pdist < PLAYER_RADIUS + NPC_RADIUS) {
               const berserkerPenalty = now < p.berserkerUntil ? 1.5 : 1;
-              p.hp -= NPC_DAMAGE * berserkerPenalty;
+              const npcTouchFinal = NPC_DAMAGE * berserkerPenalty;
+              p.hp -= npcTouchFinal;
               n.lastHitAt = now;
-              if (p.hp <= 0) this.killPlayer(p, '__npc__');
+              if (p.hp <= 0) this.killPlayer(p, '__npc__', npcTouchFinal);
               break;
             }
           }
@@ -3491,9 +3500,10 @@ export default class GameServer implements Party.Server {
       ) {
         const dmgMul = 1 + (target.waveNumber - 1) * 0.05;
         const berserkerPenalty = now < target.berserkerUntil ? 1.5 : 1;
-        target.hp -= NPC_DAMAGE * dmgMul * berserkerPenalty;
+        const npcAreaFinal = NPC_DAMAGE * dmgMul * berserkerPenalty;
+        target.hp -= npcAreaFinal;
         n.lastHitAt = now;
-        if (target.hp <= 0) this.killPlayer(target, '__npc__');
+        if (target.hp <= 0) this.killPlayer(target, '__npc__', npcAreaFinal);
       }
     }
 
@@ -3699,7 +3709,21 @@ export default class GameServer implements Party.Server {
     });
   }
 
-  killPlayer(p: ServerPlayer, killerId: string) {
+  private killerLabel(killerId: string): { name: string; icon: string } {
+    const npc = this.npcs.get(killerId);
+    if (npc) {
+      const name = npc.kind.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      const icons: Record<string, string> = { boss: '💀', elite: '🔴', minion: '☠️' };
+      return { name, icon: icons[MONSTER_BASES[npc.kind]?.tier ?? 'minion'] ?? '☠️' };
+    }
+    if (killerId === '__hazard__') return { name: 'Environmental Hazard', icon: '⚡' };
+    if (killerId === '__castle__') return { name: 'Castle Explosion', icon: '🏰' };
+    const killer = this.players.get(killerId);
+    if (killer) return { name: killer.name, icon: '⚔️' };
+    return { name: 'Unknown', icon: '💀' };
+  }
+
+  killPlayer(p: ServerPlayer, killerId: string, finalDamage = 0) {
     if (!p.alive) return;
 
     // MOBA/ARAM: set a respawn timer instead of permanent death
@@ -3723,7 +3747,8 @@ export default class GameServer implements Party.Server {
           }
         }
       }
-      const msg: ServerToClient = { type: 'died', playerId: p.id };
+      const { name: killerName, icon: killerIcon } = this.killerLabel(killerId);
+      const msg: ServerToClient = { type: 'died', playerId: p.id, killerName, killerIcon, finalDamage };
       this.room.broadcast(JSON.stringify(msg));
       return;
     }
@@ -3784,7 +3809,8 @@ export default class GameServer implements Party.Server {
         }
       }
     }
-    const msg: ServerToClient = { type: 'died', playerId: p.id };
+    const { name: killerName, icon: killerIcon } = this.killerLabel(killerId);
+    const msg: ServerToClient = { type: 'died', playerId: p.id, killerName, killerIcon, finalDamage };
     this.room.broadcast(JSON.stringify(msg));
     if (killerId !== '__npc__') {
       const killMsg: ServerToClient = { type: 'killed', killerId, victimId: p.id };
@@ -3941,6 +3967,7 @@ export default class GameServer implements Party.Server {
         mobaGold: p.mobaGold,
         mobaRespawnAt: p.mobaRespawnAt,
         mobaItems: p.mobaItems,
+        collectedPowerups: p.collectedPowerups,
       });
     }
     // MOBA/ARAM structures
@@ -4158,7 +4185,7 @@ export default class GameServer implements Party.Server {
             if (!p.alive) continue;
             if ((p.x - h.x) ** 2 + (p.y - h.y) ** 2 < r2) {
               p.hp -= 5;
-              if (p.hp <= 0) this.killPlayer(p, '__hazard__');
+              if (p.hp <= 0) this.killPlayer(p, '__hazard__', 5);
             }
           }
         }
@@ -4169,7 +4196,7 @@ export default class GameServer implements Party.Server {
           if (!p.alive) continue;
           if ((p.x - h.x) ** 2 + (p.y - h.y) ** 2 < r2) {
             p.hp -= 35;
-            if (p.hp <= 0) this.killPlayer(p, '__hazard__');
+            if (p.hp <= 0) this.killPlayer(p, '__hazard__', 35);
           }
         }
         const fx: ServerToClient = { type: 'effect', effect: 'lightning', x: h.x, y: h.y };
@@ -4183,7 +4210,7 @@ export default class GameServer implements Party.Server {
             if (!p.alive) continue;
             if ((p.x - h.x) ** 2 + (p.y - h.y) ** 2 < r2) {
               p.hp -= 4; // 8/s at 500ms tick
-              if (p.hp <= 0) this.killPlayer(p, '__hazard__');
+              if (p.hp <= 0) this.killPlayer(p, '__hazard__', 4);
             }
           }
         }

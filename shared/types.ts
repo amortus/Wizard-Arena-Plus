@@ -148,6 +148,7 @@ export type PlayerState = {
   mobaGold?: number;
   mobaRespawnAt?: number; // epoch ms; 0 = alive / not in moba mode
   mobaItems?: string[];   // owned item IDs (max 6 slots)
+  collectedPowerups?: string[]; // ordered list of powerup IDs as collected (including duplicates)
 };
 
 export type NPCState = {
@@ -265,7 +266,7 @@ export type ServerToClient =
         iconSprite?: string;
       }[];
     }
-  | { type: 'died'; playerId: string }
+  | { type: 'died'; playerId: string; killerName: string; killerIcon: string; finalDamage: number }
   | { type: 'killed'; killerId: string; victimId: string }
   | { type: 'leaderboard'; entries: LeaderboardEntry[] }
   | { type: 'full' }
