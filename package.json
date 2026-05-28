@@ -10,6 +10,7 @@
     "start": "next start",
     "deploy:party": "partykit deploy",
     "test": "playwright test",
+    "test:codec": "node --no-warnings --experimental-strip-types --loader ./tools/ts-loader.mjs shared/snapshot-codec.test.mts",
     "test:ui": "playwright test --ui",
     "test:report": "playwright show-report"
   },

@@ -145,6 +145,7 @@ import type {
   Snapshot,
   TowerState,
 } from '../shared/types';
+import { encodeSnapshot } from '../shared/snapshot-codec';
 
 const LEADERBOARD_KEY = 'leaderboard:v1';
 const LEADERBOARD_SIZE = 100;
@@ -4087,9 +4088,12 @@ export default class GameServer implements Party.Server {
     let logOnce = this.tickCount % 500 === 0;
     for (const conn of this.room.getConnections()) {
       const p = this.players.get(conn.id);
-      let msg: string;
+      // Build the per-connection snapshot object (AOI-culled), then pack it to a
+      // compact binary frame. Binary encoding replaces per-connection JSON.stringify
+      // — see shared/snapshot-codec.ts. Non-snapshot messages stay JSON.
+      let snapObj: Snapshot;
       if (!p || !p.alive) {
-        msg = JSON.stringify({ ...base, npcs: fullNpcs, gems: fullGems, bossProjectiles: fullBossProjectiles });
+        snapObj = { ...base, npcs: fullNpcs, gems: fullGems, bossProjectiles: fullBossProjectiles } as Snapshot;
       } else {
         const cx = p.x, cy = p.y;
         const aoiNpcs = [];
@@ -4110,14 +4114,14 @@ export default class GameServer implements Party.Server {
           const dx = bp.x - cx, dy = bp.y - cy;
           if (dx * dx + dy * dy <= AOI_R2) aoiBossProjs.push({ id: bp.id, x: bp.x, y: bp.y, vx: bp.vx, vy: bp.vy, radius: bp.radius, generation: bp.generation });
         }
-        msg = JSON.stringify({ ...base, npcs: aoiNpcs, gems: aoiGems, bossProjectiles: aoiBossProjs });
+        snapObj = { ...base, npcs: aoiNpcs, gems: aoiGems, bossProjectiles: aoiBossProjs } as Snapshot;
       }
+      const buf = encodeSnapshot(snapObj);
       if (logOnce) {
         logOnce = false;
-        const parsed = JSON.parse(msg) as Snapshot;
-        console.log(`[NET] snapshot=${msg.length}B players=${parsed.players.length} npcs=${parsed.npcs.length} projs=${parsed.projectiles.length}`);
+        console.log(`[NET] snapshot=${buf.byteLength}B players=${snapObj.players.length} npcs=${snapObj.npcs.length} gems=${snapObj.gems.length} projs=${snapObj.projectiles.length}`);
       }
-      conn.send(msg);
+      conn.send(buf);
     }
   }
 
