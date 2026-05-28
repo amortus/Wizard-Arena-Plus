@@ -1910,11 +1910,11 @@ button {
 /* ---------- Settings Modal ---------- */
 .settings-btn {
   position: fixed;
-  bottom: 14px;
+  top: 14px;
   right: 16px;
   background: transparent;
   border: none;
-  font-size: 22px;
+  font-size: 44px;
   cursor: pointer;
   opacity: 0.65;
   z-index: 10;
