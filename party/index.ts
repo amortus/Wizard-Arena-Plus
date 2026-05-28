@@ -3058,8 +3058,10 @@ export default class GameServer implements Party.Server {
         if (!p.alive || now < p.damageImmuneUntil || now < p.invulnerableUntil) continue;
         if ((p.x - proj.x) ** 2 + (p.y - proj.y) ** 2 < hitR2) {
           const incomingMul = now < p.berserkerUntil ? 1.5 : 1;
-          p.hp -= proj.damage * incomingMul;
+          const bprojDmg = proj.damage * incomingMul;
+          p.hp -= bprojDmg;
           this.bossProjectiles.delete(id);
+          if (p.hp <= 0) this.killPlayer(p, this.activeBossId ?? '__boss__', bprojDmg);
           break;
         }
       }
@@ -3718,6 +3720,7 @@ export default class GameServer implements Party.Server {
     }
     if (killerId === '__hazard__') return { name: 'Environmental Hazard', icon: '⚡' };
     if (killerId === '__castle__') return { name: 'Castle Explosion', icon: '🏰' };
+    if (killerId === '__boss__') return { name: 'Boss Projectile', icon: '🔥' };
     const killer = this.players.get(killerId);
     if (killer) return { name: killer.name, icon: '⚔️' };
     return { name: 'Unknown', icon: '💀' };
@@ -3812,7 +3815,7 @@ export default class GameServer implements Party.Server {
     const { name: killerName, icon: killerIcon } = this.killerLabel(killerId);
     const msg: ServerToClient = { type: 'died', playerId: p.id, killerName, killerIcon, finalDamage };
     this.room.broadcast(JSON.stringify(msg));
-    if (killerId !== '__npc__') {
+    if (this.players.has(killerId)) {
       const killMsg: ServerToClient = { type: 'killed', killerId, victimId: p.id };
       this.room.broadcast(JSON.stringify(killMsg));
     }
