@@ -16,6 +16,7 @@ import {
   type CollisionRect,
 } from '../shared/constants';
 import type { BossProjectileState, CastleState, ClientToServer, GameMode, MobaCrystalState, MobaTeam, PlayerState, ServerToClient, Snapshot, TowerState } from '../shared/types';
+import { decodeSnapshot, isBinarySnapshot } from '../shared/snapshot-codec';
 
 type SceneInit = {
   name: string;
@@ -999,6 +1000,10 @@ export class ArenaScene extends Phaser.Scene {
       party: 'main',
     });
     this.socket = socket;
+    // Snapshots arrive as binary frames (see shared/snapshot-codec.ts). Ask the
+    // socket to deliver them as ArrayBuffer (not Blob) so we can decode synchronously.
+    // binaryType is a standard WebSocket attribute PartySocket re-applies on reconnect.
+    socket.binaryType = 'arraybuffer';
 
     // Build the join payload once and cache it so the watchdog can resend.
     this.joinPayload = {
@@ -1018,6 +1023,13 @@ export class ArenaScene extends Phaser.Scene {
     });
     socket.addEventListener('message', (e) => {
       try {
+        // Snapshots come as binary ArrayBuffer; all other messages stay JSON strings.
+        if (e.data instanceof ArrayBuffer) {
+          if (isBinarySnapshot(e.data)) {
+            this.handleServerMessage(decodeSnapshot(e.data));
+          }
+          return;
+        }
         const msg: ServerToClient = JSON.parse(e.data);
         this.handleServerMessage(msg);
       } catch (err) {
