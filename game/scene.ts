@@ -27,6 +27,8 @@ type SceneInit = {
   roomName?: string;
   roomPassword?: string;
   gameMode?: GameMode;
+  musicVol?: number;
+  sfxVol?: number;
 };
 
 function countryFlag(code?: string): string {
@@ -314,6 +316,8 @@ export class ArenaScene extends Phaser.Scene {
   bgmTracks: Phaser.Sound.BaseSound[] = [];
   bgmIdx = 0;
   musicMuted = false;
+  musicVol = 0.5;
+  sfxVol = 0.5;
   // SFX synth
   audioCtx?: AudioContext;
   // Track previous values to detect events for SFX
@@ -443,6 +447,8 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   create() {
+    this.musicVol = this.init_.musicVol ?? 0.5;
+    this.sfxVol = this.init_.sfxVol ?? 0.5;
     this.makeFallbackTextures();
     this.makeArenaBackground();
     this.registerAnimations();
@@ -524,7 +530,7 @@ export class ArenaScene extends Phaser.Scene {
     const trackKeys = ['bgm0', 'bgm1', 'bgm2'];
     for (const key of trackKeys) {
       if (this.cache.audio.exists(key)) {
-        const t = this.sound.add(key, { loop: false, volume: 0.16 });
+        const t = this.sound.add(key, { loop: false, volume: this.musicVol * 0.32 });
         t.on('complete', () => {
           if (this.musicMuted) return;
           this.bgmIdx = (this.bgmIdx + 1) % this.bgmTracks.length;
@@ -1106,7 +1112,7 @@ export class ArenaScene extends Phaser.Scene {
     } else if (msg.type === 'died') {
       if (msg.playerId === this.selfId) {
         this.sfxArpeggio([330, 247, 196, 147], 0.09, 0.18);
-        this.bus.emit('died');
+        this.bus.emit('died', { killerName: msg.killerName, killerIcon: msg.killerIcon, finalDamage: msg.finalDamage });
       }
     } else if (msg.type === 'leaderboard') {
       this.bus.emit('leaderboard', msg.entries);
@@ -2007,8 +2013,9 @@ export class ArenaScene extends Phaser.Scene {
       osc.connect(g);
       g.connect(ctx.destination);
       const t = ctx.currentTime;
+      const effectiveGain = gain * this.sfxVol * 2; // 0.5 default → 1.0 multiplier
       g.gain.setValueAtTime(0, t);
-      g.gain.linearRampToValueAtTime(gain, t + 0.005);
+      g.gain.linearRampToValueAtTime(effectiveGain, t + 0.005);
       g.gain.exponentialRampToValueAtTime(0.0008, t + duration);
       osc.start(t);
       osc.stop(t + duration + 0.02);
@@ -2125,6 +2132,17 @@ export class ArenaScene extends Phaser.Scene {
     } else {
       cur.resume();
     }
+  }
+
+  setMusicVolume(v: number) {
+    this.musicVol = v;
+    for (const track of this.bgmTracks) {
+      (track as Phaser.Sound.WebAudioSound).setVolume(v * 0.32);
+    }
+  }
+
+  setSfxVolume(v: number) {
+    this.sfxVol = v;
   }
 
   pickPowerup(idx: number) {

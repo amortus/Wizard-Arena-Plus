@@ -1,18 +1,39 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CharacterKind } from '../shared/constants';
 import type { CastleState, GameMode, LeaderboardEntry, MobaCrystalState, MobaTeam, PlayerState, TowerState } from '../shared/types';
 import { MOBA_ITEMS } from '../shared/items';
 import { dedupeBestByName } from '../shared/leaderboard';
+import { POWERUPS } from '../shared/powerups';
+import { T, type Lang } from '../shared/i18n';
 
-const SHOP_CATEGORIES = [
-  { key: 'damage',    label: '⚔️ Damage' },
-  { key: 'magic',     label: '🔮 Magic' },
-  { key: 'lifesteal', label: '🩸 Lifesteal' },
-  { key: 'defense',   label: '🛡️ Defense' },
-  { key: 'speed',     label: '👟 Speed' },
-  { key: 'legendary', label: '✨ Legendary' },
-] as const;
+function PowerupsPanel({ powerups }: { powerups: string[] }) {
+  const counts = powerups.reduce<Record<string, number>>((acc, id) => {
+    acc[id] = (acc[id] ?? 0) + 1; return acc;
+  }, {});
+  const iconMap = Object.fromEntries(POWERUPS.map((p) => [p.id, p.icon]));
+  const entries = Object.entries(counts);
+  if (!entries.length) return null;
+  return (
+    <div style={{
+      position: 'fixed', right: 8, top: '50%', transform: 'translateY(-50%)',
+      display: 'flex', flexDirection: 'column', gap: 3,
+      maxHeight: '60vh', overflowY: 'auto', zIndex: 20,
+      pointerEvents: 'none',
+    }}>
+      {entries.map(([id, count]) => (
+        <div key={id} style={{
+          background: 'rgba(0,0,0,0.55)', borderRadius: 6,
+          padding: '2px 6px', fontSize: 13, color: '#fff',
+          display: 'flex', alignItems: 'center', gap: 4, lineHeight: 1.4,
+        }}>
+          <span>{iconMap[id] ?? '✨'}</span>
+          {count > 1 && <span style={{ color: '#ffd700', fontWeight: 700 }}>×{count}</span>}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 type Props = {
   name: string;
@@ -24,6 +45,9 @@ type Props = {
   roomName?: string;
   roomPassword?: string;
   gameMode?: GameMode;
+  musicVol?: number;
+  sfxVol?: number;
+  lang?: Lang;
 };
 
 type LevelUpData = {
@@ -37,7 +61,18 @@ function flag(code?: string): string {
   return String.fromCodePoint(...cps);
 }
 
-export default function Game({ name, character, color, hue, room, country, roomName, roomPassword, gameMode }: Props) {
+export default function Game({ name, character, color, hue, room, country, roomName, roomPassword, gameMode, musicVol = 0.5, sfxVol = 0.5, lang = 'en' }: Props) {
+  const t = useMemo(() => T[lang], [lang]);
+
+  const shopCategories = useMemo(() => [
+    { key: 'damage',    label: t.shopDamage },
+    { key: 'magic',     label: t.shopMagic },
+    { key: 'lifesteal', label: t.shopLifesteal },
+    { key: 'defense',   label: t.shopDefense },
+    { key: 'speed',     label: t.shopSpeed },
+    { key: 'legendary', label: t.shopLegendary },
+  ] as const, [t]);
+
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<any>(null);
   const [hud, setHud] = useState<{
@@ -65,17 +100,13 @@ export default function Game({ name, character, color, hue, room, country, roomN
   const [shopOpen, setShopOpen] = useState(false);
   const [shopTab, setShopTab] = useState<string>('damage');
   const [dead, setDead] = useState(false);
-  // Captured at moment of death so the death screen still shows them after
-  // the server has reset the player's HUD state for respawn.
-  const [deathStats, setDeathStats] = useState<{ level: number; wave: number; score: number } | null>(null);
+  const [deathStats, setDeathStats] = useState<{ level: number; wave: number; score: number; killerName: string; killerIcon: string; finalDamage: number } | null>(null);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [roomFull, setRoomFull] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [bossAlert, setBossAlert] = useState<string | null>(null);
   const [inSmoke, setInSmoke] = useState(false);
   const [novaFlash, setNovaFlash] = useState(false);
-  // Track latest hud.self level/wave/bossKills so the 'died' handler can read them
-  // synchronously (the bus.on closure would otherwise capture an empty hud).
   const lastSelfRef = useRef<{ level: number; wave: number; bossKills: number } | null>(null);
 
   useEffect(() => {
@@ -86,7 +117,7 @@ export default function Game({ name, character, color, hue, room, country, roomN
       const { createGame } = await import('../game/scene');
       if (cancelled || !containerRef.current) return;
 
-      const result = createGame(containerRef.current, { name, character, color, hue, room, country, roomName, roomPassword, gameMode });
+      const result = createGame(containerRef.current, { name, character, color, hue, room, country, roomName, roomPassword, gameMode, musicVol, sfxVol });
       sceneRef.current = result.scene;
       game = result.game;
 
@@ -101,13 +132,16 @@ export default function Game({ name, character, color, hue, room, country, roomN
         setLevelUp(data);
         setLevelUpFocus(0);
       });
-      result.scene.bus.on('died', () => {
+      result.scene.bus.on('died', (info: { killerName?: string; killerIcon?: string; finalDamage?: number } = {}) => {
         const stats = lastSelfRef.current;
         if (stats) {
           setDeathStats({
             level: stats.level,
             wave: stats.wave,
             score: stats.level * 100 + stats.wave * 50 + stats.bossKills * 500,
+            killerName: info.killerName ?? 'Unknown',
+            killerIcon: info.killerIcon ?? '💀',
+            finalDamage: info.finalDamage ?? 0,
           });
         }
         setDead(true);
@@ -118,8 +152,8 @@ export default function Game({ name, character, color, hue, room, country, roomN
       });
       result.scene.bus.on('leaderboard', (entries: LeaderboardEntry[]) => setLeaderboard(entries));
       result.scene.bus.on('roomFull', () => setRoomFull(true));
-      result.scene.bus.on('bossAlert', (name: string) => {
-        setBossAlert(name);
+      result.scene.bus.on('bossAlert', (n: string) => {
+        setBossAlert(n);
         setTimeout(() => setBossAlert(null), 3500);
       });
       result.scene.bus.on('smokeZone', (inside: boolean) => setInSmoke(inside));
@@ -145,67 +179,48 @@ export default function Game({ name, character, color, hue, room, country, roomN
     setLevelUp(null);
   };
 
-  const respawn = () => {
-    sceneRef.current?.respawn();
-  };
+  const respawn = () => { sceneRef.current?.respawn(); };
+  const buyItem = (itemId: string) => { sceneRef.current?.buyItem(itemId); };
 
-  const buyItem = (itemId: string) => {
-    sceneRef.current?.buyItem(itemId);
-  };
-
-  // Press Enter (or Space) on the death screen to respawn instantly.
   useEffect(() => {
     if (!dead) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        respawn();
-      }
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); respawn(); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [dead]);
 
-  // B key toggles shop in moba/aram
   useEffect(() => {
     if (hud.gameMode !== 'moba' && hud.gameMode !== 'aram') return;
     const onKey = (e: KeyboardEvent) => {
-      if ((e.key === 'b' || e.key === 'B') && !levelUp) {
-        e.preventDefault();
-        setShopOpen((v) => !v);
-      }
+      if ((e.key === 'b' || e.key === 'B') && !levelUp) { e.preventDefault(); setShopOpen((v) => !v); }
       if (e.key === 'Escape') setShopOpen(false);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [hud.gameMode, levelUp]);
 
-  // MOBA respawn countdown ticker
   useEffect(() => {
     if (!dead || (hud.gameMode !== 'moba' && hud.gameMode !== 'aram')) return;
     const iv = setInterval(() => {
       const at = hud.self?.mobaRespawnAt ?? 0;
-      const ms = Math.max(0, at - Date.now());
-      setMobaRespawnMs(ms);
+      setMobaRespawnMs(Math.max(0, at - Date.now()));
     }, 100);
     return () => clearInterval(iv);
   }, [dead, hud.gameMode, hud.self?.mobaRespawnAt]);
 
-  // Keyboard nav while level-up modal is open: ←/→ to move focus, Enter/Space to confirm.
   useEffect(() => {
     if (!levelUp) return;
     const onKey = (e: KeyboardEvent) => {
       const total = levelUp.choices.length;
       if (total === 0) return;
       if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') {
-        e.preventDefault();
-        setLevelUpFocus((f) => (f - 1 + total) % total);
+        e.preventDefault(); setLevelUpFocus((f) => (f - 1 + total) % total);
       } else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') {
-        e.preventDefault();
-        setLevelUpFocus((f) => (f + 1) % total);
+        e.preventDefault(); setLevelUpFocus((f) => (f + 1) % total);
       } else if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        pickChoice(levelUpFocus);
+        e.preventDefault(); pickChoice(levelUpFocus);
       } else if (e.key === '1' || e.key === '2' || e.key === '3') {
         e.preventDefault();
         const idx = parseInt(e.key, 10) - 1;
@@ -228,7 +243,7 @@ export default function Game({ name, character, color, hue, room, country, roomN
       {isConnecting && (
         <div className="connecting-overlay">
           <div className="connecting-text">
-            CONNECTING
+            {t.connecting}
             <span className="connecting-dot dot1">.</span>
             <span className="connecting-dot dot2">.</span>
             <span className="connecting-dot dot3">.</span>
@@ -239,24 +254,14 @@ export default function Game({ name, character, color, hue, room, country, roomN
       {roomFull && (
         <div className="connecting-overlay">
           <div className="room-full-card">
-            <h2>Arena Is Full</h2>
-            <p>The public arena is at capacity. Try again in a moment, or jump into a fresh private room with friends.</p>
+            <h2>{t.arenaFull}</h2>
+            <p>{t.arenaFullMsg}</p>
             <div className="room-full-actions">
-              <button
-                className="start-btn"
-                onClick={() => {
-                  if (typeof window !== 'undefined') window.location.reload();
-                }}
-              >
-                Try Again
+              <button className="start-btn" onClick={() => { if (typeof window !== 'undefined') window.location.reload(); }}>
+                {t.tryAgain}
               </button>
-              <button
-                className="leaderboard-btn"
-                onClick={() => {
-                  if (typeof window !== 'undefined') window.location.href = '/';
-                }}
-              >
-                ← Back to Menu
+              <button className="leaderboard-btn" onClick={() => { if (typeof window !== 'undefined') window.location.href = '/'; }}>
+                {t.backMenu}
               </button>
             </div>
           </div>
@@ -266,11 +271,11 @@ export default function Game({ name, character, color, hue, room, country, roomN
       {authError && (
         <div className="connecting-overlay">
           <div className="room-full-card">
-            <h2>Wrong Password</h2>
+            <h2>{t.wrongPassword}</h2>
             <p>{authError}</p>
             <div className="room-full-actions">
               <button className="leaderboard-btn" onClick={() => { if (typeof window !== 'undefined') window.location.href = '/'; }}>
-                Back to Menu
+                {t.backMenu}
               </button>
             </div>
           </div>
@@ -287,40 +292,22 @@ export default function Game({ name, character, color, hue, room, country, roomN
         <div className="top-bar-level">L{hud.self?.level ?? 1}</div>
         {hud.activeBossId && hud.bossMaxHp ? (
           <div className="top-bar-xp top-bar-boss-hp">
-            <div
-              className="top-bar-boss-hp-fill"
-              style={{
-                width: `${Math.max(0, Math.min(100, ((hud.bossHp ?? 0) / hud.bossMaxHp) * 100))}%`,
-              }}
-            />
+            <div className="top-bar-boss-hp-fill" style={{ width: `${Math.max(0, Math.min(100, ((hud.bossHp ?? 0) / hud.bossMaxHp) * 100))}%` }} />
             <div className="top-bar-xp-text">
               {`${Math.max(0, Math.round(hud.bossHp ?? 0))} / ${Math.round(hud.bossMaxHp)} HP`}
             </div>
           </div>
         ) : (
           <div className="top-bar-xp">
-            <div
-              className="top-bar-xp-fill"
-              style={{
-                width: hud.self
-                  ? `${Math.min(100, (hud.self.xp / Math.max(1, hud.self.xpToNext)) * 100)}%`
-                  : '0%',
-              }}
-            />
+            <div className="top-bar-xp-fill" style={{ width: hud.self ? `${Math.min(100, (hud.self.xp / Math.max(1, hud.self.xpToNext)) * 100)}%` : '0%' }} />
             <div className="top-bar-xp-text">
-              {hud.self
-                ? `${hud.self.xp} / ${hud.self.xpToNext} GEMS`
-                : 'connecting...'}
+              {hud.self ? `${hud.self.xp} / ${hud.self.xpToNext} GEMS` : t.connectingDots}
             </div>
           </div>
         )}
         <div className="top-bar-wave">
-          <div className="top-bar-wave-num">
-            {hud.wave ? `WAVE ${hud.wave}` : 'WAVE -'}
-          </div>
-          {hud.waveName && (
-            <div className="top-bar-wave-name">{hud.waveName}</div>
-          )}
+          <div className="top-bar-wave-num">{hud.wave ? `WAVE ${hud.wave}` : 'WAVE -'}</div>
+          {hud.waveName && <div className="top-bar-wave-name">{hud.waveName}</div>}
           {hud.waveTimeLeftMs !== undefined && hud.waveTimeLeftMs > 0 && (
             <div className="top-bar-wave-time">{Math.ceil(hud.waveTimeLeftMs / 1000)}s</div>
           )}
@@ -331,21 +318,12 @@ export default function Game({ name, character, color, hue, room, country, roomN
         <div className="castle-hp-bar-wrap">
           <span className="castle-hp-icon">🏰</span>
           <div className="castle-hp-track">
-            <div
-              className="castle-hp-fill"
-              style={{
-                width: `${Math.max(0, (hud.castle.hp / hud.castle.maxHp) * 100)}%`,
-                background: hud.castle.hp / hud.castle.maxHp > 0.5
-                  ? '#44cc22'
-                  : hud.castle.hp / hud.castle.maxHp > 0.25
-                    ? '#ddaa22'
-                    : '#cc2222',
-              }}
-            />
+            <div className="castle-hp-fill" style={{
+              width: `${Math.max(0, (hud.castle.hp / hud.castle.maxHp) * 100)}%`,
+              background: hud.castle.hp / hud.castle.maxHp > 0.5 ? '#44cc22' : hud.castle.hp / hud.castle.maxHp > 0.25 ? '#ddaa22' : '#cc2222',
+            }} />
           </div>
-          <span className="castle-hp-text">
-            {Math.max(0, Math.round(hud.castle.hp))}/{hud.castle.maxHp}
-          </span>
+          <span className="castle-hp-text">{Math.max(0, Math.round(hud.castle.hp))}/{hud.castle.maxHp}</span>
         </div>
       )}
 
@@ -371,15 +349,14 @@ export default function Game({ name, character, color, hue, room, country, roomN
         <div className="moba-tower-status">
           {(['blue', 'red'] as MobaTeam[]).map((team) => (
             <div key={team} className={`moba-tower-row ${team}`}>
-              {hud.towers!.filter((t) => t.team === team).sort((a, b) => a.lane - b.lane || a.tier - b.tier).map((t) => (
-                <div key={t.id} className={`moba-tower-dot ${t.alive ? 'alive' : 'dead'}`} title={`${team} lane${t.lane + 1} T${t.tier}`} />
+              {hud.towers!.filter((tower) => tower.team === team).sort((a, b) => a.lane - b.lane || a.tier - b.tier).map((tower) => (
+                <div key={tower.id} className={`moba-tower-dot ${tower.alive ? 'alive' : 'dead'}`} title={`${team} lane${tower.lane + 1} T${tower.tier}`} />
               ))}
             </div>
           ))}
         </div>
       )}
 
-      {/* MOBA/ARAM: gold display + shop button + item slots */}
       {(hud.gameMode === 'moba' || hud.gameMode === 'aram') && hud.self && (
         <div className="moba-bottom-hud">
           <div className="moba-gold-display">
@@ -403,17 +380,16 @@ export default function Game({ name, character, color, hue, room, country, roomN
         </div>
       )}
 
-      {/* MOBA/ARAM: item shop overlay */}
       {shopOpen && (hud.gameMode === 'moba' || hud.gameMode === 'aram') && (
         <div className="moba-shop-overlay" onClick={() => setShopOpen(false)}>
           <div className="moba-shop-panel" onClick={(e) => e.stopPropagation()}>
             <div className="moba-shop-header">
-              <span className="moba-shop-title">🛒 Shop</span>
+              <span className="moba-shop-title">{t.shopTitle}</span>
               <span className="moba-shop-gold">🪙 {hud.self?.mobaGold ?? 0}</span>
               <button className="moba-shop-close" onClick={() => setShopOpen(false)}>✕</button>
             </div>
             <div className="moba-shop-tabs">
-              {SHOP_CATEGORIES.map((cat) => (
+              {shopCategories.map((cat) => (
                 <button
                   key={cat.key}
                   className={`moba-shop-tab ${shopTab === cat.key ? 'active' : ''}`}
@@ -443,10 +419,10 @@ export default function Game({ name, character, color, hue, room, country, roomN
                       disabled={disabled}
                       onClick={() => { if (!disabled) buyItem(item.id); }}
                       title={
-                        alreadyOwned ? 'Already owned' :
-                        noGold ? 'Not enough gold' :
-                        slotsFull ? 'Item slots full' :
-                        `Buy for ${item.cost}g`
+                        alreadyOwned ? t.alreadyOwned :
+                        noGold ? t.notEnoughGold :
+                        slotsFull ? t.slotsFull :
+                        t.buyFor(item.cost)
                       }
                     >
                       {alreadyOwned ? '✓' : `${item.cost}🪙`}
@@ -460,12 +436,12 @@ export default function Game({ name, character, color, hue, room, country, roomN
                 const itemId = (hud.self?.mobaItems ?? [])[i];
                 const item = itemId ? MOBA_ITEMS.find((x) => x.id === itemId) : null;
                 return (
-                  <div key={i} className={`moba-item-slot ${item ? 'filled' : 'empty'}`} title={item?.name ?? 'Empty'}>
+                  <div key={i} className={`moba-item-slot ${item ? 'filled' : 'empty'}`} title={item?.name ?? t.emptySlot}>
                     {item ? item.icon : ''}
                   </div>
                 );
               })}
-              <span className="moba-shop-slots-label">{(hud.self?.mobaItems ?? []).length}/6 slots</span>
+              <span className="moba-shop-slots-label">{t.slotsLabel((hud.self?.mobaItems ?? []).length)}</span>
             </div>
           </div>
         </div>
@@ -498,14 +474,10 @@ export default function Game({ name, character, color, hue, room, country, roomN
             {(() => {
               const now = Date.now();
               const buffs: { icon: string; cls: string; until: number }[] = [];
-              if (hud.self.speedBoostUntil > now)
-                buffs.push({ icon: '⚡', cls: 'speed', until: hud.self.speedBoostUntil });
-              if (hud.self.damageBoostUntil > now)
-                buffs.push({ icon: '🗡', cls: 'damage', until: hud.self.damageBoostUntil });
-              if (hud.self.berserkerUntil > now)
-                buffs.push({ icon: '💀', cls: 'berserker', until: hud.self.berserkerUntil });
-              if (hud.self.damageImmuneUntil > now)
-                buffs.push({ icon: '🛡', cls: 'shield', until: hud.self.damageImmuneUntil });
+              if (hud.self.speedBoostUntil > now) buffs.push({ icon: '⚡', cls: 'speed', until: hud.self.speedBoostUntil });
+              if (hud.self.damageBoostUntil > now) buffs.push({ icon: '🗡', cls: 'damage', until: hud.self.damageBoostUntil });
+              if (hud.self.berserkerUntil > now) buffs.push({ icon: '💀', cls: 'berserker', until: hud.self.berserkerUntil });
+              if (hud.self.damageImmuneUntil > now) buffs.push({ icon: '🛡', cls: 'shield', until: hud.self.damageImmuneUntil });
               if (!buffs.length) return null;
               return (
                 <div className="unit-frame-buffs">
@@ -525,8 +497,8 @@ export default function Game({ name, character, color, hue, room, country, roomN
       {levelUp && (
         <div className="levelup-overlay">
           <div className="levelup-card">
-            <h2>LEVEL UP — {levelUp.level}</h2>
-            <div className="lvl-sub">← / → to choose · ENTER to confirm · or click</div>
+            <h2>{t.levelUpTitle(levelUp.level)}</h2>
+            <div className="lvl-sub">{t.levelUpHint}</div>
             <div className="choice-row">
               {levelUp.choices.map((c, i) => {
                 const sprite = (c as any).iconSprite as string | undefined;
@@ -539,11 +511,7 @@ export default function Game({ name, character, color, hue, room, country, roomN
                   >
                     <div className="choice-num">[{i + 1}]</div>
                     <div className="choice-icon">
-                      {sprite ? (
-                        <img src={sprite} alt="" className="choice-sprite" />
-                      ) : (
-                        (c as any).icon ?? ''
-                      )}
+                      {sprite ? <img src={sprite} alt="" className="choice-sprite" /> : (c as any).icon ?? ''}
                     </div>
                     <div className="name">{c.name}</div>
                     <div className="desc">{c.description}</div>
@@ -557,32 +525,28 @@ export default function Game({ name, character, color, hue, room, country, roomN
 
       {castleDestroyed && (
         <div className="death-overlay castle-destroyed-overlay">
-          <h2>🏰 CASTLE DESTROYED</h2>
-          <p style={{ color: '#cc4444', marginBottom: 16 }}>The castle has fallen. The realm is lost.</p>
+          <h2>{t.castleDestroyed}</h2>
+          <p style={{ color: '#cc4444', marginBottom: 16 }}>{t.castleFallen}</p>
           <div className="death-stats">
             <div className="death-stat-row">
-              <span className="death-stat-label">Waves Survived</span>
+              <span className="death-stat-label">{t.wavesSurvived}</span>
               <span className="death-stat-value">{hud.wave ?? 0}</span>
             </div>
           </div>
           <button className="start-btn" style={{ maxWidth: 240 }} onClick={() => { if (typeof window !== 'undefined') window.location.reload(); }}>
-            Play Again
+            {t.playAgain}
           </button>
-          <button
-            className="leaderboard-btn"
-            style={{ maxWidth: 200, marginTop: 8, fontSize: 8 }}
-            onClick={() => { if (typeof window !== 'undefined') window.location.href = '/'; }}
-          >
-            Back to Menu
+          <button className="leaderboard-btn" style={{ maxWidth: 200, marginTop: 8, fontSize: 8 }} onClick={() => { if (typeof window !== 'undefined') window.location.href = '/'; }}>
+            {t.backMenu}
           </button>
         </div>
       )}
 
       {dead && (hud.gameMode === 'moba' || hud.gameMode === 'aram') && (
         <div className="moba-respawn-overlay">
-          <h2>DEFEATED</h2>
+          <h2>{t.defeated}</h2>
           <div className="moba-respawn-timer">{mobaRespawnMs > 0 ? `${Math.ceil(mobaRespawnMs / 1000)}` : '...'}</div>
-          <div className="moba-respawn-label">Respawning at base</div>
+          <div className="moba-respawn-label">{t.respawning}</div>
           <button className="moba-shop-btn moba-respawn-shop-btn" onClick={() => setShopOpen((v) => !v)}>
             🛒 Shop (B)
           </button>
@@ -591,62 +555,64 @@ export default function Game({ name, character, color, hue, room, country, roomN
 
       {mobaVictory && (
         <div className="moba-victory-overlay">
-          <h2>{mobaVictory === hud.self?.mobaTeam ? '⚔ VICTORY' : '💀 DEFEAT'}</h2>
+          <h2>{mobaVictory === hud.self?.mobaTeam ? t.victory : t.defeat}</h2>
           <p style={{ color: mobaVictory === 'blue' ? '#4488ff' : '#ff4444' }}>
-            {mobaVictory === 'blue' ? 'Blue' : 'Red'} team destroyed the enemy Crystal!
+            {mobaVictory === 'blue' ? t.crystalDestroyedBlue : t.crystalDestroyedRed}
           </p>
           <button className="start-btn" style={{ maxWidth: 240 }} onClick={() => { if (typeof window !== 'undefined') window.location.reload(); }}>
-            Play Again
+            {t.playAgain}
           </button>
           <button className="leaderboard-btn" style={{ maxWidth: 200, marginTop: 8, fontSize: 8 }} onClick={() => { if (typeof window !== 'undefined') window.location.href = '/'; }}>
-            Back to Menu
+            {t.backMenu}
           </button>
         </div>
       )}
 
       {dead && hud.gameMode !== 'moba' && hud.gameMode !== 'aram' && (
         <div className="death-overlay">
-          <h2>YOU DIED</h2>
+          <h2>{t.youDied}</h2>
           {deathStats && (() => {
-            // Rank against the deduped leaderboard (one row per name) so ranks
-            // match what the leaderboard page shows. Server pushes an updated
-            // leaderboard event right after recordDeath().
             const ranked = dedupeBestByName(leaderboard);
-            // Find by name only — server is authoritative on score (includes bossKills).
             const myRank = ranked.findIndex((e) => e.name === name);
             return (
               <div className="death-stats">
                 <div className="death-stat-row">
-                  <span className="death-stat-label">Level</span>
+                  <span className="death-stat-label">{t.level}</span>
                   <span className="death-stat-value">{deathStats.level}</span>
                 </div>
                 <div className="death-stat-row">
-                  <span className="death-stat-label">Wave</span>
+                  <span className="death-stat-label">{t.waveLabel}</span>
                   <span className="death-stat-value">{deathStats.wave}</span>
                 </div>
                 <div className="death-stat-row">
-                  <span className="death-stat-label">Score</span>
+                  <span className="death-stat-label">{t.score}</span>
                   <span className="death-stat-value">{deathStats.score}</span>
                 </div>
+                <div className="death-stat-row">
+                  <span className="death-stat-label">{t.killedBy}</span>
+                  <span className="death-stat-value">{deathStats.killerIcon} {deathStats.killerName}</span>
+                </div>
+                <div className="death-stat-row">
+                  <span className="death-stat-label">{t.finalBlow}</span>
+                  <span className="death-stat-value">{Math.round(deathStats.finalDamage)} {t.dmg}</span>
+                </div>
                 <div className="death-rank">
-                  {myRank >= 0
-                    ? `🏆 Rank #${myRank + 1} on the all-time leaderboard!`
-                    : 'Did not crack the top 100 — try again.'}
+                  {myRank >= 0 ? t.rankSuccess(myRank + 1) : t.rankFail}
                 </div>
               </div>
             );
           })()}
           <button className="start-btn" style={{ maxWidth: 240 }} onClick={respawn}>
-            Respawn (Enter)
+            {t.respawn}
           </button>
-          <button
-            className="leaderboard-btn"
-            style={{ maxWidth: 200, marginTop: 8, fontSize: 8 }}
-            onClick={() => { if (typeof window !== 'undefined') window.location.href = '/'; }}
-          >
-            Back to Menu
+          <button className="leaderboard-btn" style={{ maxWidth: 200, marginTop: 8, fontSize: 8 }} onClick={() => { if (typeof window !== 'undefined') window.location.href = '/'; }}>
+            {t.backMenu}
           </button>
         </div>
+      )}
+
+      {hud.self && !dead && (
+        <PowerupsPanel powerups={hud.self.collectedPowerups ?? []} />
       )}
     </div>
   );

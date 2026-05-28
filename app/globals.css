@@ -1906,3 +1906,98 @@ button {
   color: #888;
   margin-left: 4px;
 }
+
+/* ---------- Settings Modal ---------- */
+.settings-btn {
+  position: fixed;
+  bottom: 14px;
+  right: 16px;
+  background: transparent;
+  border: none;
+  font-size: 22px;
+  cursor: pointer;
+  opacity: 0.65;
+  z-index: 10;
+  line-height: 1;
+  padding: 4px;
+  transition: opacity 0.15s;
+}
+.settings-btn:hover { opacity: 1; }
+
+.settings-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.72);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.settings-card {
+  background: #1a0808;
+  border: 2px solid #8b1a1a;
+  border-radius: 12px;
+  padding: 28px 32px;
+  min-width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.settings-card h2 {
+  color: var(--cream);
+  font-family: 'Cinzel', serif;
+  margin: 0;
+  font-size: 18px;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.settings-row label {
+  color: var(--cream-dim);
+  min-width: 130px;
+  font-size: 14px;
+  font-family: 'VT323', monospace;
+}
+
+.settings-row input[type='range'] {
+  flex: 1;
+  accent-color: #8b1a1a;
+  cursor: pointer;
+}
+
+.settings-row span {
+  color: var(--cream);
+  font-size: 14px;
+  min-width: 38px;
+  text-align: right;
+  font-family: 'VT323', monospace;
+}
+
+.lang-toggle {
+  display: flex;
+  gap: 6px;
+}
+
+.lang-toggle button {
+  padding: 4px 14px;
+  border: 1px solid #8b1a1a;
+  background: transparent;
+  color: var(--cream-dim);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-family: 'Cinzel', serif;
+  transition: background 0.15s, color 0.15s;
+}
+
+.lang-toggle button.active {
+  background: #8b1a1a;
+  color: #fff;
+  border-color: #8b1a1a;
+}

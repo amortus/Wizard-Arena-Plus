@@ -5,10 +5,12 @@ import Link from 'next/link';
 import type { CharacterKind } from '../shared/constants';
 import { isBlockedName } from '../shared/profanity';
 import type { GameMode, RoomInfo } from '../shared/types';
+import { loadSettings, saveSettings, type Settings } from '../lib/settings';
+import { T } from '../shared/i18n';
+import { SettingsModal } from '../components/SettingsModal';
 
-// Tiny synth chime played whenever a gladiator is picked. Lazily creates an
-// AudioContext on first click so the browser allows playback.
-function useSelectSfx() {
+// Tiny synth chime played whenever a gladiator is picked.
+function useSelectSfx(sfxVol: number) {
   const ctxRef = useRef<AudioContext | null>(null);
   return () => {
     try {
@@ -19,6 +21,7 @@ function useSelectSfx() {
       }
       const ctx = ctxRef.current;
       if (!ctx) return;
+      const vol = sfxVol * 2; // 0.5 default → 1.0 multiplier
       const now = ctx.currentTime;
       const blip = (freq: number, t0: number, dur: number, gain: number, type: OscillatorType) => {
         const osc = ctx.createOscillator();
@@ -27,12 +30,11 @@ function useSelectSfx() {
         osc.frequency.setValueAtTime(freq, now + t0);
         osc.connect(g); g.connect(ctx.destination);
         g.gain.setValueAtTime(0, now + t0);
-        g.gain.linearRampToValueAtTime(gain, now + t0 + 0.005);
+        g.gain.linearRampToValueAtTime(gain * vol, now + t0 + 0.005);
         g.gain.exponentialRampToValueAtTime(0.0008, now + t0 + dur);
         osc.start(now + t0);
         osc.stop(now + t0 + dur + 0.02);
       };
-      // bright two-note pluck
       blip(880, 0, 0.10, 0.10, 'triangle');
       blip(1320, 0.04, 0.12, 0.07, 'sine');
     } catch { /* audio errors are non-fatal */ }
@@ -41,19 +43,21 @@ function useSelectSfx() {
 
 const Game = dynamic(() => import('../components/Game'), { ssr: false });
 
-const CHAR_INFO: { id: CharacterKind; name: string; blurb: string }[] = [
-  { id: 'blue_wizard',       name: 'Kael',      blurb: 'Arcane Blade · balanced' },
-  { id: 'fire_wizard',       name: 'Ignis',     blurb: 'Fire Lash · fragile dmg' },
-  { id: 'salamander_wizard', name: 'Brazok',    blurb: 'Fire Lash · tanky' },
-  { id: 'lightning_wizard',  name: 'Zarak',     blurb: 'Storm Spear · fast multi' },
-  { id: 'earth_wizard',      name: 'Stonehide', blurb: 'Earth Slam · heavy hit' },
-  { id: 'forest_wizard',     name: 'Thornback', blurb: 'Thorn Blade · balanced' },
-  { id: 'shadow_wizard',     name: 'Shade',     blurb: 'Shadow Strike · agile' },
-  { id: 'mouse_apprentice',  name: 'Runt',      blurb: 'Quick Jab · tiny & fast' },
-  { id: 'frog_wizard',       name: 'Murkus',    blurb: 'Swamp Blade · resilient' },
-  { id: 'old_man_wizard',    name: 'Elder Rex', blurb: 'Ancient Force · wise & tanky' },
-  { id: 'owl_wizard',        name: 'Kestrel',   blurb: 'Talon Strike · agile homing' },
-  { id: 'cat_wizard',        name: 'Velox',     blurb: 'Swift Claw · fast scatter' },
+type CharInfo = { id: CharacterKind; name: string; weapon: string; descKey: keyof typeof T.en };
+
+const CHAR_INFO: CharInfo[] = [
+  { id: 'blue_wizard',       name: 'Kael',      weapon: 'Arcane Blade',   descKey: 'descBalanced' },
+  { id: 'fire_wizard',       name: 'Ignis',     weapon: 'Fire Lash',      descKey: 'descFragile' },
+  { id: 'salamander_wizard', name: 'Brazok',    weapon: 'Fire Lash',      descKey: 'descTanky' },
+  { id: 'lightning_wizard',  name: 'Zarak',     weapon: 'Storm Spear',    descKey: 'descFastMulti' },
+  { id: 'earth_wizard',      name: 'Stonehide', weapon: 'Earth Slam',     descKey: 'descHeavyHit' },
+  { id: 'forest_wizard',     name: 'Thornback', weapon: 'Thorn Blade',    descKey: 'descBalanced' },
+  { id: 'shadow_wizard',     name: 'Shade',     weapon: 'Shadow Strike',  descKey: 'descAgile' },
+  { id: 'mouse_apprentice',  name: 'Runt',      weapon: 'Quick Jab',      descKey: 'descTiny' },
+  { id: 'frog_wizard',       name: 'Murkus',    weapon: 'Swamp Blade',    descKey: 'descResilient' },
+  { id: 'old_man_wizard',    name: 'Elder Rex', weapon: 'Ancient Force',  descKey: 'descWise' },
+  { id: 'owl_wizard',        name: 'Kestrel',   weapon: 'Talon Strike',   descKey: 'descHoming' },
+  { id: 'cat_wizard',        name: 'Velox',     weapon: 'Swift Claw',     descKey: 'descScatter' },
 ];
 
 function countryFlag(code?: string): string {
@@ -62,17 +66,11 @@ function countryFlag(code?: string): string {
   return String.fromCodePoint(...cps);
 }
 
-// Generate a 6-char readable room code (no ambiguous 0/O/1/I/l).
 function generateRoomCode(): string {
   const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
   let out = '';
   for (let i = 0; i < 6; i++) out += chars[Math.floor(Math.random() * chars.length)];
   return out;
-}
-
-// Sanitize a user-typed code: uppercase, strip non-alphanumeric, max 12.
-function normalizeRoomCode(input: string): string {
-  return input.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12);
 }
 
 export default function Page() {
@@ -85,7 +83,6 @@ export default function Page() {
   const [roomId, setRoomId] = useState('main');
   const [roomDisplayName, setRoomDisplayName] = useState('');
   const [roomPassword, setRoomPassword] = useState('');
-  // Room browser state
   const [rooms, setRooms] = useState<RoomInfo[]>([]);
   const [loadingRooms, setLoadingRooms] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
@@ -96,33 +93,36 @@ export default function Page() {
   const [joinPassFor, setJoinPassFor] = useState<string | null>(null);
   const [joinPassInput, setJoinPassInput] = useState('');
   const [showSupportPopup, setShowSupportPopup] = useState(false);
-  const playSelectSfx = useSelectSfx();
+  const [showSettings, setShowSettings] = useState(false);
+  const [settings, setSettings] = useState<Settings>(() => loadSettings());
+
+  const t = T[settings.lang];
+  const playSelectSfx = useSelectSfx(settings.sfxVol);
 
   useEffect(() => {
     if (!sessionStorage.getItem('support_popup_shown')) {
-      const t = setTimeout(() => {
+      const timer = setTimeout(() => {
         setShowSupportPopup(true);
         sessionStorage.setItem('support_popup_shown', '1');
       }, 1500);
-      return () => clearTimeout(t);
+      return () => clearTimeout(timer);
     }
   }, []);
 
   const triggerNameError = (msg: string) => {
     setNameError(msg);
     setNameShake(true);
-    // clear shake class after animation finishes so it can re-trigger on next click
     setTimeout(() => setNameShake(false), 500);
   };
 
   const handleStart = () => {
     const trimmed = name.trim();
     if (!trimmed) {
-      triggerNameError('Please enter a name.');
+      triggerNameError(t.nameRequired);
       return;
     }
     if (isBlockedName(trimmed)) {
-      triggerNameError('Please choose a different name.');
+      triggerNameError(t.nameTaken);
       return;
     }
     setNameError(null);
@@ -130,7 +130,6 @@ export default function Page() {
     setScreen('browser');
   };
 
-  // Lobby URL — determined once on client
   const LOBBY_URL = (() => {
     if (typeof window === 'undefined') return '';
     const host = process.env.NEXT_PUBLIC_PARTYKIT_HOST;
@@ -173,25 +172,27 @@ export default function Page() {
   };
 
   useEffect(() => {
-    // Best-effort geolocation — silent fail if blocked or offline.
     let cancelled = false;
     (async () => {
       try {
         const res = await fetch('https://ipapi.co/country/', { cache: 'force-cache' });
-        if (!res.ok) return;
+        if (!res.ok) throw new Error('non-ok');
         const code = (await res.text()).trim();
-        if (!cancelled && code && code.length === 2) setCountry(code.toUpperCase());
-      } catch {}
+        if (!cancelled && /^[A-Z]{2}$/.test(code)) setCountry(code);
+      } catch {
+        // Fallback: extract from browser locale ('pt-BR' → 'BR')
+        if (!cancelled) {
+          const parts = (navigator.language ?? '').split('-');
+          if (parts.length >= 2) setCountry(parts[parts.length - 1].toUpperCase());
+        }
+      }
     })();
     return () => { cancelled = true; };
   }, []);
 
-  // Fetch rooms when entering browser screen
   const prevScreen = useRef(screen);
   useEffect(() => {
-    if (screen === 'browser' && prevScreen.current !== 'browser') {
-      fetchRooms();
-    }
+    if (screen === 'browser' && prevScreen.current !== 'browser') fetchRooms();
     prevScreen.current = screen;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [screen]);
@@ -208,9 +209,19 @@ export default function Page() {
         roomName={roomDisplayName}
         roomPassword={roomPassword}
         gameMode={selectedGameMode}
+        musicVol={settings.musicVol}
+        sfxVol={settings.sfxVol}
+        lang={settings.lang}
       />
     );
   }
+
+  const gameModes = [
+    { mode: 'arena'  as const, label: t.modeArena,  sub: t.modeArenaDesc,  glyph: '⚔',  clr: 'arena' },
+    { mode: 'castle' as const, label: t.modeCastle, sub: t.modeCastleDesc, glyph: '🏰', clr: 'castle' },
+    { mode: 'moba'   as const, label: t.modeMoba,   sub: t.modeMobaDesc,   glyph: '💎', clr: 'moba' },
+    { mode: 'aram'   as const, label: t.modeAram,   sub: t.modeAramDesc,   glyph: '🎲', clr: 'aram' },
+  ];
 
   if (screen === 'browser') {
     return (
@@ -219,13 +230,13 @@ export default function Page() {
         <div className="menu-card" style={{ maxWidth: 720 }}>
           <div className="room-browser">
             <div className="room-browser-header">
-              <div className="room-browser-title">Choose a Room</div>
+              <div className="room-browser-title">{t.chooseRoom}</div>
               <div style={{ display: 'flex', gap: 8 }}>
                 <button className="leaderboard-btn" style={{ marginTop: 0, padding: '6px 14px', fontSize: 9, letterSpacing: 1 }} onClick={fetchRooms} type="button">
-                  Refresh
+                  {t.refresh}
                 </button>
                 <button className="leaderboard-btn" style={{ marginTop: 0, padding: '6px 14px', fontSize: 9, letterSpacing: 1 }} onClick={() => setScreen('select')} type="button">
-                  Back
+                  {t.back}
                 </button>
               </div>
             </div>
@@ -234,25 +245,29 @@ export default function Page() {
               <thead>
                 <tr>
                   <th style={{ width: 20 }}></th>
-                  <th>Room Name</th>
-                  <th>Players</th>
-                  <th>Wave</th>
+                  <th>{t.roomNameCol}</th>
+                  <th>{t.players}</th>
+                  <th>{t.wave}</th>
                   <th></th>
                 </tr>
               </thead>
               <tbody>
                 {loadingRooms ? (
-                  <tr><td colSpan={5} className="room-empty">Loading...</td></tr>
+                  <tr><td colSpan={5} className="room-empty">{t.loading}</td></tr>
                 ) : rooms.length === 0 ? (
-                  <tr><td colSpan={5} className="room-empty">No active rooms. Be the first to create one!</td></tr>
+                  <tr><td colSpan={5} className="room-empty">{t.noRooms}</td></tr>
                 ) : (
                   rooms.map((r) => {
                     const isFull = r.playerCount >= r.maxPlayers;
+                    const modeTitle = r.gameMode === 'castle' ? t.modeCastle
+                      : r.gameMode === 'moba' ? t.modeMoba
+                      : r.gameMode === 'aram' ? t.modeAram
+                      : t.modeArena;
                     return (
                       <tr key={r.id}>
                         <td className="room-row-lock">{r.hasPassword ? '🔒' : ''}</td>
                         <td className="room-row-name">
-                          <span title={r.gameMode === 'castle' ? 'Castle Defender' : r.gameMode === 'moba' ? 'Crystal Rush' : r.gameMode === 'aram' ? 'ARAM' : 'Arena'} style={{ marginRight: 4 }}>
+                          <span title={modeTitle} style={{ marginRight: 4 }}>
                             {r.gameMode === 'castle' ? '🏰' : r.gameMode === 'moba' ? '🗡️' : r.gameMode === 'aram' ? '🎲' : '⚔️'}
                           </span>
                           {r.name}
@@ -265,12 +280,12 @@ export default function Page() {
                         </td>
                         <td>
                           {isFull ? (
-                            <span className="room-row-full" style={{ fontSize: 8, fontFamily: "'Press Start 2P', monospace" }}>FULL</span>
+                            <span className="room-row-full" style={{ fontSize: 8, fontFamily: "'Press Start 2P', monospace" }}>{t.full}</span>
                           ) : joinPassFor === r.id ? (
                             <span className="room-pass-prompt">
                               <input
                                 type="password"
-                                placeholder="Password"
+                                placeholder={t.passwordPlaceholder}
                                 value={joinPassInput}
                                 onChange={(e) => setJoinPassInput(e.target.value)}
                                 onKeyDown={(e) => { if (e.key === 'Enter') enterGame(r.id, r.name, joinPassInput, r.gameMode); }}
@@ -282,13 +297,13 @@ export default function Page() {
                                 style={{ marginTop: 0, padding: '2px 8px', fontSize: 8, letterSpacing: 1 }}
                                 onClick={() => enterGame(r.id, r.name, joinPassInput, r.gameMode)}
                                 type="button"
-                              >Go</button>
+                              >{t.go}</button>
                               <button
                                 className="leaderboard-btn"
                                 style={{ marginTop: 0, padding: '2px 8px', fontSize: 8, letterSpacing: 1 }}
                                 onClick={() => setJoinPassFor(null)}
                                 type="button"
-                              >X</button>
+                              >✕</button>
                             </span>
                           ) : (
                             <button
@@ -296,7 +311,7 @@ export default function Page() {
                               style={{ marginTop: 0, padding: '4px 10px', fontSize: 8, letterSpacing: 1 }}
                               onClick={() => joinRoom(r)}
                               type="button"
-                            >Join</button>
+                            >{t.join}</button>
                           )}
                         </td>
                       </tr>
@@ -314,13 +329,13 @@ export default function Page() {
                   onClick={() => setShowCreate((v) => !v)}
                   type="button"
                 >
-                  {showCreate ? 'Cancel' : '+ Create Room'}
+                  {showCreate ? t.cancel : t.createRoom}
                 </button>
                 {showCreate && (
                   <div className="room-create-form">
                     <input
                       type="text"
-                      placeholder="Room name..."
+                      placeholder={t.roomNamePlaceholder}
                       value={createName}
                       onChange={(e) => setCreateName(e.target.value)}
                       maxLength={32}
@@ -330,7 +345,7 @@ export default function Page() {
                     <div className="room-pass-row">
                       <input
                         type="password"
-                        placeholder="Password (optional)"
+                        placeholder={t.passwordOptional}
                         value={createPass}
                         onChange={(e) => setCreatePass(e.target.value)}
                         maxLength={32}
@@ -339,12 +354,7 @@ export default function Page() {
                       />
                     </div>
                     <div className="room-mode-grid">
-                      {([
-                        { mode: 'arena',  label: 'ARENA',         sub: 'Survival · até 4 players', glyph: '⚔', clr: 'arena' },
-                        { mode: 'castle', label: 'CASTLE',        sub: 'Defenda a fortaleza · 4p',  glyph: '🏰', clr: 'castle' },
-                        { mode: 'moba',   label: 'CRYSTAL RUSH',  sub: '3v3 · 3 lanes · MOBA',      glyph: '💎', clr: 'moba' },
-                        { mode: 'aram',   label: 'A.R.A.M.',      sub: 'Aleatório · lane central',   glyph: '🎲', clr: 'aram' },
-                      ] as const).map(({ mode, label, sub, glyph, clr }) => (
+                      {gameModes.map(({ mode, label, sub, glyph, clr }) => (
                         <button
                           key={mode}
                           type="button"
@@ -358,7 +368,7 @@ export default function Page() {
                       ))}
                     </div>
                     <button className="start-btn" onClick={createRoom} type="button">
-                      Create &amp; Play
+                      {t.createPlay}
                     </button>
                   </div>
                 )}
@@ -366,10 +376,16 @@ export default function Page() {
             </div>
           </div>
         </div>
+
+        <button className="settings-btn" onClick={() => setShowSettings(true)} title={t.settings}>⚙️</button>
+        {showSettings && (
+          <SettingsModal settings={settings} onClose={() => setShowSettings(false)} onChange={setSettings} />
+        )}
       </div>
     );
   }
 
+  // === SELECT screen ===
   return (
     <div className="menu-root">
       <div className="scanlines" />
@@ -377,10 +393,9 @@ export default function Page() {
       {showSupportPopup && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.82)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
           <div style={{ background: 'linear-gradient(180deg, #2d1010 0%, #1a0808 100%)', border: '3px solid #c8a46e', borderRadius: 6, padding: '28px 28px 24px', maxWidth: 320, width: '100%', textAlign: 'center', boxShadow: '0 8px 40px rgba(0,0,0,0.8), 0 0 60px rgba(255,204,68,0.1)' }}>
-            <p style={{ fontFamily: "'Press Start 2P', monospace", fontSize: 9, color: '#c8a46e', letterSpacing: 1, marginBottom: 6 }}>SUPPORT THE ARENA</p>
+            <p style={{ fontFamily: "'Press Start 2P', monospace", fontSize: 9, color: '#c8a46e', letterSpacing: 1, marginBottom: 6 }}>{t.supportTitle}</p>
             <p style={{ fontFamily: "'VT323', monospace", fontSize: 18, color: '#ecddd0', margin: '0 0 16px', lineHeight: 1.3 }}>
-              This game is free & made with passion.<br />
-              A coffee goes a long way! ☕
+              {t.supportMsg.split('\n').map((line, i) => <span key={i}>{line}{i === 0 ? <br /> : null}</span>)}
             </p>
             <img
               src="/QRcode.jpeg"
@@ -394,13 +409,13 @@ export default function Page() {
                 onClick={() => setShowSupportPopup(false)}
                 style={{ background: '#ff6b35', color: '#fff', fontFamily: "'Cinzel', serif", fontWeight: 700, fontSize: 11, textDecoration: 'none', padding: '9px 14px', borderRadius: 4 }}
               >
-                More options
+                {t.moreOptions}
               </Link>
               <button
                 onClick={() => setShowSupportPopup(false)}
                 style={{ border: '2px solid #6b3a1a', color: '#9a8878', fontFamily: "'Cinzel', serif", fontSize: 11, padding: '9px 14px', borderRadius: 4, cursor: 'pointer', background: 'transparent' }}
               >
-                Close
+                {t.close}
               </button>
             </div>
           </div>
@@ -413,10 +428,10 @@ export default function Page() {
           alt="Madness Arena"
           className="menu-logo"
         />
-        <p className="sub">WASD or mouse to move · Weapons strike automatically · Survive the arena</p>
+        <p className="sub">{t.subtitle}</p>
 
         <div className="field">
-          <label>Choose Your Wizard</label>
+          <label>{t.chooseWizard}</label>
           <div className="char-grid characters">
             {CHAR_INFO.map((c) => (
               <button
@@ -438,17 +453,17 @@ export default function Page() {
                   }}
                 />
                 <span className="char-name">{c.name}</span>
-                <span className="blurb">{c.blurb}</span>
+                <span className="blurb">{c.weapon} · {String(t[c.descKey])}</span>
               </button>
             ))}
           </div>
         </div>
 
         <div className="field">
-          <label>Name {country ? <span style={{ marginLeft: 6 }}>{countryFlag(country)}</span> : null}</label>
+          <label>{t.nameLabel} {country ? <span style={{ marginLeft: 6 }}>{countryFlag(country)}</span> : null}</label>
           <input
             type="text"
-            placeholder="Enter your name..."
+            placeholder={t.namePlaceholder}
             value={name}
             onChange={(e) => {
               setName(e.target.value);
@@ -464,14 +479,14 @@ export default function Page() {
         </div>
 
         <button className="start-btn" onClick={handleStart}>
-          Enter Wizard Arena Plus
+          {t.playBtn}
         </button>
         <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
           <Link href="/leaderboard" className="leaderboard-btn lb-link-btn">
-            Leaderboard
+            {t.leaderboard}
           </Link>
           <Link href="/donate" className="leaderboard-btn lb-link-btn" style={{ color: 'var(--amber)' }}>
-            ♥ Support
+            {t.support}
           </Link>
         </div>
 
@@ -497,6 +512,11 @@ export default function Page() {
           </div>
         </div>
       </div>
+
+      <button className="settings-btn" onClick={() => setShowSettings(true)} title={t.settings}>⚙️</button>
+      {showSettings && (
+        <SettingsModal settings={settings} onClose={() => setShowSettings(false)} onChange={setSettings} />
+      )}
     </div>
   );
 }
