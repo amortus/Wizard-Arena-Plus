@@ -252,7 +252,7 @@ export type RoomInfo = {
 };
 
 export type ClientToServer =
-  | { type: 'join'; name: string; character: CharacterKind; color: number; hue: number; country?: string; roomName?: string; roomPassword?: string; gameMode?: GameMode }
+  | { type: 'join'; name: string; character: CharacterKind; color: number; hue: number; country?: string; roomName?: string; roomPassword?: string; gameMode?: GameMode; clientId?: string }
   | { type: 'input'; dx: number; dy: number }
   | { type: 'pickPowerup'; choiceIdx: number }
   | { type: 'buyItem'; itemId: string }
