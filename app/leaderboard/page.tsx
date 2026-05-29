@@ -29,11 +29,11 @@ export default function LeaderboardPage() {
     (async () => {
       try {
         const proto = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'https' : 'http';
-        const res = await fetch(`${proto}://${partyKitHost()}/parties/main/main`);
+        const res = await fetch(`${proto}://${partyKitHost()}/parties/lobby/main`);
         if (!res.ok) throw new Error('fetch failed');
         const data = await res.json();
         if (cancelled) return;
-        const deduped = dedupeBestByName(data.entries ?? []).slice(0, 100);
+        const deduped = dedupeBestByName(data.leaderboard ?? data.entries ?? []).slice(0, 100);
         setEntries(deduped);
       } catch {
         if (!cancelled) setEntries([]);

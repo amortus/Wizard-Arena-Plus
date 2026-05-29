@@ -1333,6 +1333,11 @@ export default class GameServer implements Party.Server {
     this.allTimeLeaderboard = this.allTimeLeaderboard.slice(0, LEADERBOARD_SIZE);
     void this.saveLeaderboard();
     this.broadcastLeaderboard();
+    // Forward to lobby so all rooms contribute to the global leaderboard
+    try {
+      const lobby = (this.room.context.parties as any).lobby?.get('main');
+      if (lobby) void lobby.fetch({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'leaderboard_entry', entry }) });
+    } catch {}
   }
 
   broadcastLeaderboard() {

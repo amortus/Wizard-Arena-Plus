@@ -224,7 +224,10 @@ export default function Page() {
     try {
       if (LOBBY_URL) {
         const res = await fetch(LOBBY_URL);
-        if (res.ok) setRooms(await res.json());
+        if (res.ok) {
+          const data = await res.json();
+          setRooms(Array.isArray(data) ? data : (data.rooms ?? []));
+        }
       }
     } catch {}
     setLoadingRooms(false);
