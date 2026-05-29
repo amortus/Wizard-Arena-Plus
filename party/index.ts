@@ -2039,6 +2039,19 @@ export default class GameServer implements Party.Server {
     this.npcHash.clear();
     for (const n of this.npcs.values()) this.npcHash.insert(n.id, n.x, n.y);
 
+    // Close rooms stuck in lobby (wave 0) for over 5 minutes — catches AFK/disconnected players
+    // whose WebSocket appears live to Cloudflare but the player is gone.
+    if (this.roomCreatedAt > 0 && this.players.size > 0) {
+      const allUnstarted = [...this.players.values()].every(p => p.waveNumber === 0);
+      if (allUnstarted && now - this.roomCreatedAt > 5 * 60_000) {
+        for (const conn of this.room.getConnections()) { try { conn.close(); } catch { /* ignore */ } }
+        this.stopTicking();
+        this.resetRoom();
+        this.reportToLobby();
+        return;
+      }
+    }
+
     // Throttle: reap zombies every 2s (was every tick — calls getConnections() which is expensive)
     if (now >= this.nextReapAt) {
       this.nextReapAt = now + 2_000;

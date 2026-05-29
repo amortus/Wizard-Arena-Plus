@@ -11,7 +11,8 @@ import { SettingsModal } from '../components/SettingsModal';
 import { VS_META_UPGRADES, loadVsMeta, buyVsUpgrade, type VsMetaState } from '../lib/vs-meta';
 
 function VsMetaShop({ onClose }: { onClose: () => void }) {
-  const [meta, setMeta] = useState<VsMetaState>(() => loadVsMeta());
+  const [meta, setMeta] = useState<VsMetaState>({ gold: 0, ranks: {} });
+  useEffect(() => { setMeta(loadVsMeta()); }, []);
 
   const handleBuy = (id: string) => {
     const result = buyVsUpgrade(id);
