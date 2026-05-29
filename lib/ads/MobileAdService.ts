@@ -12,8 +12,10 @@ import type {
   AdmobConsentRequestOptions,
 } from '@capacitor-community/admob';
 
-// Ad Unit IDs — set real IDs in .env.local (NEXT_PUBLIC_ADMOB_*) before release.
-// Defaults below are Google's official test IDs and will never charge real money.
+// Ad Unit IDs — replace TEST_IDS with real values after creating units in AdMob Console:
+//   admob.google.com → Apps → Madness Arena → Ad units → Create ad unit
+//   Then set NEXT_PUBLIC_ADMOB_BANNER_ID / _REWARDED_ID / _INTERSTITIAL_ID in .env.local
+// Google official test IDs are used as fallback (never charge real money).
 const TEST_IDS = {
   banner:       'ca-app-pub-3940256099942544/6300978111',
   rewarded:     'ca-app-pub-3940256099942544/5224354917',

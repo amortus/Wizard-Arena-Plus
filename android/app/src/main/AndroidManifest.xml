@@ -28,7 +28,7 @@
              Format: ca-app-pub-XXXXXXXXXXXXXXXX~XXXXXXXXXX -->
         <meta-data
             android:name="com.google.android.gms.ads.APPLICATION_ID"
-            android:value="ca-app-pub-3940256099942544~3347511713"/>
+            android:value="ca-app-pub-2926713394150469~9649649526"/>
 
         <provider
             android:name="androidx.core.content.FileProvider"

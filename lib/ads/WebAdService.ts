@@ -1,88 +1,54 @@
 import type { AdService } from './AdService';
 
-// Playwire RAMP global — populated by their CDN script.
-// Required env vars (set in .env.local before going live):
-//   NEXT_PUBLIC_PLAYWIRE_PUBLISHER_ID
-//   NEXT_PUBLIC_PLAYWIRE_WEBSITE_ID
-declare global {
-  interface Window {
-    ramp?: {
-      que: Array<() => void>;
-      addUnits: (units: { type: string }[]) => Promise<void>;
-      displayUnits: () => void;
-      destroyUnits: (type: string) => Promise<void>;
-    };
-  }
+// AdSense auto ads (loaded in layout.tsx) handles banner placement automatically.
+// Rewarded uses a countdown overlay until Playwire is approved.
+// When Playwire is live: replace the countdown block with window.ramp calls.
+
+const COUNTDOWN_SECONDS = 5;
+
+function showCountdownOverlay(): Promise<boolean> {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = [
+      'position:fixed', 'inset:0', 'z-index:99999',
+      'background:rgba(0,0,0,0.93)',
+      'display:flex', 'flex-direction:column',
+      'align-items:center', 'justify-content:center',
+      'color:#fff', "font-family:'Press Start 2P',monospace",
+    ].join(';');
+
+    overlay.innerHTML = `
+      <div style="font-size:13px;color:#ffd700;margin-bottom:20px;letter-spacing:2px">📺 AD BREAK</div>
+      <div id="_ac" style="font-size:64px;font-weight:bold;color:#fff;line-height:1">${COUNTDOWN_SECONDS}</div>
+      <div style="font-size:8px;color:#777;margin-top:16px;letter-spacing:1px">WATCH TO REVIVE</div>
+    `;
+    document.body.appendChild(overlay);
+
+    let remaining = COUNTDOWN_SECONDS;
+    const iv = setInterval(() => {
+      remaining -= 1;
+      const el = overlay.querySelector('#_ac');
+      if (el) el.textContent = String(remaining);
+      if (remaining <= 0) {
+        clearInterval(iv);
+        document.body.removeChild(overlay);
+        resolve(true);
+      }
+    }, 1000);
+  });
 }
 
-const REWARDED_TIMEOUT_MS = 60_000;
-
 export class WebAdService implements AdService {
-  private bannerShown = false;
-
-  private withRamp(fn: () => void): void {
-    if (typeof window === 'undefined') return;
-    if (window.ramp) {
-      fn();
-    } else {
-      // Queue until RAMP script initialises.
-      window.ramp = window.ramp ?? ({ que: [] } as unknown as typeof window.ramp);
-      window.ramp!.que.push(fn);
-    }
-  }
-
-  showBanner(): void {
-    if (this.bannerShown) return;
-    this.bannerShown = true;
-    this.withRamp(() => {
-      window.ramp!.addUnits([{ type: 'bottom_rail' }])
-        .then(() => window.ramp?.displayUnits())
-        .catch(() => {});
-    });
-  }
-
-  hideBanner(): void {
-    if (!this.bannerShown) return;
-    this.bannerShown = false;
-    this.withRamp(() => {
-      window.ramp!.destroyUnits('bottom_rail').catch(() => {});
-    });
-  }
+  // AdSense auto ads places banners automatically — nothing to do here.
+  showBanner(): void {}
+  hideBanner(): void {}
 
   showRewarded(): Promise<boolean> {
-    return new Promise<boolean>((resolve) => {
-      if (typeof window === 'undefined' || !window.ramp) {
-        resolve(false);
-        return;
-      }
-
-      // Playwire fires a custom event when the rewarded ad completes.
-      const onGranted = () => {
-        clearTimeout(timeout);
-        resolve(true);
-      };
-      // Fallback: resolve false if ad never completes (no fill, user closed, etc.)
-      const timeout = setTimeout(() => {
-        window.removeEventListener('ramp:rewardGranted', onGranted);
-        resolve(false);
-      }, REWARDED_TIMEOUT_MS);
-
-      window.addEventListener('ramp:rewardGranted', onGranted, { once: true });
-
-      window.ramp.addUnits([{ type: 'rewarded_video_interstitial' }])
-        .then(() => window.ramp?.displayUnits())
-        .catch(() => {
-          clearTimeout(timeout);
-          window.removeEventListener('ramp:rewardGranted', onGranted);
-          resolve(false);
-        });
-    });
+    if (typeof window === 'undefined') return Promise.resolve(false);
+    return showCountdownOverlay();
   }
 
   async showInterstitial(): Promise<void> {
-    if (typeof window === 'undefined' || !window.ramp) return;
-    window.ramp.addUnits([{ type: 'interstitial' }])
-      .then(() => window.ramp?.displayUnits())
-      .catch(() => {});
+    // AdSense does not support interstitial on web — noop.
   }
 }

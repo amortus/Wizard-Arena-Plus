@@ -41,12 +41,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           data-website-id="49381c52-58a4-466d-b10e-27c91fa95ec5"
           strategy="afterInteractive"
         />
-        {process.env.NEXT_PUBLIC_PLAYWIRE_PUBLISHER_ID && (
-          <Script
-            src={`https://cdn.intergient.com/${process.env.NEXT_PUBLIC_PLAYWIRE_PUBLISHER_ID}/${process.env.NEXT_PUBLIC_PLAYWIRE_WEBSITE_ID}/ramp.js`}
-            strategy="afterInteractive"
-          />
-        )}
+        {/* AdSense auto ads — publisher pub-2926713394150469 */}
+        <Script
+          async
+          src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-2926713394150469"
+          crossOrigin="anonymous"
+          strategy="afterInteractive"
+        />
       </body>
     </html>
   );
