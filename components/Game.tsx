@@ -6,6 +6,7 @@ import { MOBA_ITEMS } from '../shared/items';
 import { dedupeBestByName } from '../shared/leaderboard';
 import { POWERUPS } from '../shared/powerups';
 import { T, POWERUP_PT, type Lang } from '../shared/i18n';
+import { addVsGold } from '../lib/vs-meta';
 
 function PowerupsPanel({ powerups }: { powerups: string[] }) {
   const counts = powerups.reduce<Record<string, number>>((acc, id) => {
@@ -137,6 +138,14 @@ function VsTimer({ msLeft }: { msLeft: number }) {
 }
 
 function VsWinScreen({ gold }: { gold: number }) {
+  const savedRef = useRef(false);
+  useEffect(() => {
+    if (!savedRef.current && gold > 0) {
+      savedRef.current = true;
+      addVsGold(gold);
+    }
+  }, [gold]);
+
   return (
     <div style={{
       position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)',
@@ -147,14 +156,22 @@ function VsWinScreen({ gold }: { gold: number }) {
       <h2 style={{ fontSize: 36, margin: 0, textShadow: '0 0 20px #FFD700' }}>YOU SURVIVED!</h2>
       <p style={{ color: '#aaa', margin: '8px 0 24px' }}>30 minutes of carnage complete</p>
       <div style={{ background: 'rgba(255,215,0,0.1)', border: '1px solid #FFD700', borderRadius: 8, padding: '12px 32px', marginBottom: 24 }}>
-        <span style={{ fontSize: 24, color: '#FFD700' }}>🪙 {gold} gold earned</span>
+        <span style={{ fontSize: 24, color: '#FFD700' }}>🪙 +{gold} gold saved</span>
       </div>
-      <button
-        style={{ background: '#FFD700', color: '#1a0a30', border: 'none', borderRadius: 8, padding: '12px 32px', fontSize: 18, fontWeight: 700, cursor: 'pointer' }}
-        onClick={() => { if (typeof window !== 'undefined') window.location.href = '/'; }}
-      >
-        Back to Menu
-      </button>
+      <div style={{ display: 'flex', gap: 12 }}>
+        <button
+          style={{ background: '#4a2080', color: '#cc88ff', border: '2px solid #9944dd', borderRadius: 8, padding: '10px 24px', fontSize: 16, fontWeight: 700, cursor: 'pointer' }}
+          onClick={() => { if (typeof window !== 'undefined') window.location.href = '/?metashop=1'; }}
+        >
+          ⚗️ Invest Gold
+        </button>
+        <button
+          style={{ background: '#FFD700', color: '#1a0a30', border: 'none', borderRadius: 8, padding: '10px 24px', fontSize: 16, fontWeight: 700, cursor: 'pointer' }}
+          onClick={() => { if (typeof window !== 'undefined') window.location.href = '/'; }}
+        >
+          Back to Menu
+        </button>
+      </div>
     </div>
   );
 }

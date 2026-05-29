@@ -8,6 +8,83 @@ import type { GameMode, RoomInfo } from '../shared/types';
 import { loadSettings, saveSettings, type Settings } from '../lib/settings';
 import { T } from '../shared/i18n';
 import { SettingsModal } from '../components/SettingsModal';
+import { VS_META_UPGRADES, loadVsMeta, buyVsUpgrade, type VsMetaState } from '../lib/vs-meta';
+
+function VsMetaShop({ onClose }: { onClose: () => void }) {
+  const [meta, setMeta] = useState<VsMetaState>(() => loadVsMeta());
+
+  const handleBuy = (id: string) => {
+    const result = buyVsUpgrade(id);
+    if (result.ok) setMeta(result.state);
+  };
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <div style={{ background: 'linear-gradient(180deg, #1a0d2e 0%, #0e0818 100%)', border: '3px solid #c8a46e', borderRadius: 6, padding: '24px 24px 20px', maxWidth: 420, width: '100%', boxShadow: '0 8px 40px rgba(0,0,0,0.9), 0 0 60px rgba(180,100,255,0.15)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <span style={{ fontFamily: "'Press Start 2P', monospace", fontSize: 9, color: '#c8a46e', letterSpacing: 1 }}>🧙 META-UPGRADES</span>
+          <span style={{ fontFamily: "'VT323', monospace", fontSize: 20, color: '#ffd700' }}>💰 {meta.gold} gold</span>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {VS_META_UPGRADES.map((upg) => {
+            const rank = meta.ranks[upg.id] ?? 0;
+            const maxed = rank >= upg.maxRanks;
+            const cost = maxed ? 0 : upg.goldCosts[rank];
+            const canAfford = meta.gold >= cost;
+            return (
+              <div key={upg.id} style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(200,164,110,0.2)', borderRadius: 4, padding: '8px 10px' }}>
+                <span style={{ fontSize: 18, minWidth: 24, textAlign: 'center' }}>{upg.icon}</span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontFamily: "'Press Start 2P', monospace", fontSize: 7, color: '#e0d8c0', letterSpacing: 1 }}>{upg.name}</div>
+                  <div style={{ fontFamily: "'VT323', monospace", fontSize: 13, color: '#9a8878', marginTop: 2 }}>{upg.description}</div>
+                </div>
+                <div style={{ textAlign: 'center', minWidth: 50 }}>
+                  <div style={{ fontFamily: "'VT323', monospace", fontSize: 14, color: maxed ? '#ffd700' : '#c8a46e' }}>
+                    {Array.from({ length: upg.maxRanks }, (_, i) => (
+                      <span key={i} style={{ color: i < rank ? '#ffd700' : '#444' }}>★</span>
+                    ))}
+                  </div>
+                  {!maxed && (
+                    <div style={{ fontFamily: "'VT323', monospace", fontSize: 12, color: canAfford ? '#88ff88' : '#ff6644' }}>
+                      {cost}g
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  disabled={maxed || !canAfford}
+                  onClick={() => handleBuy(upg.id)}
+                  style={{
+                    fontFamily: "'Press Start 2P', monospace", fontSize: 8, padding: '5px 8px',
+                    background: maxed ? 'transparent' : canAfford ? '#4a2080' : '#2a1a40',
+                    border: `1px solid ${maxed ? '#555' : canAfford ? '#9944dd' : '#444'}`,
+                    color: maxed ? '#555' : canAfford ? '#cc88ff' : '#554466',
+                    borderRadius: 3, cursor: maxed || !canAfford ? 'default' : 'pointer',
+                    letterSpacing: 1,
+                  }}
+                >
+                  {maxed ? 'MAX' : '+'}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ marginTop: 16, textAlign: 'center' }}>
+          <div style={{ fontFamily: "'VT323', monospace", fontSize: 13, color: '#6a5878', marginBottom: 10 }}>
+            Gold accumulates across runs. Upgrades apply at the start of each Wizard Survivor run.
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{ fontFamily: "'Press Start 2P', monospace", fontSize: 8, padding: '8px 20px', background: 'transparent', border: '2px solid #c8a46e', color: '#c8a46e', borderRadius: 3, cursor: 'pointer', letterSpacing: 1 }}
+          >
+            CLOSE
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // Tiny synth chime played whenever a gladiator is picked.
 function useSelectSfx(sfxVol: number) {
@@ -94,6 +171,10 @@ export default function Page() {
   const [joinPassInput, setJoinPassInput] = useState('');
   const [showSupportPopup, setShowSupportPopup] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showMetaShop, setShowMetaShop] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return new URLSearchParams(window.location.search).get('metashop') === '1';
+  });
   const [settings, setSettings] = useState<Settings>(() => loadSettings());
 
   const t = T[settings.lang];
@@ -369,6 +450,16 @@ export default function Page() {
                         </button>
                       ))}
                     </div>
+                    {createMode === 'wizard_survivor' && (
+                      <button
+                        type="button"
+                        className="leaderboard-btn"
+                        style={{ marginTop: 4, width: '100%', fontSize: 8, letterSpacing: 1, color: '#cc88ff', borderColor: '#9944dd' }}
+                        onClick={() => setShowMetaShop(true)}
+                      >
+                        ⚗️ META-UPGRADES
+                      </button>
+                    )}
                     <button className="start-btn" onClick={createRoom} type="button">
                       {t.createPlay}
                     </button>
@@ -383,6 +474,7 @@ export default function Page() {
         {showSettings && (
           <SettingsModal settings={settings} onClose={() => setShowSettings(false)} onChange={setSettings} />
         )}
+        {showMetaShop && <VsMetaShop onClose={() => setShowMetaShop(false)} />}
       </div>
     );
   }
@@ -516,9 +608,18 @@ export default function Page() {
       </div>
 
       <button className="settings-btn" onClick={() => setShowSettings(true)} title={t.settings}>⚙️</button>
+      <button
+        className="settings-btn"
+        style={{ right: 56 }}
+        onClick={() => setShowMetaShop(true)}
+        title="Wizard Survivor Meta-Upgrades"
+      >
+        ⚗️
+      </button>
       {showSettings && (
         <SettingsModal settings={settings} onClose={() => setShowSettings(false)} onChange={setSettings} />
       )}
+      {showMetaShop && <VsMetaShop onClose={() => setShowMetaShop(false)} />}
     </div>
   );
 }

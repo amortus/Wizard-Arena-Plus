@@ -132,6 +132,7 @@ import {
 import type { ChestState } from '../shared/types';
 import { MOBA_ITEMS_MAP } from '../shared/items';
 import { isBlockedName } from '../shared/profanity';
+import { computeVsMetaBonuses } from '../lib/vs-meta';
 import type {
   ArenaElement,
   BossProjectileState,
@@ -1554,6 +1555,17 @@ export default class GameServer implements Party.Server {
           p.x = spawn.x + (Math.random() - 0.5) * 100;
           p.y = spawn.y + (Math.random() - 0.5) * 100;
           if (p.mobaTeam === 'blue') p.hue = 4.2;
+        }
+        // Wizard Survivor: apply meta-progression bonuses from localStorage ranks
+        if (this.gameMode === 'wizard_survivor' && msg.vsMetaRanks) {
+          const p = this.players.get(sender.id)!;
+          const b = computeVsMetaBonuses(msg.vsMetaRanks);
+          if (b.damageMulAdd) p.damageMul  += b.damageMulAdd;
+          if (b.maxHpAdd)     { p.maxHp += b.maxHpAdd; p.hp = p.maxHp; }
+          if (b.xpMulAdd)     p.xpMul      += b.xpMulAdd;
+          if (b.pickupMulAdd) p.pickupMul  += b.pickupMulAdd;
+          if (b.regenAdd)     p.regenPerSec += b.regenAdd;
+          if (b.speedMulAdd)  p.speedMul   += b.speedMulAdd;
         }
       }
       // Tag the (new or restored) player with their stable client identity so a

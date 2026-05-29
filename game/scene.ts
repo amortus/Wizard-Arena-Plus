@@ -17,6 +17,7 @@ import {
 } from '../shared/constants';
 import type { BossProjectileState, CastleState, ClientToServer, GameMode, MobaCrystalState, MobaTeam, PlayerState, ServerToClient, Snapshot, TowerState } from '../shared/types';
 import { decodeSnapshot, isBinarySnapshot } from '../shared/snapshot-codec';
+import { loadVsMeta } from '../lib/vs-meta';
 
 type SceneInit = {
   name: string;
@@ -1037,6 +1038,7 @@ export class ArenaScene extends Phaser.Scene {
       roomPassword,
       gameMode: this.init_.gameMode,
       clientId: getClientId(),
+      ...(this.init_.gameMode === 'wizard_survivor' ? { vsMetaRanks: loadVsMeta().ranks } : {}),
     };
 
     // Re-send join on every open (initial + reconnects after server HMR/restart)
