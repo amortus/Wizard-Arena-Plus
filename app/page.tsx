@@ -302,7 +302,7 @@ export default function Page() {
     { mode: 'castle'          as const, label: t.modeCastle, sub: t.modeCastleDesc, glyph: '🏰', clr: 'castle' },
     { mode: 'moba'            as const, label: t.modeMoba,   sub: t.modeMobaDesc,   glyph: '💎', clr: 'moba' },
     { mode: 'aram'            as const, label: t.modeAram,   sub: t.modeAramDesc,   glyph: '🎲', clr: 'aram' },
-    { mode: 'wizard_survivor' as const, label: '🧙 Wizard Survivor', sub: 'Survive 30 minutes. Vampire-Survivors style.', glyph: '🧙', clr: 'arena' },
+    { mode: 'wizard_survivor' as const, label: '🧙 Wizard Survivor', sub: 'Survive 30 minutes.', glyph: '🧙', clr: 'arena' },
   ];
 
   if (screen === 'browser') {
