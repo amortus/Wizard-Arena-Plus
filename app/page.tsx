@@ -176,7 +176,8 @@ export default function Page() {
     if (typeof window === 'undefined') return false;
     return new URLSearchParams(window.location.search).get('metashop') === '1';
   });
-  const [settings, setSettings] = useState<Settings>(() => loadSettings());
+  const [settings, setSettings] = useState<Settings>({ lang: 'en', musicVol: 0.5, sfxVol: 0.5 });
+  useEffect(() => { setSettings(loadSettings()); }, []);
 
   const t = T[settings.lang];
   const playSelectSfx = useSelectSfx(settings.sfxVol);
