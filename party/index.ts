@@ -1176,16 +1176,28 @@ export default class GameServer implements Party.Server {
       const ghostName = isBlockedName(msg.name) ? 'Player' : (msg.name || 'Player').slice(0, 16);
       const ghostKey = `${ghostName}::${chosenChar}`;
       // Dedupe by stable client identity: if this player is already in the room
-      // under a different (likely dead/hibernating) connection — e.g. they left
-      // and came back before the zombie reaper ran — drop that stale session now
-      // so they REPLACE it instead of duplicating ("stuck in the room" bug, and
-      // dead connections in the broadcast loop). Stash its state as a ghost first
-      // so the restore just below brings their progress back seamlessly.
+      // under a different connection — e.g. they left and came back before the
+      // zombie reaper ran — drop that STALE session so the reconnect REPLACES it
+      // instead of duplicating ("stuck in the room" bug, and dead connections in
+      // the broadcast loop). Stash its state as a ghost first so the restore just
+      // below brings their progress back seamlessly.
+      //
+      // Security: clientId is client-supplied. We only reclaim a session that is
+      // already stale — its connection is gone from getConnections() (dead/
+      // hibernating) or it hasn't pinged recently. A genuinely live, actively
+      // pinging session is never displaced, so a leaked clientId cannot kick or
+      // hijack an active player. (clientId is also a high-entropy random id that
+      // is never sent to other clients — it is not observable to opponents.)
       if (msg.clientId) {
+        const liveConns = new Set<string>();
+        for (const c of this.room.getConnections()) liveConns.add(c.id);
+        const tnow = Date.now();
         for (const [oldId, oldP] of this.players) {
           if (oldId === sender.id || oldP.clientId !== msg.clientId) continue;
+          const stale = !liveConns.has(oldId) || (tnow - oldP.lastTouchAt > 10_000);
+          if (!stale) continue; // old session still genuinely live — don't displace it
           if (this.gameMode !== 'aram' && oldP.alive) {
-            this.ghostPlayers.set(`${oldP.name}::${oldP.character}`, { player: { ...oldP }, expiresAt: Date.now() + 30_000 });
+            this.ghostPlayers.set(`${oldP.name}::${oldP.character}`, { player: { ...oldP }, expiresAt: tnow + 30_000 });
           }
           this.players.delete(oldId);
           for (const [wid, w] of this.wolves) if (w.ownerId === oldId) this.wolves.delete(wid);
