@@ -1830,6 +1830,13 @@ export default class GameServer implements Party.Server {
         for (const [wid, w] of this.wolves) if (w.ownerId === id) this.wolves.delete(wid);
       }
     }
+    // If reaping emptied the room, stop the tick and clear the lobby entry.
+    // Without this, the tick keeps running and reports playerCount:1 every 10s forever.
+    if (this.players.size === 0) {
+      this.stopTicking();
+      this.resetRoom();
+      this.reportToLobby();
+    }
   }
 
   updatePlayers(dt: number, now: number) {

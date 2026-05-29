@@ -13,7 +13,7 @@ type RoomListing = {
   gameMode?: 'arena' | 'castle' | 'moba' | 'aram';
 };
 
-const STALE_MS = 45_000;
+const STALE_MS = 20_000;
 
 export default class LobbyParty implements Party.Server {
   rooms = new Map<string, RoomListing>();
