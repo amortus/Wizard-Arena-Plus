@@ -205,7 +205,12 @@ const SPRITE_SHRINK = 0.72; // 0.8 × 0.9 — additional 10% on top of original 
 
 // Render-in-the-past buffer. Server ticks at 50Hz (20ms). 60ms = 3 ticks of
 // headroom — masks any jitter where individual packets are 1-2 ticks late.
-const INTERP_DELAY_MS = 60;
+// Render this far in the past so interpolation always has a future snapshot to
+// lerp toward. Measured live snapshot inter-arrival jitter (p99 ~86ms, peaks
+// ~150ms under heavy waves) exceeded the old 60ms buffer, which caused entities
+// to freeze-then-jump ("flick"). 120ms absorbs that jitter; the extra latency is
+// imperceptible in a top-down survivor.
+const INTERP_DELAY_MS = 120;
 
 type Facing = 'south' | 'north' | 'east' | 'west';
 
@@ -2650,7 +2655,10 @@ export class ArenaScene extends Phaser.Scene {
         this.npcSprites.set(n.id, s);
       }
       const prevN = prevNpcById.get(n.id);
+      // Capture immediately: lerpEntity returns a shared scratch object, so read its
+      // values now rather than holding the reference across the rest of the loop body.
       const interpPos = lerpEntity(prevN, n, interp);
+      const npcRenderX = interpPos.x, npcRenderY = interpPos.y;
       const moving = prevN
         ? (Math.abs(n.x - prevN.x) + Math.abs(n.y - prevN.y)) > 0.5
         : false;
@@ -2706,8 +2714,8 @@ export class ArenaScene extends Phaser.Scene {
         s.setTint(teamBaseTint);
       }
 
-      s.x = interpPos.x;
-      s.y = interpPos.y;
+      s.x = npcRenderX;
+      s.y = npcRenderY;
     }
     for (const [id, s] of this.npcSprites) {
       if (!seenNpcs.has(id)) {
@@ -3559,13 +3567,19 @@ export class ArenaScene extends Phaser.Scene {
   }
 }
 
+// Reused scratch so the per-entity, per-frame lerp doesn't allocate a fresh object
+// (~14k allocs/s at 144fps × ~100 entities → periodic GC pauses). Safe because every
+// caller reads .x/.y immediately and never stores the returned reference.
+const _lerpOut = { x: 0, y: 0 };
 function lerpEntity<T extends { x: number; y: number }>(
   prev: T | undefined,
   cur: T,
   t: number,
 ): { x: number; y: number } {
-  if (!prev) return { x: cur.x, y: cur.y };
-  return { x: prev.x + (cur.x - prev.x) * t, y: prev.y + (cur.y - prev.y) * t };
+  if (!prev) { _lerpOut.x = cur.x; _lerpOut.y = cur.y; return _lerpOut; }
+  _lerpOut.x = prev.x + (cur.x - prev.x) * t;
+  _lerpOut.y = prev.y + (cur.y - prev.y) * t;
+  return _lerpOut;
 }
 
 function drawHpBar(g: Phaser.GameObjects.Graphics, frac: number, color: number, yOffset = 14) {
