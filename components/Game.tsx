@@ -7,7 +7,7 @@ import { dedupeBestByName } from '../shared/leaderboard';
 import { POWERUPS } from '../shared/powerups';
 import { T, POWERUP_PT, type Lang } from '../shared/i18n';
 
-function PowerupsPanel({ powerups, lang }: { powerups: string[]; lang?: Lang }) {
+function PowerupsPanel({ powerups }: { powerups: string[] }) {
   const counts = powerups.reduce<Record<string, number>>((acc, id) => {
     acc[id] = (acc[id] ?? 0) + 1; return acc;
   }, {});
@@ -17,38 +17,32 @@ function PowerupsPanel({ powerups, lang }: { powerups: string[]; lang?: Lang }) 
   return (
     <div style={{
       position: 'fixed', right: 8, top: '50%', transform: 'translateY(-50%)',
-      display: 'flex', flexDirection: 'column', gap: 4,
-      maxHeight: '80vh', overflowY: 'auto', zIndex: 25,
+      display: 'grid', gridTemplateColumns: 'repeat(2, 34px)', gap: 4,
+      maxHeight: '80vh', overflow: 'hidden', zIndex: 25,
       pointerEvents: 'none',
     }}>
       {entries.map(([id, count]) => {
         const pu = dataMap[id];
-        const name = lang === 'pt' ? (POWERUP_PT[id]?.name ?? pu?.name ?? id) : (pu?.name ?? id);
         return (
           <div key={id} style={{
+            position: 'relative', width: 34, height: 34,
             background: 'rgba(20,10,40,0.85)',
             border: '1px solid rgba(255,204,68,0.35)',
-            borderRadius: 8,
-            padding: '3px 7px 3px 4px',
-            display: 'flex', alignItems: 'center', gap: 6,
+            borderRadius: 6,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}>
-            <div style={{ position: 'relative', width: 32, height: 32, flexShrink: 0 }}>
-              {pu?.iconSprite
-                ? <img src={pu.iconSprite} alt="" style={{ width: 32, height: 32, imageRendering: 'pixelated', display: 'block', filter: 'drop-shadow(0 0 4px rgba(255,204,68,0.45))' }} />
-                : <span style={{ fontSize: 22, lineHeight: '32px', display: 'block', textAlign: 'center' }}>{pu?.icon ?? '✨'}</span>
-              }
-              {count > 1 && (
-                <span style={{
-                  position: 'absolute', bottom: -3, right: -5,
-                  background: '#1a0a30', border: '1px solid #ffd700',
-                  color: '#ffd700', fontWeight: 700, fontSize: 10, lineHeight: 1,
-                  borderRadius: 3, padding: '1px 3px',
-                }}>×{count}</span>
-              )}
-            </div>
-            <span style={{ color: '#f0e6c8', fontSize: 11, fontFamily: 'Cinzel, serif', fontWeight: 700, lineHeight: 1.2, maxWidth: 88 }}>
-              {name}
-            </span>
+            {pu?.iconSprite
+              ? <img src={pu.iconSprite} alt="" style={{ width: 26, height: 26, imageRendering: 'pixelated', display: 'block', filter: 'drop-shadow(0 0 3px rgba(255,204,68,0.45))' }} />
+              : <span style={{ fontSize: 18 }}>{pu?.icon ?? '✨'}</span>
+            }
+            {count > 1 && (
+              <span style={{
+                position: 'absolute', bottom: -3, right: -4,
+                background: '#1a0a30', border: '1px solid #ffd700',
+                color: '#ffd700', fontWeight: 700, fontSize: 9, lineHeight: 1,
+                borderRadius: 3, padding: '1px 2px',
+              }}>×{count}</span>
+            )}
           </div>
         );
       })}
@@ -633,7 +627,7 @@ export default function Game({ name, character, color, hue, room, country, roomN
       )}
 
       {hud.self && !dead && (
-        <PowerupsPanel powerups={hud.self.collectedPowerups ?? []} lang={lang} />
+        <PowerupsPanel powerups={hud.self.collectedPowerups ?? []} />
       )}
     </div>
   );
