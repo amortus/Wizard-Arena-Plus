@@ -508,9 +508,21 @@ export default class GameServer implements Party.Server {
     const headers = {
       'Content-Type': 'application/json',
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, DELETE, OPTIONS',
     };
     if (req.method === 'OPTIONS') return new Response(null, { headers });
+    // Admin: force-close a stuck room. DELETE /parties/main/{id}?admin=MADNESS_ADMIN_2026
+    if (req.method === 'DELETE') {
+      const url = new URL(req.url);
+      if (url.searchParams.get('admin') !== 'MADNESS_ADMIN_2026') {
+        return new Response('unauthorized', { status: 401, headers });
+      }
+      for (const conn of this.room.getConnections()) { try { conn.close(); } catch { /* ignore */ } }
+      this.stopTicking();
+      this.resetRoom();
+      this.reportToLobby();
+      return new Response(JSON.stringify({ ok: true, room: this.room.id }), { status: 200, headers });
+    }
     return new Response(
       JSON.stringify({ entries: this.allTimeLeaderboard }),
       { status: 200, headers },
