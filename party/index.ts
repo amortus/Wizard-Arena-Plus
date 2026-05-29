@@ -154,6 +154,9 @@ type ServerPlayer = PlayerState & {
   input: { dx: number; dy: number };
   weaponCooldowns: Record<string, number>;
   lastTouchAt: number;
+  // Stable identity sent by the client (persisted in localStorage), independent of
+  // the per-connection id. Lets a reconnect replace its own stale session.
+  clientId?: string;
   // Time-shield scheduling
   nextTimeShieldAt: number;
   // Lightning strike scheduling
@@ -1172,6 +1175,25 @@ export default class GameServer implements Party.Server {
       // back their full state (HP, XP, level, weapons) instead of a fresh spawn.
       const ghostName = isBlockedName(msg.name) ? 'Player' : (msg.name || 'Player').slice(0, 16);
       const ghostKey = `${ghostName}::${chosenChar}`;
+      // Dedupe by stable client identity: if this player is already in the room
+      // under a different (likely dead/hibernating) connection — e.g. they left
+      // and came back before the zombie reaper ran — drop that stale session now
+      // so they REPLACE it instead of duplicating ("stuck in the room" bug, and
+      // dead connections in the broadcast loop). Stash its state as a ghost first
+      // so the restore just below brings their progress back seamlessly.
+      if (msg.clientId) {
+        for (const [oldId, oldP] of this.players) {
+          if (oldId === sender.id || oldP.clientId !== msg.clientId) continue;
+          if (this.gameMode !== 'aram' && oldP.alive) {
+            this.ghostPlayers.set(`${oldP.name}::${oldP.character}`, { player: { ...oldP }, expiresAt: Date.now() + 30_000 });
+          }
+          this.players.delete(oldId);
+          for (const [wid, w] of this.wolves) if (w.ownerId === oldId) this.wolves.delete(wid);
+          for (const c of this.room.getConnections()) {
+            if (c.id === oldId) { try { c.close(); } catch { /* already gone */ } }
+          }
+        }
+      }
       const ghost = this.ghostPlayers.get(ghostKey);
       const isGhostRestore = !!(ghost && Date.now() < ghost.expiresAt);
       if (isGhostRestore && ghost) {
@@ -1211,6 +1233,9 @@ export default class GameServer implements Party.Server {
           if (p.mobaTeam === 'blue') p.hue = 4.2;
         }
       }
+      // Tag the (new or restored) player with their stable client identity so a
+      // later reconnect can find and replace this exact session (see dedupe above).
+      { const jp = this.players.get(sender.id); if (jp) jp.clientId = msg.clientId ?? sender.id; }
       this.reportToLobby();
     } else if (msg.type === 'input') {
       const p = this.players.get(sender.id);
@@ -1769,7 +1794,10 @@ export default class GameServer implements Party.Server {
     if (this.players.size === 0) return;
     const live = new Set<string>();
     for (const c of this.room.getConnections()) live.add(c.id);
-    const ZOMBIE_TIMEOUT_MS = 60_000;
+    // 15s: the client pings every 5s, so a live player refreshes lastTouchAt well
+    // within this window. Short timeout clears ghosts fast (was 60s — left stale
+    // players lingering in the room and in the broadcast loop).
+    const ZOMBIE_TIMEOUT_MS = 15_000;
     for (const [id, p] of this.players) {
       const noConn = !live.has(id);
       const idle = now - p.lastTouchAt > ZOMBIE_TIMEOUT_MS;

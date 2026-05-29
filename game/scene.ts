@@ -212,6 +212,21 @@ const SPRITE_SHRINK = 0.72; // 0.8 × 0.9 — additional 10% on top of original 
 // imperceptible in a top-down survivor.
 const INTERP_DELAY_MS = 120;
 
+// Stable per-browser identity, persisted across reloads. Sent in the join payload so
+// the server can replace this player's previous session on reconnect instead of
+// leaving a duplicate ("stuck in room" bug). See dedupe-on-join in party/index.ts.
+function getClientId(): string {
+  const KEY = 'warena_client_id';
+  const ephemeral = () => `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+  try {
+    let id = localStorage.getItem(KEY);
+    if (!id) { id = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : ephemeral(); localStorage.setItem(KEY, id); }
+    return id;
+  } catch {
+    return ephemeral(); // localStorage blocked (private mode) — ephemeral id for this session
+  }
+}
+
 type Facing = 'south' | 'north' | 'east' | 'west';
 
 export class ArenaScene extends Phaser.Scene {
@@ -1019,6 +1034,7 @@ export class ArenaScene extends Phaser.Scene {
       roomName,
       roomPassword,
       gameMode: this.init_.gameMode,
+      clientId: getClientId(),
     };
 
     // Re-send join on every open (initial + reconnects after server HMR/restart)
