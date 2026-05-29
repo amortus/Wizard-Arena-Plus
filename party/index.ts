@@ -122,6 +122,14 @@ import {
   type WeaponKind,
 } from '../shared/constants';
 import { rollPowerupChoices, POWERUPS } from '../shared/powerups';
+import {
+  VS_TIMER_MS, VS_XP_FOR_LEVEL, VS_WEAPON_LEVELS, VS_WEAPON_TARGET,
+  VS_PASSIVE_ITEMS, VS_EVOLUTIONS, VS_BOSS_ROSTER, VS_BOSS_MINUTES,
+  VS_MAX_WEAPON_SLOTS, VS_MAX_PASSIVE_SLOTS, VS_CHEST_PICKUP_RADIUS,
+  VS_CHEST_LIFETIME_MS, VS_BASE_WEAPONS, VS_CHOICE_LEVELUP, VS_CHOICE_ADD,
+  VS_CHOICE_PASSIVE, VS_EVOLVED_TINTS, vsSpawnEntryAt, rollVsChoices,
+} from '../shared/vs-constants';
+import type { ChestState } from '../shared/types';
 import { MOBA_ITEMS_MAP } from '../shared/items';
 import { isBlockedName } from '../shared/profanity';
 import type {
@@ -204,6 +212,11 @@ type ServerPlayer = PlayerState & {
   speedBoostUntil: number;
   damageBoostUntil: number;
   berserkerUntil: number;
+  // Wizard Survivor: per-player passive items
+  vsPassiveItems: Array<{ id: string; level: number }>;
+  // Wizard Survivor: gold earned this run (multiplied by vsGoldMul)
+  vsRunGold: number;
+  vsGoldMul: number;
 };
 
 type ServerProjectile = ProjectileState & {
@@ -456,6 +469,22 @@ export default class GameServer implements Party.Server {
   castleWaveGateIdx = 0; // cycles through CASTLE_GATES for spawns
   castleDefeated = false;
 
+  // ── Wizard Survivor mode state ───────────────────────────────────────────
+  vsStartTime = 0;
+  vsChests = new Map<string, ChestState>();
+  vsNextSpawnAt = 0;
+  vsSpawnedBossMinutes = new Set<number>();
+  vsReaperSpawned = false;
+  vsWon = false;
+  vsNextBossIdx = 0;
+  // Per-player weapon levels: playerId → { weaponKind → level (1-8) }
+  vsWeaponLevels = new Map<string, Partial<Record<WeaponKind, number>>>();
+  // WEAPONS codec order — used to serialize vsWeaponLevels as u8 array
+  static readonly WEAPONS_CODEC_ORDER: WeaponKind[] = [
+    'sword','orb','dagger','fireball','lightning_bolt','shadow_bolt','orbital_spark','aura_shield',
+    'holy_bolt','storm_daggers','death_vortex','hellfire','soul_drain','thunder_storm','arcane_nova','eternal_orbit',
+  ];
+
   // ── Crystal Rush (MOBA) mode state ───────────────────────────────────────
   mobaTowers   = new Map<string, ServerTower>();
   mobaCrystals = new Map<string, MobaCrystalState>();
@@ -510,6 +539,278 @@ export default class GameServer implements Party.Server {
     this.castleWave = 0;
     this.castleWaveActive = false;
     this.castleDefeated = false;
+  }
+
+  // ── Wizard Survivor helpers ────────────────────────────────────────────────
+
+  initWizardSurvivor() {
+    this.vsStartTime = Date.now();
+    this.vsChests.clear();
+    this.vsNextSpawnAt = 0;
+    this.vsSpawnedBossMinutes.clear();
+    this.vsReaperSpawned = false;
+    this.vsWon = false;
+    this.vsNextBossIdx = 0;
+    this.vsWeaponLevels.clear();
+    // Re-initialize weapon levels for all already-joined players
+    for (const [id, p] of this.players) {
+      if (p.alive) {
+        const base = CHARACTER_BASES[p.character] ?? CHARACTER_BASES.blue_wizard;
+        const wl: Partial<Record<WeaponKind, number>> = {};
+        wl[base.weapon] = 1;
+        this.vsWeaponLevels.set(id, wl);
+        p.xpToNext = VS_XP_FOR_LEVEL(1);
+      }
+    }
+  }
+
+  runWizardSurvivor(now: number) {
+    if (this.vsWon) return;
+    const elapsed = now - this.vsStartTime;
+    const remaining = VS_TIMER_MS - elapsed;
+
+    // Update time remaining for all players
+    for (const p of this.players.values()) {
+      p.vsTimeRemainingMs = Math.max(0, remaining);
+    }
+
+    // Win condition: survived 30 minutes
+    if (remaining <= 0) {
+      this.vsWon = true;
+      for (const p of this.players.values()) {
+        p.vsWon = true;
+        p.vsTimeRemainingMs = 0;
+      }
+      return;
+    }
+
+    // Check for boss spawns at fixed minute marks
+    const elapsedMinutes = elapsed / 60000;
+    for (const bossMin of VS_BOSS_MINUTES) {
+      if (elapsedMinutes >= bossMin && !this.vsSpawnedBossMinutes.has(bossMin)) {
+        this.vsSpawnedBossMinutes.add(bossMin);
+        this.spawnVsBoss(now);
+      }
+    }
+
+    // Reaper warning at 29 min
+    if (elapsed >= 29 * 60000 && !this.vsReaperSpawned) {
+      this.vsReaperSpawned = true;
+      const alert: ServerToClient = { type: 'bossAlert', bossName: '☠️ THE REAPER IS COMING!' };
+      this.room.broadcast(JSON.stringify(alert));
+    }
+
+    // Regular enemy spawning
+    this.spawnVsEnemies(now, elapsed);
+
+    // Expire old chests
+    for (const [cid, chest] of this.vsChests) {
+      if (now - chest.spawnedAt > VS_CHEST_LIFETIME_MS) this.vsChests.delete(cid);
+    }
+
+    // Check chest pickups
+    this.checkVsChestPickups(now);
+  }
+
+  spawnVsBoss(now: number) {
+    if (this.npcs.size >= NPC_MAX_COUNT) return;
+    const kind = VS_BOSS_ROSTER[this.vsNextBossIdx % VS_BOSS_ROSTER.length];
+    this.vsNextBossIdx++;
+
+    const bossEntry = BOSS_ROSTER.find(b => b.kind === kind) ?? BOSS_ROSTER[0];
+    const playerCount = this.players.size;
+    const hpScale = 1 + (playerCount - 1) * 0.4;
+    const elapsedMin = (Date.now() - this.vsStartTime) / 60000;
+    const timeMul = 1 + (elapsedMin / 30) * 2; // 1x at start → 3x at 30min
+    const hp = NPC_BASE_HP * bossEntry.hpMul * hpScale * timeMul;
+
+    // Spawn off-screen from a random player
+    const alivePlayers = [...this.players.values()].filter(p => p.alive);
+    const refPlayer = alivePlayers[Math.floor(Math.random() * alivePlayers.length)];
+    const spawnRef = refPlayer ?? { x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 };
+    const angle = Math.random() * Math.PI * 2;
+    const dist = 700 + Math.random() * 200;
+    const x = clamp(spawnRef.x + Math.cos(angle) * dist, 30, ARENA_WIDTH - 30);
+    const y = clamp(spawnRef.y + Math.sin(angle) * dist, 30, ARENA_HEIGHT - 30);
+
+    const id = `vsb_${Date.now()}`;
+    this.activeBossId = id;
+    this.npcs.set(id, {
+      id, kind, x, y,
+      hp, baseHp: hp,
+      speed: PLAYER_SPEED * (bossEntry.speedFrac ?? 0.55),
+      baseSpeed: PLAYER_SPEED * (bossEntry.speedFrac ?? 0.55),
+      slowUntil: 0, slowMul: 1, freezeUntil: 0,
+      lastHitAt: 0,
+      ownerPlayerId: refPlayer?.id ?? '',
+      retargetAt: Number.MAX_SAFE_INTEGER,
+      ai: 'chase',
+      aiPhase: 'pursue',
+      aiPhaseEndsAt: 0,
+      flankSide: 1,
+    });
+    const alert: ServerToClient = { type: 'bossAlert', bossName: bossEntry.name };
+    this.room.broadcast(JSON.stringify(alert));
+  }
+
+  spawnVsEnemies(now: number, elapsedMs: number) {
+    if (now < this.vsNextSpawnAt) return;
+    if (this.npcs.size >= NPC_MAX_COUNT) return;
+
+    const elapsedMinutes = elapsedMs / 60000;
+    const entry = vsSpawnEntryAt(elapsedMinutes);
+    this.vsNextSpawnAt = now + entry.intervalMs;
+
+    const playerCount = Math.max(1, this.players.size);
+    const scaleMul = 1 + (playerCount - 1) * 0.3;
+    const rawCount = Math.floor((entry.countMin + Math.random() * (entry.countMax - entry.countMin)) * scaleMul);
+    const count = Math.min(rawCount, NPC_MAX_COUNT - this.npcs.size);
+    if (count <= 0) return;
+
+    // Pick an alive player as spawn reference (round-robin slightly randomized)
+    const alivePlayers = [...this.players.values()].filter(p => p.alive);
+    if (alivePlayers.length === 0) return;
+
+    const timeMul = 1 + (elapsedMinutes / 30) * 1.5;
+
+    for (let i = 0; i < count; i++) {
+      if (this.npcs.size >= NPC_MAX_COUNT) break;
+      const ref = alivePlayers[i % alivePlayers.length];
+      const angle = Math.random() * Math.PI * 2;
+      const dist = MIN_SAFE_SPAWN_DIST + 40 + Math.random() * 180;
+      const x = clamp(ref.x + Math.cos(angle) * dist, 20, ARENA_WIDTH - 20);
+      const y = clamp(ref.y + Math.sin(angle) * dist, 20, ARENA_HEIGHT - 20);
+
+      const kind = entry.kinds[Math.floor(Math.random() * entry.kinds.length)];
+      const base = MONSTER_BASES[kind];
+      const hp = NPC_BASE_HP * (base?.hpMul ?? 1) * timeMul;
+      const spd = Math.min(NPC_BASE_SPEED * (base?.speedMul ?? 1), PLAYER_SPEED * NPC_SPEED_CAP_FRAC);
+
+      const id = genId('vs');
+      this.npcs.set(id, {
+        id, kind, x, y,
+        hp, baseHp: hp,
+        speed: spd, baseSpeed: spd,
+        slowUntil: 0, slowMul: 1, freezeUntil: 0,
+        lastHitAt: 0,
+        ownerPlayerId: ref.id,
+        retargetAt: Date.now() + 3000 + Math.random() * 2000,
+        ai: 'chase',
+        aiPhase: 'pursue',
+        aiPhaseEndsAt: 0,
+        flankSide: 1,
+      });
+    }
+  }
+
+  spawnVsChest(x: number, y: number) {
+    const id = genId('chest');
+    this.vsChests.set(id, { id, x, y, spawnedAt: Date.now() });
+  }
+
+  checkVsChestPickups(now: number) {
+    if (this.vsChests.size === 0) return;
+    const r2 = VS_CHEST_PICKUP_RADIUS * VS_CHEST_PICKUP_RADIUS;
+    for (const [cid, chest] of this.vsChests) {
+      for (const p of this.players.values()) {
+        if (!p.alive) continue;
+        const dx = p.x - chest.x, dy = p.y - chest.y;
+        if (dx * dx + dy * dy < r2) {
+          this.vsChests.delete(cid);
+          this.tryEvolveWeapon(p);
+          // Award gold regardless of evolution
+          const gold = 20 + Math.floor(Math.random() * 30);
+          p.vsRunGold = (p.vsRunGold ?? 0) + Math.round(gold * (p.vsGoldMul ?? 1));
+          break;
+        }
+      }
+    }
+  }
+
+  tryEvolveWeapon(player: ServerPlayer) {
+    const wl = this.vsWeaponLevels.get(player.id);
+    if (!wl) return;
+    for (const evo of VS_EVOLUTIONS) {
+      // Need: weapon at level 8 AND passive present
+      if (!player.weapons.includes(evo.baseWeapon)) continue;
+      if ((wl[evo.baseWeapon] ?? 1) < 8) continue;
+      if (!player.vsPassiveItems.some(pi => pi.id === evo.passiveId)) continue;
+      // Evolve! Replace base weapon with evolved weapon
+      const idx = player.weapons.indexOf(evo.baseWeapon);
+      if (idx !== -1) {
+        player.weapons = [...player.weapons];
+        player.weapons[idx] = evo.evolvedWeapon;
+      }
+      // Remove the base weapon level and add evolved at level 1
+      delete wl[evo.baseWeapon];
+      wl[evo.evolvedWeapon] = 1;
+      // Reset cooldown so evolved weapon fires immediately
+      delete player.weaponCooldowns[evo.baseWeapon];
+      player.weaponCooldowns[evo.evolvedWeapon] = 0;
+      const alert: ServerToClient = { type: 'bossAlert', bossName: `⚡ ${evo.name} evolved!` };
+      this.room.broadcast(JSON.stringify(alert));
+      return; // only one evolution per chest
+    }
+  }
+
+  handleVsPickPowerup(player: ServerPlayer, choiceId: string) {
+    const wl = this.vsWeaponLevels.get(player.id) ?? {};
+    if (choiceId.startsWith(VS_CHOICE_LEVELUP)) {
+      const w = choiceId.slice(VS_CHOICE_LEVELUP.length) as WeaponKind;
+      if (!player.weapons.includes(w)) return;
+      const curLevel = wl[w] ?? 1;
+      if (curLevel >= 8) return;
+      const newLevel = curLevel + 1;
+      wl[w] = newLevel;
+      this.vsWeaponLevels.set(player.id, wl);
+      // Reset cooldown so upgraded weapon fires at new rate immediately
+      player.weaponCooldowns[w] = 0;
+    } else if (choiceId.startsWith(VS_CHOICE_ADD)) {
+      const w = choiceId.slice(VS_CHOICE_ADD.length) as WeaponKind;
+      if (player.weapons.includes(w)) return;
+      if (player.weapons.length >= VS_MAX_WEAPON_SLOTS) return;
+      player.weapons = [...player.weapons, w];
+      wl[w] = 1;
+      this.vsWeaponLevels.set(player.id, wl);
+      player.weaponCooldowns[w] = 0;
+    } else if (choiceId.startsWith(VS_CHOICE_PASSIVE)) {
+      const passiveId = choiceId.slice(VS_CHOICE_PASSIVE.length);
+      const passiveDef = VS_PASSIVE_ITEMS.find(pi => pi.id === passiveId);
+      if (!passiveDef) return;
+      const existing = player.vsPassiveItems.find(pi => pi.id === passiveId);
+      if (existing) {
+        if (existing.level >= passiveDef.maxLevel) return;
+        this.applyVsPassiveBonus(player, passiveId, existing.level, existing.level + 1);
+        existing.level += 1;
+      } else {
+        if (player.vsPassiveItems.length >= VS_MAX_PASSIVE_SLOTS) return;
+        this.applyVsPassiveBonus(player, passiveId, 0, 1);
+        player.vsPassiveItems.push({ id: passiveId, level: 1 });
+      }
+    }
+    player.collectedPowerups.push(choiceId);
+  }
+
+  applyVsPassiveBonus(player: ServerPlayer, passiveId: string, fromLevel: number, toLevel: number) {
+    const passiveDef = VS_PASSIVE_ITEMS.find(pi => pi.id === passiveId);
+    if (!passiveDef) return;
+    const b = passiveDef.bonusPerLevel;
+    const levels = toLevel - fromLevel;
+    if (b.damageMulAdd)    player.damageMul  *= Math.pow(1 + b.damageMulAdd, levels);
+    if (b.cooldownMulSub)  player.cooldownMul *= Math.pow(1 - b.cooldownMulSub, levels);
+    if (b.maxHpMulAdd) {
+      const addHp = Math.round(player.maxHp * b.maxHpMulAdd * levels);
+      player.maxHp += addHp;
+      player.hp = Math.min(player.maxHp, player.hp + addHp);
+    }
+    if (b.regenAdd)        player.regenPerSec += b.regenAdd * levels;
+    if (b.speedMulAdd)     player.speedMul    *= Math.pow(1 + b.speedMulAdd, levels);
+    if (b.xpMulAdd)        player.xpMul       *= Math.pow(1 + b.xpMulAdd, levels);
+    if (b.projectilesAdd)  player.projectileBonus += b.projectilesAdd * levels;
+    if (b.pickupMulAdd)    player.pickupMul   *= Math.pow(1 + b.pickupMulAdd, levels);
+    if (b.goldMulAdd)      player.vsGoldMul   = (player.vsGoldMul ?? 1) * Math.pow(1 + b.goldMulAdd, levels);
+    if (b.lifestealAdd)    player.vampireFraction += b.lifestealAdd * levels;
+    if (b.rangeAreaMulAdd) player.auraShieldRangeMul = (player.auraShieldRangeMul ?? 1) * Math.pow(1 + b.rangeAreaMulAdd, levels);
   }
 
   runCastleWave(now: number) {
@@ -1131,6 +1432,15 @@ export default class GameServer implements Party.Server {
     this.mobaMinionWaypoints.clear();
     this.aramLastHealthRelicAt = 0;
     this.mobaPassiveGoldAt = 0;
+    // Wizard Survivor mode reset
+    this.vsStartTime = 0;
+    this.vsChests.clear();
+    this.vsNextSpawnAt = 0;
+    this.vsSpawnedBossMinutes.clear();
+    this.vsReaperSpawned = false;
+    this.vsWon = false;
+    this.vsNextBossIdx = 0;
+    this.vsWeaponLevels.clear();
   }
 
   onMessage(message: string, sender: Party.Connection) {
@@ -1165,6 +1475,7 @@ export default class GameServer implements Party.Server {
         if (this.gameMode === 'castle') this.initCastle();
         if (this.gameMode === 'moba') this.initMoba();
         if (this.gameMode === 'aram') this.initAram();
+        if (this.gameMode === 'wizard_survivor') this.initWizardSurvivor();
       }
       // ARAM: override chosen character with a random one
       const chosenChar = this.gameMode === 'aram'
@@ -1271,18 +1582,20 @@ export default class GameServer implements Party.Server {
         const choices = p.pendingChoices.shift()!;
         const choice = choices[msg.choiceIdx];
         if (choice) {
-          const powerup = POWERUPS.find((pw) => pw.id === choice.id);
-          if (powerup) {
-            powerup.apply(p);
-            p.collectedPowerups.push(choice.id);
+          if (this.gameMode === 'wizard_survivor') {
+            this.handleVsPickPowerup(p, choice.id);
+          } else {
+            const powerup = POWERUPS.find((pw) => pw.id === choice.id);
+            if (powerup) {
+              powerup.apply(p);
+              p.collectedPowerups.push(choice.id);
+            }
           }
         }
         p.pendingLevelUps = p.pendingChoices.length;
         if (p.pendingChoices.length > 0) {
-          // Still more level-ups pending — keep the shield up for the next pick
           this.sendLevelUp(sender.id, p.level, p.pendingChoices[0]);
         } else {
-          // All choices picked — end invulnerability immediately so combat resumes
           p.invulnerableUntil = 0;
         }
       }
@@ -1414,7 +1727,17 @@ export default class GameServer implements Party.Server {
       speedBoostUntil: 0,
       damageBoostUntil: 0,
       berserkerUntil: 0,
+      vsPassiveItems: [],
+      vsRunGold: 0,
+      vsGoldMul: 1,
     };
+    // Wizard Survivor: initialize weapon levels map with starting weapon
+    if (this.gameMode === 'wizard_survivor') {
+      const wl: Partial<Record<WeaponKind, number>> = {};
+      wl[base.weapon] = 1;
+      this.vsWeaponLevels.set(id, wl);
+      player.xpToNext = VS_XP_FOR_LEVEL(1);
+    }
     this.players.set(id, player);
     // Defensive: if a Durable Object woke from hibernation and lost the tick
     // interval (but kept WebSocket connections), the next join will restart it.
@@ -1737,6 +2060,10 @@ export default class GameServer implements Party.Server {
       }
       this.tickMobaRespawns(now);
       this.tickPassiveGold(now);
+    } else if (this.gameMode === 'wizard_survivor') {
+      // Wizard Survivor: shared room-wide VS spawner, no per-player waves
+      this.runWizardSurvivor(now);
+      this.perf.time('updateNPCs', () => this.updateNPCs(dt, now));
     } else {
       // Arena: per-player waves + dragon/boss roster
       this.runWaves(now);
@@ -2080,7 +2407,14 @@ export default class GameServer implements Party.Server {
         const cd = (p.weaponCooldowns[w] ?? 0) - dt * 1000;
         if (cd <= 0) {
           this.fireWeapon(p, w);
-          p.weaponCooldowns[w] = def.cooldownMs * p.cooldownMul;
+          // In VS mode apply weapon level cooldown multiplier on top of player cooldownMul
+          let wsCooldownMul = 1;
+          if (this.gameMode === 'wizard_survivor') {
+            const wl = this.vsWeaponLevels.get(p.id);
+            const lvl = Math.max(1, Math.min(8, wl?.[w] ?? 1));
+            wsCooldownMul = VS_WEAPON_LEVELS[w]?.[lvl - 1]?.cooldownMul ?? 1;
+          }
+          p.weaponCooldowns[w] = def.cooldownMs * p.cooldownMul * wsCooldownMul;
         } else {
           p.weaponCooldowns[w] = cd;
         }
@@ -2093,17 +2427,32 @@ export default class GameServer implements Party.Server {
       if (tNow >= p.nextAuraScanAt) {
         p.nextAuraScanAt = tNow + 100;
 
-        if (p.weapons.includes('aura_shield')) {
-          const def = WEAPON_DEFS.aura_shield;
-          const range = def.range * (p.auraShieldRangeMul || 1);
+        // Handle aura_shield and its evolved form soul_drain
+        for (const auraW of ['aura_shield', 'soul_drain'] as const) {
+          if (!p.weapons.includes(auraW)) continue;
+          const def = WEAPON_DEFS[auraW];
+          // VS: apply level rangeMul; non-VS: use auraShieldRangeMul from powerup
+          let range: number;
+          if (this.gameMode === 'wizard_survivor') {
+            const wl = this.vsWeaponLevels.get(p.id);
+            const lvl = Math.max(1, Math.min(8, wl?.[auraW] ?? 1));
+            const vsLvl = VS_WEAPON_LEVELS[auraW]?.[lvl - 1];
+            range = def.range * (vsLvl?.rangeMul ?? 1);
+          } else {
+            range = def.range * (p.auraShieldRangeMul || 1);
+          }
           const r2 = range * range;
           for (const n of this.npcs.values()) {
             if ((n.x - p.x) ** 2 + (n.y - p.y) ** 2 < r2) {
               const last = p.pwAuraLastHits.get(n.id) ?? 0;
               if (tNow - last >= 350) {
                 p.pwAuraLastHits.set(n.id, tNow);
-                const dmg = this.computeDamage(p, 'aura_shield');
+                const dmg = this.computeDamage(p, auraW);
                 n.hp -= dmg;
+                if (auraW === 'soul_drain') {
+                  // Soul Drain has built-in lifesteal (30%)
+                  p.hp = Math.min(p.maxHp, p.hp + dmg * 0.3);
+                }
                 this.applyVampire(p, dmg);
                 if (n.hp <= 0) this.killNPC(n.id, p.id);
               }
@@ -2130,9 +2479,18 @@ export default class GameServer implements Party.Server {
     const def = WEAPON_DEFS[w];
     const pattern = WEAPON_PATTERN[w];
 
+    // In VS mode: apply weapon level overrides to projectile count
+    let vsLevelData: import('../shared/vs-constants').WeaponLevelData | null = null;
+    if (this.gameMode === 'wizard_survivor') {
+      const wl = this.vsWeaponLevels.get(p.id);
+      const lvl = Math.max(1, Math.min(8, (wl?.[w] ?? 1)));
+      vsLevelData = VS_WEAPON_LEVELS[w]?.[lvl - 1] ?? null;
+    }
+
     // Orbital spawns N projectiles spaced evenly around the player; doesn't need a target.
     if (pattern === 'orbital') {
-      const totalProjectiles = def.projectiles + p.projectileBonus;
+      const baseProjCount = vsLevelData ? vsLevelData.projectiles : def.projectiles;
+      const totalProjectiles = baseProjCount + p.projectileBonus;
       if (this.projectiles.size + totalProjectiles > MAX_PROJECTILES) {
         let toEvict = this.projectiles.size + totalProjectiles - MAX_PROJECTILES;
         for (const [key, evicted] of this.projectiles) {
@@ -2178,10 +2536,51 @@ export default class GameServer implements Party.Server {
       return;
     }
 
-    // All other weapons need a target
-    const target = this.findNearestTarget(p, def.range);
+    // VS mode: radial targeting — fire evenly in all directions, no NPC needed
+    if (this.gameMode === 'wizard_survivor' && VS_WEAPON_TARGET[w] === 'radial') {
+      const baseProjCount = vsLevelData ? vsLevelData.projectiles : def.projectiles;
+      const totalProjectiles = Math.max(1, baseProjCount + p.projectileBonus);
+      if (this.projectiles.size + totalProjectiles > MAX_PROJECTILES) {
+        let toEvict = this.projectiles.size + totalProjectiles - MAX_PROJECTILES;
+        for (const [, evicted] of this.projectiles) {
+          this.deleteProjectile(evicted);
+          if (--toEvict <= 0) break;
+        }
+      }
+      for (let i = 0; i < totalProjectiles; i++) {
+        const angle = (i / totalProjectiles) * Math.PI * 2;
+        const vx = Math.cos(angle) * def.speed;
+        const vy = Math.sin(angle) * def.speed;
+        const proj: ServerProjectile = {
+          id: genId('proj'), ownerId: p.id, x: p.x, y: p.y,
+          vx, vy, weapon: w,
+          lifetime: PROJECTILE_LIFETIME_MS * p.projectileLifeMul,
+          piercesLeft: p.pierceCount, pattern: 'straight',
+        };
+        this.projectiles.set(proj.id, proj);
+        this.pendingProjCreates.push({
+          id: proj.id, ownerId: proj.ownerId,
+          x: Math.round(proj.x), y: Math.round(proj.y),
+          vx: Math.round(vx * 10) / 10, vy: Math.round(vy * 10) / 10,
+          weapon: w, lifetime: proj.lifetime, pattern: 'straight',
+        });
+      }
+      return;
+    }
+
+    // Determine target based on VS targeting mode or default nearest
+    let target: { x: number; y: number } | null = null;
+    if (this.gameMode === 'wizard_survivor' && VS_WEAPON_TARGET[w] === 'random') {
+      const range = vsLevelData ? def.range * vsLevelData.rangeMul : def.range;
+      target = this.pickRandomNearbyNpc(p, range);
+    } else {
+      const range = vsLevelData ? def.range * vsLevelData.rangeMul : def.range;
+      target = this.findNearestTarget(p, range);
+    }
     if (!target) return;
-    const totalProjectiles = def.projectiles + p.projectileBonus;
+
+    const baseProjCount = vsLevelData ? vsLevelData.projectiles : def.projectiles;
+    const totalProjectiles = baseProjCount + p.projectileBonus;
     if (this.projectiles.size + totalProjectiles > MAX_PROJECTILES) {
       let toEvict = this.projectiles.size + totalProjectiles - MAX_PROJECTILES;
       for (const [, evicted] of this.projectiles) {
@@ -2207,13 +2606,12 @@ export default class GameServer implements Party.Server {
         pattern,
       };
       if (pattern === 'wave') {
-        // perpendicular axis for sinusoidal offset (rotate velocity 90°, normalize)
         const speed = Math.hypot(vx, vy) || 1;
         proj.baseX = p.x;
         proj.baseY = p.y;
         proj.perpX = -vy / speed;
         proj.perpY = vx / speed;
-        proj.waveTime = i * 0.15; // phase offset between bolts so they don't overlap
+        proj.waveTime = i * 0.15;
       }
       this.projectiles.set(proj.id, proj);
       if (pattern !== 'homing') {
@@ -2249,10 +2647,16 @@ export default class GameServer implements Party.Server {
   computeDamage(owner: ServerPlayer | undefined, w: WeaponKind): number {
     const base = WEAPON_DEFS[w].damage;
     const dmgMul = owner?.damageMul ?? 1;
-    // Capped per-level scaling — late game stops snowballing.
     const cappedLvl = Math.min(LEVEL_DAMAGE_CAP_LEVELS, ((owner?.level ?? 1) - 1));
     const lvlMul = 1 + cappedLvl * LEVEL_DAMAGE_MUL;
     let dmg = base * dmgMul * lvlMul;
+    // VS: apply weapon level damage multiplier
+    if (owner && this.gameMode === 'wizard_survivor') {
+      const wl = this.vsWeaponLevels.get(owner.id);
+      const lvl = Math.max(1, Math.min(8, wl?.[w] ?? 1));
+      const vsLvlData = VS_WEAPON_LEVELS[w]?.[lvl - 1];
+      if (vsLvlData) dmg *= vsLvlData.dmgMul;
+    }
     // Bloodbath: flat +30% while below 30% HP. Capped — does not stack.
     if (owner?.bloodbathEnabled && owner.maxHp > 0 && owner.hp / owner.maxHp < 0.3) {
       dmg *= 1.3;
@@ -3676,21 +4080,26 @@ export default class GameServer implements Party.Server {
       // Unique roster boss — big feast scaled by difficulty
       const killer = killerId ? this.players.get(killerId) : undefined;
       if (killer) killer.bossKills = (killer.bossKills ?? 0) + 1;
-      const hpMul = MONSTER_BASES[n.kind]?.hpMul ?? 8;
-      const bigCount = Math.max(10, Math.round(hpMul * 2.5));
-      const midCount = Math.max(5, Math.round(hpMul * 1.2));
-      for (let i = 0; i < bigCount; i++) this.dropGem(n.x, n.y, 10);
-      for (let i = 0; i < midCount; i++) this.dropGem(n.x, n.y, 5);
-      // Drop the annihilate pickup so the nova gems are collectable
-      const now2 = Date.now();
-      const aid = genId('pickup');
-      this.pickups.set(aid, {
-        id: aid, kind: 'annihilate',
-        x: n.x, y: n.y,
-        expiresAt: now2 + 15_000,
-      });
-      // Do NOT null activeBossId here — maybeSpawnBoss() detects the dead boss
-      // on next tick and handles cooldown + roster advance atomically.
+      if (this.gameMode === 'wizard_survivor') {
+        // VS: drop a chest on boss death instead of gems/annihilate
+        this.spawnVsChest(n.x, n.y);
+        this.activeBossId = null;
+      } else {
+        const hpMul = MONSTER_BASES[n.kind]?.hpMul ?? 8;
+        const bigCount = Math.max(10, Math.round(hpMul * 2.5));
+        const midCount = Math.max(5, Math.round(hpMul * 1.2));
+        for (let i = 0; i < bigCount; i++) this.dropGem(n.x, n.y, 10);
+        for (let i = 0; i < midCount; i++) this.dropGem(n.x, n.y, 5);
+        const now2 = Date.now();
+        const aid = genId('pickup');
+        this.pickups.set(aid, {
+          id: aid, kind: 'annihilate',
+          x: n.x, y: n.y,
+          expiresAt: now2 + 15_000,
+        });
+        // Do NOT null activeBossId here — maybeSpawnBoss() detects the dead boss
+        // on next tick and handles cooldown + roster advance atomically.
+      }
     } else if (n.id === this.miniBossId) {
       for (let i = 0; i < 4; i++) this.dropGem(n.x, n.y, 10);
       for (let i = 0; i < 8; i++) this.dropGem(n.x, n.y, 5);
@@ -3913,7 +4322,9 @@ export default class GameServer implements Party.Server {
     while (p.xp >= p.xpToNext) {
       p.xp -= p.xpToNext;
       p.level += 1;
-      p.xpToNext = XP_FOR_LEVEL(p.level);
+      p.xpToNext = this.gameMode === 'wizard_survivor'
+        ? VS_XP_FOR_LEVEL(p.level)
+        : XP_FOR_LEVEL(p.level);
       this.queueLevelUp(p);
     }
   }
@@ -3926,17 +4337,20 @@ export default class GameServer implements Party.Server {
       p.hp = Math.min(p.hp + 8, p.maxHp);
       return;
     }
-    const choices = rollPowerupChoices(p, 3).map((c) => ({
-      id: c.id,
-      name: c.name,
-      description: c.description,
-      icon: c.icon,
-      iconSprite: c.iconSprite,
-    }));
+    let choices: { id: string; name: string; description: string; icon: string; iconSprite?: string }[];
+    if (this.gameMode === 'wizard_survivor') {
+      const wl = this.vsWeaponLevels.get(p.id) ?? {};
+      choices = rollVsChoices(p, wl, p.vsPassiveItems).map(c => ({
+        id: c.id, name: c.name, description: c.description, icon: c.icon, iconSprite: c.iconSprite,
+      }));
+    } else {
+      choices = rollPowerupChoices(p, 3).map((c) => ({
+        id: c.id, name: c.name, description: c.description, icon: c.icon, iconSprite: c.iconSprite,
+      }));
+    }
     if (choices.length === 0) return;
     p.pendingChoices.push(choices);
     p.pendingLevelUps = p.pendingChoices.length;
-    // 5-second breather while picking
     p.invulnerableUntil = Math.max(p.invulnerableUntil, Date.now() + LEVEL_UP_INVULN_MS);
     if (p.pendingChoices.length === 1) {
       this.sendLevelUp(p.id, p.level, choices);
@@ -4025,6 +4439,15 @@ export default class GameServer implements Party.Server {
         mobaRespawnAt: p.mobaRespawnAt,
         mobaItems: p.mobaItems,
         collectedPowerups: p.collectedPowerups,
+        // VS fields — only populated in wizard_survivor mode
+        ...(this.gameMode === 'wizard_survivor' ? (() => {
+          const wl = this.vsWeaponLevels.get(p.id) ?? {};
+          // Encode vsWeaponLevels as u8 array in WEAPONS_CODEC_ORDER
+          const vsWeaponLevels = GameServer.WEAPONS_CODEC_ORDER.map(w => wl[w] ?? 0);
+          const vsPassiveIds  = p.vsPassiveItems.map(pi => pi.id);
+          const vsPassiveLvls = p.vsPassiveItems.map(pi => pi.level);
+          return { vsWeaponLevels, vsPassiveIds, vsPassiveLvls, vsGold: p.vsRunGold ?? 0, vsTimeRemainingMs: p.vsTimeRemainingMs ?? 0, vsWon: p.vsWon ?? false };
+        })() : {}),
       });
     }
     // MOBA/ARAM structures
@@ -4107,6 +4530,11 @@ export default class GameServer implements Party.Server {
     const newProjs = this.pendingProjCreates.length ? this.pendingProjCreates.splice(0) : undefined;
     const deadProjs = this.pendingProjDestroys.length ? this.pendingProjDestroys.splice(0) : undefined;
 
+    // VS chests
+    const vsChests = this.gameMode === 'wizard_survivor' && this.vsChests.size > 0
+      ? [...this.vsChests.values()]
+      : undefined;
+
     const base = {
       type: 'snapshot' as const,
       t: now,
@@ -4129,6 +4557,7 @@ export default class GameServer implements Party.Server {
       activeBossId: this.activeBossId ?? undefined,
       bossMaxHp: this.activeBossId ? (this.npcs.get(this.activeBossId) as any)?.baseHp ?? undefined : undefined,
       bossHp: this.activeBossId ? this.npcs.get(this.activeBossId)?.hp ?? undefined : undefined,
+      vsChests,
     };
 
     const AOI_R2 = 900 * 900;

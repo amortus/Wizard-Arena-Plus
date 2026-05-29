@@ -4,7 +4,7 @@ export type HazardKind = 'fire_pool' | 'lightning_strike' | 'poison_cloud' | 'sl
 
 export type ArenaElement = 'normal' | 'lava' | 'ice' | 'fog';
 
-export type GameMode = 'arena' | 'castle' | 'moba' | 'aram';
+export type GameMode = 'arena' | 'castle' | 'moba' | 'aram' | 'wizard_survivor';
 
 export type MobaTeam = 'blue' | 'red';
 
@@ -34,6 +34,14 @@ export type CastleState = {
   maxHp: number;
   x: number;
   y: number;
+};
+
+// ── Wizard Survivor chest ────────────────────────────────────
+export type ChestState = {
+  id: string;
+  x: number;
+  y: number;
+  spawnedAt: number; // epoch ms — expires after VS_CHEST_LIFETIME_MS
 };
 
 export type PickupKind = 'health' | 'speed' | 'damage' | 'shield' | 'cooldown' | 'berserker' | 'annihilate';
@@ -149,6 +157,13 @@ export type PlayerState = {
   mobaRespawnAt?: number; // epoch ms; 0 = alive / not in moba mode
   mobaItems?: string[];   // owned item IDs (max 6 slots)
   collectedPowerups?: string[]; // ordered list of powerup IDs as collected (including duplicates)
+  // ── Wizard Survivor fields (undefined in other modes) ─────────────────────
+  vsWeaponLevels?: number[];   // per-weapon levels, indexed by WEAPONS codec order (0=not equipped)
+  vsPassiveIds?:   string[];   // passive item IDs (parallel with vsPassiveLvls)
+  vsPassiveLvls?:  number[];   // passive item current levels
+  vsGold?:         number;     // gold earned this run
+  vsTimeRemainingMs?: number;  // ms remaining in 30-min run (for HUD)
+  vsWon?:          boolean;    // player survived the full 30 minutes
 };
 
 export type NPCState = {
@@ -227,6 +242,7 @@ export type Snapshot = {
   activeBossId?: string;
   bossMaxHp?: number;
   bossHp?: number;
+  vsChests?: ChestState[];
 };
 
 export type LeaderboardEntry = {

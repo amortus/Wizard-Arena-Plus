@@ -276,6 +276,8 @@ export class ArenaScene extends Phaser.Scene {
   // Smoothed movement velocity per NPC — exponential moving average to filter crowd-separation noise.
   npcSmoothVel = new Map<string, [number, number]>();
   pickupVisuals = new Map<string, Phaser.GameObjects.Graphics>();
+  chestVisuals  = new Map<string, Phaser.GameObjects.Graphics>();
+  _seenChests   = new Set<string>();
   bossProjectileVisuals = new Map<string, Phaser.GameObjects.Graphics>();
   bossAlertUntil = 0;
   bossAlertName = '';
@@ -1762,6 +1764,44 @@ export class ArenaScene extends Phaser.Scene {
     }
   }
 
+  renderVsChests(chests: import('../shared/types').ChestState[], clientNow: number) {
+    this._seenChests.clear();
+    const seen = this._seenChests;
+    for (const ch of chests) {
+      seen.add(ch.id);
+      let g = this.chestVisuals.get(ch.id);
+      if (!g) {
+        g = this.add.graphics();
+        g.setDepth(9);
+        this.chestVisuals.set(ch.id, g);
+      }
+      const bob = Math.sin(clientNow * 0.005 + ch.x * 0.01) * 3;
+      const pulse = 1 + Math.sin(clientNow * 0.008) * 0.12;
+      g.setPosition(ch.x, ch.y + bob);
+      g.setScale(pulse);
+      g.clear();
+      // Chest body (brown rectangle)
+      g.fillStyle(0x8B4513, 1);
+      g.fillRect(-12, -8, 24, 16);
+      // Chest lid (slightly lighter)
+      g.fillStyle(0xA0522D, 1);
+      g.fillRect(-12, -14, 24, 7);
+      // Golden border
+      g.lineStyle(2, 0xFFD700, 1);
+      g.strokeRect(-12, -14, 24, 21);
+      // Gold lock
+      g.fillStyle(0xFFD700, 1);
+      g.fillCircle(0, -3, 4);
+      g.fillRect(-2, -3, 4, 5);
+      // Glow ring
+      g.lineStyle(3, 0xFFD700, 0.4 + Math.sin(clientNow * 0.01) * 0.3);
+      g.strokeCircle(0, 0, 18);
+    }
+    for (const [id, g] of this.chestVisuals) {
+      if (!seen.has(id)) { g.destroy(); this.chestVisuals.delete(id); }
+    }
+  }
+
   renderBossProjectiles(bossProjs: BossProjectileState[], t: number) {
     this._seenBossProj.clear();
     const seen = this._seenBossProj;
@@ -2840,6 +2880,13 @@ export class ArenaScene extends Phaser.Scene {
         s.setScale(baseScale);
         // Push fire toward red — orange→red shift via tint multiply
         if (elem === 'fire') s.setTint(0xff5533);
+        // Evolved weapon tints for Wizard Survivor mode
+        const VS_EVOLVED_TINTS: Partial<Record<string, number>> = {
+          holy_bolt: 0xFFD700, storm_daggers: 0xCC44FF, death_vortex: 0xFF2222,
+          hellfire: 0xFF8800, soul_drain: 0x44FF88, thunder_storm: 0x44AAFF,
+          arcane_nova: 0xFFFFFF, eternal_orbit: 0xFF44AA,
+        };
+        if (VS_EVOLVED_TINTS[pr.weapon]) s.setTint(VS_EVOLVED_TINTS[pr.weapon]!);
         this.projSprites.set(pr.id, s);
       }
       s.x = pr.x;
@@ -3026,6 +3073,14 @@ export class ArenaScene extends Phaser.Scene {
 
     // Pickups: droppable items on the ground (health, speed boost, etc.)
     this.renderPickups(snap.pickups ?? [], performance.now());
+
+    // VS Chests: golden treasure chests dropped by bosses in wizard_survivor mode
+    if (snap.gameMode === 'wizard_survivor') {
+      this.renderVsChests(snap.vsChests ?? [], performance.now());
+    } else if (this.chestVisuals.size > 0) {
+      for (const g of this.chestVisuals.values()) g.destroy();
+      this.chestVisuals.clear();
+    }
 
     // Boss projectiles (generation-based bullet hell)
     this.renderBossProjectiles(snap.bossProjectiles ?? [], performance.now());

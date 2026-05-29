@@ -85,6 +85,7 @@ export const CHARACTERS = [
 export type CharacterKind = (typeof CHARACTERS)[number];
 
 // Weapon kinds — each has a fixed element/visual identity.
+// Append-only: snapshot codec indexes these by position — never reorder.
 export type WeaponKind =
   | 'sword'
   | 'orb'
@@ -93,7 +94,16 @@ export type WeaponKind =
   | 'lightning_bolt'
   | 'shadow_bolt'
   | 'orbital_spark'
-  | 'aura_shield';   // passive damage aura that ticks while equipped
+  | 'aura_shield'   // passive damage aura that ticks while equipped
+  // ── Wizard Survivor evolved weapons (added after base weapons) ──
+  | 'holy_bolt'     // shadow_bolt + vs_tome
+  | 'storm_daggers' // dagger + vs_bracer
+  | 'death_vortex'  // sword + vs_candle
+  | 'hellfire'      // fireball + vs_spinach
+  | 'soul_drain'    // aura_shield + vs_pummarola
+  | 'thunder_storm' // lightning_bolt + vs_duplicator
+  | 'arcane_nova'   // orb + vs_wings
+  | 'eternal_orbit';// orbital_spark + vs_heart
 
 // How the projectile moves through the world.
 export type ProjectilePattern = 'straight' | 'wave' | 'homing' | 'orbital';
@@ -107,6 +117,15 @@ export const WEAPON_PATTERN: Record<WeaponKind, ProjectilePattern> = {
   shadow_bolt:    'homing',
   orbital_spark:  'orbital',
   aura_shield:    'straight', // unused (no projectiles fired)
+  // evolved
+  holy_bolt:      'homing',
+  storm_daggers:  'straight',
+  death_vortex:   'straight', // radial in VS mode
+  hellfire:       'straight',
+  soul_drain:     'straight', // passive aura — no projectiles
+  thunder_storm:  'straight',
+  arcane_nova:    'orbital',
+  eternal_orbit:  'orbital',
 };
 
 // Per-weapon spread between projectiles when more than one is fired.
@@ -119,6 +138,15 @@ export const WEAPON_SPREAD: Record<WeaponKind, number> = {
   shadow_bolt:    0.18,
   orbital_spark:  0,
   aura_shield:    0,
+  // evolved (radial weapons use 0 — angles computed in fireWeapon)
+  holy_bolt:      0.15,
+  storm_daggers:  0.35,
+  death_vortex:   0,    // evenly-spaced radial
+  hellfire:       0.22,
+  soul_drain:     0,
+  thunder_storm:  0.30,
+  arcane_nova:    0,
+  eternal_orbit:  0,
 };
 
 export const WEAPON_DEFS: Record<
@@ -140,6 +168,15 @@ export const WEAPON_DEFS: Record<
   shadow_bolt:    { name: 'Shadow Bolt',     cooldownMs: 750,  damage: 20, speed: 240, range: 380, projectiles: 1 },
   orbital_spark:  { name: 'Orbiting Sparks', cooldownMs: 5000, damage: 8,  speed: 0,   range: 0,   projectiles: 3 },
   aura_shield:    { name: 'Aura Shield',     cooldownMs: 0,    damage: 5,  speed: 0,   range: 70,  projectiles: 0 },
+  // ── Wizard Survivor evolved weapons ────────────────────────────────────────────────
+  holy_bolt:      { name: 'Holy Bolt',       cooldownMs: 375,  damage: 30, speed: 270, range: 400, projectiles: 4 },
+  storm_daggers:  { name: 'Storm Daggers',   cooldownMs: 100,  damage: 8,  speed: 420, range: 260, projectiles: 8 },
+  death_vortex:   { name: 'Death Vortex',    cooldownMs: 1200, damage: 45, speed: 200, range: 280, projectiles: 8 },
+  hellfire:       { name: 'Hellfire',        cooldownMs: 1200, damage: 66, speed: 220, range: 350, projectiles: 3 },
+  soul_drain:     { name: 'Soul Drain',      cooldownMs: 0,    damage: 12, speed: 0,   range: 140, projectiles: 0 },
+  thunder_storm:  { name: 'Thunder Storm',   cooldownMs: 300,  damage: 15, speed: 400, range: 300, projectiles: 7 },
+  arcane_nova:    { name: 'Arcane Nova',     cooldownMs: 4000, damage: 35, speed: 0,   range: 0,   projectiles: 6 },
+  eternal_orbit:  { name: 'Eternal Orbit',   cooldownMs: 4500, damage: 20, speed: 0,   range: 0,   projectiles: 8 },
 };
 
 // Each weapon has a fixed elemental identity — drives the projectile visual on the client.
@@ -152,6 +189,15 @@ export const WEAPON_ELEMENT: Record<WeaponKind, ElementKind> = {
   shadow_bolt:    'shadow',
   orbital_spark:  'lightning',
   aura_shield:    'arcane',
+  // evolved (keep base element; VS_EVOLVED_TINTS in vs-constants overrides the render color)
+  holy_bolt:      'arcane',
+  storm_daggers:  'forest',
+  death_vortex:   'earth',
+  hellfire:       'fire',
+  soul_drain:     'shadow',
+  thunder_storm:  'lightning',
+  arcane_nova:    'arcane',
+  eternal_orbit:  'lightning',
 };
 
 export const CHARACTER_BASES: Record<

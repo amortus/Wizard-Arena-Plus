@@ -19,20 +19,26 @@ import { CHARACTERS } from './constants';
 import { MONSTERS } from './constants';
 import type { Snapshot } from './types';
 
-export const SNAPSHOT_PROTOCOL_VERSION = 1;
+export const SNAPSHOT_PROTOCOL_VERSION = 2;
 // First byte of every binary snapshot frame. Lets the client distinguish a binary
 // snapshot from a (string) JSON message and reject unknown versions.
 export const SNAPSHOT_MAGIC = 0xa1;
 
 // ---- Enum tables (index <-> string). Append-only: never reorder, only add. ----
 const FACINGS = ['south', 'north', 'east', 'west'] as const;
-const WEAPONS = ['sword', 'orb', 'dagger', 'fireball', 'lightning_bolt', 'shadow_bolt', 'orbital_spark', 'aura_shield'] as const;
+// Append-only — never reorder. Client rebuilds vsWeaponLevels using these indices.
+const WEAPONS = [
+  'sword', 'orb', 'dagger', 'fireball', 'lightning_bolt', 'shadow_bolt', 'orbital_spark', 'aura_shield',
+  // Wizard Survivor evolved weapons (added at the end)
+  'holy_bolt', 'storm_daggers', 'death_vortex', 'hellfire',
+  'soul_drain', 'thunder_storm', 'arcane_nova', 'eternal_orbit',
+] as const;
 const PATTERNS = ['straight', 'wave', 'homing', 'orbital'] as const;
 const WOLF_STATES = ['orbit', 'lunge', 'cooldown'] as const;
 const HAZARD_KINDS = ['fire_pool', 'lightning_strike', 'poison_cloud', 'slow_zone', 'smoke_zone', 'beam_h', 'beam_v', 'beam_diag', 'beam_diag_ne'] as const;
 const PICKUP_KINDS = ['health', 'speed', 'damage', 'shield', 'cooldown', 'berserker', 'annihilate'] as const;
 const ARENA_ELEMENTS = ['normal', 'lava', 'ice', 'fog'] as const;
-const GAME_MODES = ['arena', 'castle', 'moba', 'aram'] as const;
+const GAME_MODES = ['arena', 'castle', 'moba', 'aram', 'wizard_survivor'] as const;
 const TEAMS = ['blue', 'red'] as const;
 
 // ---- Field type descriptors ----
@@ -200,6 +206,13 @@ const PLAYER_FIELDS: Field[] = [
   ['speedBoostUntil', 'f64'], ['damageBoostUntil', 'f64'], ['berserkerUntil', 'f64'],
   ['mobaTeam', { opt: { enum: TEAMS } }], ['mobaGold', { opt: 'u32' }], ['mobaRespawnAt', { opt: 'f64' }],
   ['mobaItems', { opt: { arr: 'str' } }], ['collectedPowerups', { opt: { arr: 'str' } }],
+  // Wizard Survivor fields (undefined / absent in other modes)
+  ['vsWeaponLevels',   { opt: { arr: 'u8'  } }],
+  ['vsPassiveIds',     { opt: { arr: 'str' } }],
+  ['vsPassiveLvls',    { opt: { arr: 'u8'  } }],
+  ['vsGold',           { opt: 'u32'           }],
+  ['vsTimeRemainingMs',{ opt: 'u32'           }],
+  ['vsWon',            { opt: 'bool'          }],
 ];
 
 const NPC_FIELDS: Field[] = [
@@ -242,6 +255,10 @@ const BOSSPROJ_FIELDS: Field[] = [
   ['id', 'str'], ['x', 'i16'], ['y', 'i16'], ['vx', 'f32'], ['vy', 'f32'], ['radius', 'u16'], ['generation', 'u8'],
 ];
 
+const CHEST_FIELDS: Field[] = [
+  ['id', 'str'], ['x', 'i16'], ['y', 'i16'], ['spawnedAt', 'f64'],
+];
+
 const TOWER_FIELDS: Field[] = [
   ['id', 'str'], ['team', { enum: TEAMS }], ['lane', 'u8'], ['tier', 'u8'],
   ['hp', 'u32'], ['maxHp', 'u32'], ['x', 'i16'], ['y', 'i16'], ['alive', 'bool'],
@@ -262,6 +279,7 @@ const F_CASTLE = 1 << 6;
 const F_MOBA = 1 << 7; // towers + crystals + roomWave
 const F_BOSS = 1 << 8; // activeBossId + bossHp + bossMaxHp
 const F_ROOMWAVE = 1 << 9;
+const F_VSCHESTS = 1 << 10; // Wizard Survivor chests
 
 export function encodeSnapshot(snap: Snapshot): ArrayBuffer {
   const w = new ByteWriter();
@@ -286,6 +304,7 @@ export function encodeSnapshot(snap: Snapshot): ArrayBuffer {
   if (snap.towers || snap.mobaCrystals) flags |= F_MOBA;
   if (snap.activeBossId) flags |= F_BOSS;
   if (snap.roomWave !== undefined) flags |= F_ROOMWAVE;
+  if (snap.vsChests?.length) flags |= F_VSCHESTS;
   w.u16(flags);
 
   // core arrays (always present)
@@ -312,6 +331,7 @@ export function encodeSnapshot(snap: Snapshot): ArrayBuffer {
     w.bool(snap.bossMaxHp !== undefined); if (snap.bossMaxHp !== undefined) w.f32(snap.bossMaxHp);
   }
   if (flags & F_ROOMWAVE) w.u16(snap.roomWave!);
+  if (flags & F_VSCHESTS) writeArray(w, CHEST_FIELDS, snap.vsChests);
 
   return w.finish();
 }
@@ -363,6 +383,7 @@ export function decodeSnapshot(buf: ArrayBuffer): Snapshot {
     if (r.bool()) snap.bossMaxHp = r.f32();
   }
   if (flags & F_ROOMWAVE) snap.roomWave = r.u16();
+  if (flags & F_VSCHESTS) snap.vsChests = readArray(r, CHEST_FIELDS);
 
   return snap as Snapshot;
 }
