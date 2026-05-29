@@ -41,6 +41,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           data-website-id="49381c52-58a4-466d-b10e-27c91fa95ec5"
           strategy="afterInteractive"
         />
+        {process.env.NEXT_PUBLIC_PLAYWIRE_PUBLISHER_ID && (
+          <Script
+            src={`https://cdn.intergient.com/${process.env.NEXT_PUBLIC_PLAYWIRE_PUBLISHER_ID}/${process.env.NEXT_PUBLIC_PLAYWIRE_WEBSITE_ID}/ramp.js`}
+            strategy="afterInteractive"
+          />
+        )}
       </body>
     </html>
   );

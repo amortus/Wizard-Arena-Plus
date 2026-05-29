@@ -7,6 +7,7 @@ import { dedupeBestByName } from '../shared/leaderboard';
 import { POWERUPS } from '../shared/powerups';
 import { T, POWERUP_PT, type Lang } from '../shared/i18n';
 import { addVsGold } from '../lib/vs-meta';
+import { getAdService } from '../lib/ads';
 
 function PowerupsPanel({ powerups }: { powerups: string[] }) {
   const counts = powerups.reduce<Record<string, number>>((acc, id) => {
@@ -241,6 +242,8 @@ export default function Game({ name, character, color, hue, room, country, roomN
   const [shopOpen, setShopOpen] = useState(false);
   const [shopTab, setShopTab] = useState<string>('damage');
   const [dead, setDead] = useState(false);
+  const [adWatched, setAdWatched] = useState(false);
+  const [adLoading, setAdLoading] = useState(false);
   const [deathStats, setDeathStats] = useState<{ level: number; wave: number; score: number; killerName: string; killerIcon: string; finalDamage: number } | null>(null);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [roomFull, setRoomFull] = useState(false);
@@ -286,6 +289,8 @@ export default function Game({ name, character, color, hue, room, country, roomN
           });
         }
         setDead(true);
+        setAdWatched(false);
+        setAdLoading(false);
       });
       result.scene.bus.on('respawned', () => {
         setDead(false);
@@ -321,6 +326,16 @@ export default function Game({ name, character, color, hue, room, country, roomN
   };
 
   const respawn = () => { sceneRef.current?.respawn(); };
+
+  const handleWatchAd = async () => {
+    setAdLoading(true);
+    const rewarded = await getAdService().showRewarded();
+    setAdLoading(false);
+    if (rewarded) {
+      setAdWatched(true);
+      respawn();
+    }
+  };
   const buyItem = (itemId: string) => { sceneRef.current?.buyItem(itemId); };
 
   useEffect(() => {
@@ -743,6 +758,16 @@ export default function Game({ name, character, color, hue, room, country, roomN
               </div>
             );
           })()}
+          {!adWatched && (
+            <button
+              className="start-btn"
+              style={{ maxWidth: 240, background: 'linear-gradient(180deg,#7a3a00,#4a2000)', borderColor: '#ffa040', color: '#ffd080', marginBottom: 6, opacity: adLoading ? 0.6 : 1 }}
+              onClick={handleWatchAd}
+              disabled={adLoading}
+            >
+              {adLoading ? '...' : '📺 Watch Ad → Revive'}
+            </button>
+          )}
           <button className="start-btn" style={{ maxWidth: 240 }} onClick={respawn}>
             {t.respawn}
           </button>

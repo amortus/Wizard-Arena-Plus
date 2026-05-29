@@ -312,6 +312,7 @@ export default function Page() {
     return (
       <div className="menu-root">
         <div className="scanlines" />
+        <div id="madness-banner-ad" style={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 50, display: 'flex', justifyContent: 'center', pointerEvents: 'none' }} />
         <div className="menu-card" style={{ maxWidth: 720 }}>
           <div className="room-browser">
             <div className="room-browser-header">
@@ -486,6 +487,7 @@ export default function Page() {
   return (
     <div className="menu-root">
       <div className="scanlines" />
+      <div id="madness-banner-ad" style={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 50, display: 'flex', justifyContent: 'center', pointerEvents: 'none' }} />
 
       {showSupportPopup && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.82)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
