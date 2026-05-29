@@ -1,7 +1,7 @@
 export interface AdService {
-  showBanner(): void;
-  hideBanner(): void;
-  /** Returns true if user watched to completion and earned the reward. */
+  showBanner(): void | Promise<void>;
+  hideBanner(): void | Promise<void>;
+  /** Returns true if the user watched to completion and earned the reward. */
   showRewarded(): Promise<boolean>;
   showInterstitial(): Promise<void>;
 }

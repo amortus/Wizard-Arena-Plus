@@ -2,7 +2,16 @@
   "permissions": {
     "allow": [
       "Bash(npm run *)",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git commit -m 'Remove '\\\\''Vampire-Survivors style'\\\\'' subtitle from Wizard Survivor mode card *)",
+      "Bash(npx cap *)",
+      "Bash(node -e \"const a = require\\('@capacitor-community/admob'\\); console.log\\(Object.keys\\(a\\).join\\('\\\\n'\\)\\)\")",
+      "Bash(node -e \"const {RewardAdPluginEvents} = require\\('@capacitor-community/admob'\\); console.log\\(JSON.stringify\\(RewardAdPluginEvents\\)\\)\")",
+      "Bash(node -e \"const {AdMob} = require\\('@capacitor-community/admob'\\); console.log\\(Object.getOwnPropertyNames\\(AdMob\\).join\\('\\\\n'\\)\\)\")",
+      "Bash(node -e \"const {AdMob} = require\\('@capacitor-community/admob'\\); const proto = Object.getPrototypeOf\\(AdMob\\); console.log\\(Object.getOwnPropertyNames\\(proto\\).join\\('\\\\n'\\)\\)\")",
+      "Bash(node -e \"const m = require\\('@capacitor-community/admob'\\); const {AdMob} = m; console.log\\(typeof AdMob, JSON.stringify\\(Object.keys\\(AdMob\\)\\)\\)\")",
+      "Bash(node -e \"const m = require\\('@capacitor-community/admob'\\); console.log\\(JSON.stringify\\(m.AdMob\\)\\)\")"
     ]
   }
 }

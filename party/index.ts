@@ -2154,6 +2154,7 @@ export default class GameServer implements Party.Server {
     // within this window. Short timeout clears ghosts fast (was 60s — left stale
     // players lingering in the room and in the broadcast loop).
     const ZOMBIE_TIMEOUT_MS = 15_000;
+    let reaped = 0;
     for (const [id, p] of this.players) {
       const noConn = !live.has(id);
       const idle = now - p.lastTouchAt > ZOMBIE_TIMEOUT_MS;
@@ -2172,15 +2173,16 @@ export default class GameServer implements Party.Server {
         }
         this.players.delete(id);
         for (const [wid, w] of this.wolves) if (w.ownerId === id) this.wolves.delete(wid);
+        reaped++;
       }
     }
-    // If reaping emptied the room, stop the tick and clear the lobby entry.
-    // Without this, the tick keeps running and reports playerCount:1 every 10s forever.
+    if (reaped === 0) return;
+    // Always update lobby immediately after any reap — never wait for the 10s report interval.
     if (this.players.size === 0) {
       this.stopTicking();
       this.resetRoom();
-      this.reportToLobby();
     }
+    this.reportToLobby();
   }
 
   updatePlayers(dt: number, now: number) {
