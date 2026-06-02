@@ -387,7 +387,7 @@ button {
 }
 .lb-table-head, .lb-table-row {
   display: grid;
-  grid-template-columns: 38px 24px 1fr 50px 50px 70px;
+  grid-template-columns: 38px 1fr 50px 50px 70px;
   gap: 8px;
   align-items: center;
 }

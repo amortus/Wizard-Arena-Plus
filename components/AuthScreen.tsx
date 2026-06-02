@@ -10,9 +10,6 @@ type Props = { onDone: (result: AuthResult) => void };
 
 export function AuthScreen({ onDone }: Props) {
   const [loading, setLoading] = useState(false);
-  const [guestMode, setGuestMode] = useState(false);
-  const [guestName, setGuestName] = useState('');
-  const [nameError, setNameError] = useState('');
 
   // ---------- Google login ----------
   async function handleGoogle() {
@@ -28,14 +25,6 @@ export function AuthScreen({ onDone }: Props) {
     // on success the browser redirects — nothing else to do here
   }
 
-  // ---------- Guest submit ----------
-  function handleGuestSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    const name = guestName.trim();
-    if (name.length < 2) { setNameError('Mínimo 2 caracteres'); return; }
-    if (name.length > 20) { setNameError('Máximo 20 caracteres'); return; }
-    onDone({ kind: 'guest', name });
-  }
 
   return (
     <div style={{
@@ -64,7 +53,6 @@ export function AuthScreen({ onDone }: Props) {
         boxShadow: '0 8px 40px rgba(0,0,0,0.8), 0 0 60px rgba(200,16,46,0.08)',
         display: 'flex', flexDirection: 'column', gap: 12,
       }}>
-        {!guestMode ? (
           <>
             <button
               type="button"
@@ -94,7 +82,7 @@ export function AuthScreen({ onDone }: Props) {
 
             <button
               type="button"
-              onClick={() => setGuestMode(true)}
+              onClick={() => onDone({ kind: 'guest', name: '' })}
               style={{
                 padding: '12px 20px',
                 background: 'transparent',
@@ -112,52 +100,6 @@ export function AuthScreen({ onDone }: Props) {
               Com Google seu nick e foto aparecem no ranking.
             </p>
           </>
-        ) : (
-          <form onSubmit={handleGuestSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <div style={{ fontFamily: "'Press Start 2P', monospace", fontSize: 9, color: '#c8a46e', letterSpacing: 1, marginBottom: 4 }}>
-              ESCOLHA SEU NICK
-            </div>
-            <input
-              autoFocus
-              type="text"
-              value={guestName}
-              onChange={e => { setGuestName(e.target.value); setNameError(''); }}
-              placeholder="Seu nome..."
-              maxLength={20}
-              style={{
-                background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(200,164,110,0.3)',
-                borderRadius: 4, padding: '10px 12px',
-                color: '#e0d8c0', fontFamily: "'VT323', monospace", fontSize: 18,
-                outline: 'none', letterSpacing: 1,
-              }}
-            />
-            {nameError && (
-              <span style={{ fontFamily: "'VT323', monospace", fontSize: 14, color: '#ff6644' }}>{nameError}</span>
-            )}
-            <button
-              type="submit"
-              style={{
-                padding: '11px', background: '#c8102e', color: '#fff',
-                border: 'none', borderRadius: 6,
-                fontFamily: "'Press Start 2P', monospace", fontSize: 9, letterSpacing: 1,
-                cursor: 'pointer',
-              }}
-            >
-              JOGAR
-            </button>
-            <button
-              type="button"
-              onClick={() => setGuestMode(false)}
-              style={{
-                padding: '8px', background: 'transparent', color: '#5a4858',
-                border: 'none', fontFamily: "'VT323', monospace", fontSize: 14,
-                cursor: 'pointer',
-              }}
-            >
-              ← Voltar
-            </button>
-          </form>
-        )}
       </div>
     </div>
   );

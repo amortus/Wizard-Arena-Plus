@@ -64,7 +64,6 @@ export default function LeaderboardPage() {
           <div className="lb-table">
             <div className="lb-table-head">
               <span>#</span>
-              <span></span>
               <span>Wizard</span>
               <span>Level</span>
               <span>Wave</span>
