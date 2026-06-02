@@ -402,7 +402,7 @@ export default class GameServer implements Party.Server {
   nextDragonAllowedAt = 0;
   // Boss roster system — cycles through 8 unique bosses as the game progresses
   activeBossId: string | null = null;
-  nextBossWave = 10;   // next wave milestone that triggers a boss
+  nextBossWave = 5;    // next wave milestone that triggers a boss
   bossRosterIdx = 0;
   bossGeneration = 0;
   // Lobby registry fields
@@ -1428,7 +1428,7 @@ export default class GameServer implements Party.Server {
     this.nextDragonAllowedAt = 0;
     this.activeBossId = null;
     this.peakRoomWave = 0;
-    this.nextBossWave = 10;
+    this.nextBossWave = 5;
     this.bossRosterIdx = 0;
     this.bossGeneration = 0;
     this.nextHazardAt = 0;
@@ -1854,6 +1854,7 @@ export default class GameServer implements Party.Server {
     }
     p.pendingChoices = [];
     p.pendingLevelUps = 0;
+    p.collectedPowerups = [];
     p.x = ARENA_WIDTH / 2 + (Math.random() - 0.5) * 200;
     p.y = ARENA_HEIGHT / 2 + (Math.random() - 0.5) * 200;
   }
@@ -3279,7 +3280,7 @@ export default class GameServer implements Party.Server {
     // Boss just died — advance to next 10-wave milestone
     if (this.activeBossId && !this.npcs.has(this.activeBossId)) {
       this.activeBossId = null;
-      this.nextBossWave += 10;
+      this.nextBossWave += 5;
       this.bossRosterIdx++;
       if (this.bossRosterIdx >= BOSS_ROSTER.length) {
         this.bossRosterIdx = 0;
@@ -3319,9 +3320,9 @@ export default class GameServer implements Party.Server {
     // powerFactor accounts for the player's accumulated damage multiplier so
     // a heavily buffed player always faces a meaningfully tanky boss.
     const wMul = 1 + (target.waveNumber - 1) * 0.13
-      + Math.pow(Math.max(0, target.waveNumber - 20), 1.55) * 0.025;
-    const lMul = 1 + (target.level - 1) * 0.12;
-    const genMul = 1 + Math.min(12, this.bossGeneration) * 0.9;
+      + Math.pow(Math.max(0, target.waveNumber - 20), 1.55) * 0.030;
+    const lMul = 1 + (target.level - 1) * 0.13;
+    const genMul = 1 + Math.min(15, this.bossGeneration) * 1.0;
     const powerFactor = Math.pow(Math.max(1, target.damageMul), 0.55);
     const hp = Math.round(NPC_BASE_HP * boss.hpMul * wMul * lMul * genMul * powerFactor);
     const speed = PLAYER_SPEED * boss.speedFrac;

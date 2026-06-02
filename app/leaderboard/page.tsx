@@ -73,7 +73,6 @@ export default function LeaderboardPage() {
             {entries.map((e, i) => (
               <div key={`${e.name}-${i}`} className="lb-table-row">
                 <span className="lb-rank">#{i + 1}</span>
-                <span className="lb-flag">{countryFlag(e.country)}</span>
                 <span className="lb-name">
                   {e.character && (
                     <img

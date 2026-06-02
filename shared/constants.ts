@@ -3,8 +3,8 @@
 export const TICK_RATE = 30;
 export const TICK_MS = 1000 / TICK_RATE;
 
-export const ARENA_WIDTH = 3200;
-export const ARENA_HEIGHT = 3200;
+export const ARENA_WIDTH = 2400;
+export const ARENA_HEIGHT = 2400;
 
 export const PLAYER_SPEED = 140;
 export const PLAYER_RADIUS = 16;
@@ -548,14 +548,14 @@ export const BOSS_ROSTER: {
   summonCount: number;
   summonIntervalMs: number;
 }[] = [
-  { kind: 'rat_king',       name: 'Rat King',        hpMul: 22,  speedFrac: 0.80, ai: 'boss_summon', summonKind: 'rat',    summonCount: 12, summonIntervalMs: 7000  },
-  { kind: 'bone_colossus',  name: 'Bone Colossus',   hpMul: 35,  speedFrac: 0.70, ai: 'boss_charge', summonKind: null,     summonCount: 0,  summonIntervalMs: 0     },
-  { kind: 'plague_lord',    name: 'Plague Lord',     hpMul: 42,  speedFrac: 0.75, ai: 'boss_enrage', summonKind: null,     summonCount: 0,  summonIntervalMs: 0     },
-  { kind: 'wraith_lord',    name: 'Wraith Lord',     hpMul: 50,  speedFrac: 0.85, ai: 'boss_enrage', summonKind: null,     summonCount: 0,  summonIntervalMs: 0     },
-  { kind: 'warchief',       name: 'Goblin Warchief', hpMul: 60,  speedFrac: 0.75, ai: 'boss_charge', summonKind: 'goblin', summonCount: 6,  summonIntervalMs: 10000 },
-  { kind: 'ancient_treant', name: 'Ancient Treant',  hpMul: 72,  speedFrac: 0.55, ai: 'boss_summon', summonKind: 'spider', summonCount: 8,  summonIntervalMs: 6000  },
-  { kind: 'alpha_wolf',     name: 'Alpha Wolf',      hpMul: 65,  speedFrac: 0.90, ai: 'boss_enrage', summonKind: null,     summonCount: 0,  summonIntervalMs: 0     },
-  { kind: 'death_titan',    name: 'Death Titan',     hpMul: 95,  speedFrac: 0.65, ai: 'boss_charge', summonKind: null,     summonCount: 0,  summonIntervalMs: 0     },
+  { kind: 'rat_king',       name: 'Rat King',        hpMul: 55,  speedFrac: 0.80, ai: 'boss_summon', summonKind: 'rat',    summonCount: 12, summonIntervalMs: 7000  },
+  { kind: 'bone_colossus',  name: 'Bone Colossus',   hpMul: 88,  speedFrac: 0.70, ai: 'boss_charge', summonKind: null,     summonCount: 0,  summonIntervalMs: 0     },
+  { kind: 'plague_lord',    name: 'Plague Lord',     hpMul: 105, speedFrac: 0.75, ai: 'boss_enrage', summonKind: null,     summonCount: 0,  summonIntervalMs: 0     },
+  { kind: 'wraith_lord',    name: 'Wraith Lord',     hpMul: 125, speedFrac: 0.85, ai: 'boss_enrage', summonKind: null,     summonCount: 0,  summonIntervalMs: 0     },
+  { kind: 'warchief',       name: 'Goblin Warchief', hpMul: 150, speedFrac: 0.75, ai: 'boss_charge', summonKind: 'goblin', summonCount: 6,  summonIntervalMs: 10000 },
+  { kind: 'ancient_treant', name: 'Ancient Treant',  hpMul: 180, speedFrac: 0.55, ai: 'boss_summon', summonKind: 'spider', summonCount: 8,  summonIntervalMs: 6000  },
+  { kind: 'alpha_wolf',     name: 'Alpha Wolf',      hpMul: 162, speedFrac: 0.90, ai: 'boss_enrage', summonKind: null,     summonCount: 0,  summonIntervalMs: 0     },
+  { kind: 'death_titan',    name: 'Death Titan',     hpMul: 238, speedFrac: 0.65, ai: 'boss_charge', summonKind: null,     summonCount: 0,  summonIntervalMs: 0     },
 ];
 
 // ─── Castle Defender Mode ────────────────────────────────────────────────────
