@@ -3277,25 +3277,7 @@ export default class GameServer implements Party.Server {
   }
 
   maybeSpawnBoss(now: number) {
-    // Boss just died — advance to next 10-wave milestone
-    if (this.activeBossId && !this.npcs.has(this.activeBossId)) {
-      this.activeBossId = null;
-      this.nextBossWave += 5;
-      this.bossRosterIdx++;
-      if (this.bossRosterIdx >= BOSS_ROSTER.length) {
-        this.bossRosterIdx = 0;
-        this.bossGeneration++;
-      }
-      // Give all alive players a fresh wave cooldown so the next wave
-      // doesn't rip immediately after boss dies
-      for (const p of this.players.values()) {
-        if (!p.alive) continue;
-        p.pwWaveActive = false;
-        p.pwWaveStartedAt = now;
-      }
-    }
-    if (this.activeBossId) return;
-    // Compute current room wave (max waveNumber among alive players)
+    // Compute current room wave first — needed in both the death-check and spawn-check.
     let roomWave = 0;
     let target: ServerPlayer | null = null;
     let bestScore = -1;
@@ -3305,6 +3287,23 @@ export default class GameServer implements Party.Server {
       const score = p.level * 100 + p.waveNumber * 50 + (p.bossKills ?? 0) * 500;
       if (score > bestScore) { target = p; bestScore = score; }
     }
+    // Boss just died — set next milestone relative to current wave so we never
+    // chain-spawn bosses when the player advanced past the old threshold.
+    if (this.activeBossId && !this.npcs.has(this.activeBossId)) {
+      this.activeBossId = null;
+      this.nextBossWave = roomWave + 5;
+      this.bossRosterIdx++;
+      if (this.bossRosterIdx >= BOSS_ROSTER.length) {
+        this.bossRosterIdx = 0;
+        this.bossGeneration++;
+      }
+      for (const p of this.players.values()) {
+        if (!p.alive) continue;
+        p.pwWaveActive = false;
+        p.pwWaveStartedAt = now;
+      }
+    }
+    if (this.activeBossId) return;
     // Spawn when any alive player has reached the next milestone wave
     if (!target || roomWave < this.nextBossWave) return;
     if (this.npcs.size >= NPC_MAX_COUNT) return;
