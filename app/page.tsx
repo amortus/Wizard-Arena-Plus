@@ -278,7 +278,7 @@ export default function Page() {
       <div className="menu-root">
         <div className="scanlines" />
         <div id="madness-banner-ad" style={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 50, display: 'flex', justifyContent: 'center', pointerEvents: 'none' }} />
-        <div className="menu-card" style={{ maxWidth: 720 }}>
+        <div className="menu-card" style={{ maxWidth: 720, minHeight: '80vh' }}>
           <div className="room-browser">
             <div className="room-browser-header">
               <div className="room-browser-title">{t.chooseRoom}</div>
