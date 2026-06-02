@@ -4971,9 +4971,9 @@ export default class GameServer implements Party.Server {
     if (Math.random() > dropChance) return;
 
     const pools: Record<string, PickupKind[]> = {
-      boss:  ['health', 'speed', 'damage', 'shield', 'cooldown', 'berserker'],
-      elite: ['health', 'speed', 'damage', 'shield', 'cooldown'],
-      minion: ['health', 'speed', 'damage'],
+      boss:  ['health', 'damage', 'shield', 'cooldown', 'berserker'],
+      elite: ['health', 'damage', 'shield', 'cooldown'],
+      minion: ['health', 'damage'],
     };
     const pool = pools[tier] ?? pools['minion'];
     const kind = pool[Math.floor(Math.random() * pool.length)];
