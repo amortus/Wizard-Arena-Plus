@@ -3306,11 +3306,16 @@ export default class GameServer implements Party.Server {
     const x = clamp(target.x + Math.cos(angle) * dist, 30, ARENA_WIDTH - 30);
     const y = clamp(target.y + Math.sin(angle) * dist, 30, ARENA_HEIGHT - 30);
 
-    const wMul = 1 + (target.waveNumber - 1) * 0.10
-      + Math.pow(Math.max(0, target.waveNumber - 20), 1.4) * 0.015;
-    const lMul = 1 + (target.level - 1) * 0.08;
-    const genMul = 1 + Math.min(8, this.bossGeneration) * 0.5;
-    const hp = Math.round(NPC_BASE_HP * boss.hpMul * wMul * lMul * genMul);
+    // Boss HP scaling — intentionally stronger than regular NPC scaling.
+    // Players accumulate uncapped damageMul from powerups; bosses must keep pace.
+    // powerFactor accounts for the player's accumulated damage multiplier so
+    // a heavily buffed player always faces a meaningfully tanky boss.
+    const wMul = 1 + (target.waveNumber - 1) * 0.13
+      + Math.pow(Math.max(0, target.waveNumber - 20), 1.55) * 0.025;
+    const lMul = 1 + (target.level - 1) * 0.12;
+    const genMul = 1 + Math.min(12, this.bossGeneration) * 0.9;
+    const powerFactor = Math.pow(Math.max(1, target.damageMul), 0.55);
+    const hp = Math.round(NPC_BASE_HP * boss.hpMul * wMul * lMul * genMul * powerFactor);
     const speed = PLAYER_SPEED * boss.speedFrac;
 
     const id = genId('boss');
