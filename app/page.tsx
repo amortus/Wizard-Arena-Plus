@@ -76,7 +76,7 @@ function generateRoomCode(): string {
 }
 
 export default function Page() {
-  const [screen, setScreen] = useState<'auth' | 'select' | 'browser' | 'game'>('auth');
+  const [screen, setScreen] = useState<'loading' | 'auth' | 'select' | 'browser' | 'game'>('loading');
   const [authProfile, setAuthProfile] = useState<UserProfile | null>(null);
   const [name, setName] = useState('');
   const [character, setCharacter] = useState<CharacterKind>('blue_wizard');
@@ -106,7 +106,7 @@ export default function Page() {
   // Check for existing Supabase session (covers redirect-back-from-OAuth and returning users)
   useEffect(() => {
     supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (!session) { return; } // stay on auth screen
+      if (!session) { setScreen('auth'); return; }
       const meta = session.user.user_metadata;
       const userId = session.user.id;
       const photoUrl = (meta?.avatar_url as string) ?? null;
@@ -242,6 +242,10 @@ export default function Page() {
   }, [screen]);
 
   // Auth screen — shown on first visit or when not logged in
+  if (screen === 'loading') {
+    return <div style={{ position: 'fixed', inset: 0, background: 'radial-gradient(ellipse at center, #1a0a2e 0%, #0a050f 100%)' }} />;
+  }
+
   if (screen === 'auth') {
     return <AuthScreen onDone={handleAuthDone} />;
   }
