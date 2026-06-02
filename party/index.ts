@@ -2490,6 +2490,8 @@ export default class GameServer implements Party.Server {
           } else {
             range = def.range * (p.auraShieldRangeMul || 1);
           }
+          // +damage powerups also expand aura radius (same curve as frost aura / orbital).
+          range *= Math.pow(Math.max(1, p.damageMul), 0.25);
           const r2 = range * range;
           for (const n of this.npcs.values()) {
             if ((n.x - p.x) ** 2 + (n.y - p.y) ** 2 < r2) {
@@ -2510,12 +2512,17 @@ export default class GameServer implements Party.Server {
         }
 
         if (p.frostAuraDmg > 0 && p.frostAuraRadius > 0) {
-          const r2 = p.frostAuraRadius * p.frostAuraRadius;
-          // Scale damage for the 100ms window (was dt per tick at 50Hz, now 0.1s fixed)
-          const dmg = p.frostAuraDmg * 0.1;
+          // Radius scales with damageMul so +damage powerups expand the aura.
+          const radiusMul = Math.pow(Math.max(1, p.damageMul), 0.25);
+          const effectiveRadius = p.frostAuraRadius * radiusMul;
+          const r2 = effectiveRadius * effectiveRadius;
+          // Damage uses passiveDmg() like every other passive — scales with damageMul + lvlMul.
+          const lvlMul = 1 + Math.min(LEVEL_DAMAGE_CAP_LEVELS, p.level - 1) * LEVEL_DAMAGE_MUL;
+          const dmg = this.passiveDmg(p, p.frostAuraDmg * p.damageMul * lvlMul) * 0.1;
           for (const n of this.npcs.values()) {
             if ((n.x - p.x) ** 2 + (n.y - p.y) ** 2 < r2) {
               n.hp -= dmg;
+              this.applyVampire(p, dmg);
               if (n.hp <= 0) this.killNPC(n.id, p.id);
             }
           }
@@ -2548,7 +2555,8 @@ export default class GameServer implements Party.Server {
         }
       }
       const lifetime = PROJECTILE_LIFETIME_MS * p.projectileLifeMul;
-      const orbitRadius = 80;
+      // Radius grows with damageMul so +damage powerups push orbitals outward.
+      const orbitRadius = Math.round(80 * Math.pow(Math.max(1, p.damageMul), 0.3));
       const spinSpeed = 3; // rad/sec
       for (let i = 0; i < totalProjectiles; i++) {
         const initAngle = (i / totalProjectiles) * Math.PI * 2;
