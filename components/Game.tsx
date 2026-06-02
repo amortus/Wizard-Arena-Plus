@@ -18,7 +18,7 @@ function PowerupsPanel({ powerups }: { powerups: string[] }) {
   if (!entries.length) return null;
   return (
     <div style={{
-      position: 'fixed', right: 64, top: '50%', transform: 'translateY(-50%)',
+      position: 'fixed', right: 13, top: '50%', transform: 'translateY(-50%)',
       display: 'grid', gridTemplateColumns: 'repeat(2, 34px)', gap: 4,
       maxHeight: '80vh', overflow: 'hidden', zIndex: 25,
       pointerEvents: 'none',
@@ -66,7 +66,7 @@ function VsWeaponPanel({ weapons, vsWeaponLevels }: { weapons: string[]; vsWeapo
   if (!weapons.length) return null;
   return (
     <div style={{
-      position: 'fixed', right: 64, top: '50%', transform: 'translateY(-50%)',
+      position: 'fixed', right: 13, top: '50%', transform: 'translateY(-50%)',
       display: 'flex', flexDirection: 'column', gap: 4,
       zIndex: 25, pointerEvents: 'none',
     }}>
