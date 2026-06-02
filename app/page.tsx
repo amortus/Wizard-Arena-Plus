@@ -8,6 +8,8 @@ import type { GameMode, RoomInfo } from '../shared/types';
 import { loadSettings, saveSettings, type Settings } from '../lib/settings';
 import { T } from '../shared/i18n';
 import { SettingsModal } from '../components/SettingsModal';
+import { AuthScreen, NicknameModal } from '../components/AuthScreen';
+import { supabase, getProfile, type UserProfile } from '../lib/supabase';
 
 // Tiny synth chime played whenever a gladiator is picked.
 function useSelectSfx(sfxVol: number) {
@@ -74,7 +76,9 @@ function generateRoomCode(): string {
 }
 
 export default function Page() {
-  const [screen, setScreen] = useState<'select' | 'browser' | 'game'>('select');
+  const [screen, setScreen] = useState<'auth' | 'select' | 'browser' | 'game'>('auth');
+  const [authProfile, setAuthProfile] = useState<UserProfile | null>(null);
+  const [pendingGoogleSession, setPendingGoogleSession] = useState<{ userId: string; photoUrl: string | null; displayName: string } | null>(null);
   const [name, setName] = useState('');
   const [character, setCharacter] = useState<CharacterKind>('blue_wizard');
   const [country, setCountry] = useState<string | undefined>(undefined);
@@ -100,6 +104,26 @@ export default function Page() {
   const t = T[settings.lang];
   const playSelectSfx = useSelectSfx(settings.sfxVol);
 
+  // Check for existing Supabase session (covers redirect-back-from-OAuth and returning users)
+  useEffect(() => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (!session) { return; } // stay on auth screen
+      const meta = session.user.user_metadata;
+      const userId = session.user.id;
+      const photoUrl = (meta?.avatar_url as string) ?? null;
+      const displayName = (meta?.full_name as string) ?? (meta?.name as string) ?? '';
+      const profile = await getProfile(userId);
+      if (profile) {
+        setAuthProfile(profile);
+        setName(profile.nickname);
+        setScreen('select');
+      } else {
+        // First Google login — need to pick a nickname
+        setPendingGoogleSession({ userId, photoUrl, displayName });
+      }
+    });
+  }, []);
+
   useEffect(() => {
     if (!sessionStorage.getItem('support_popup_shown')) {
       const timer = setTimeout(() => {
@@ -109,6 +133,18 @@ export default function Page() {
       return () => clearTimeout(timer);
     }
   }, []);
+
+  function handleAuthDone(result: { kind: 'guest'; name: string } | { kind: 'google'; profile: UserProfile }) {
+    if (result.kind === 'guest') {
+      setName(result.name);
+      setAuthProfile(null);
+      setScreen('select');
+    } else {
+      setAuthProfile(result.profile);
+      setName(result.profile.nickname);
+      setScreen('select');
+    }
+  }
 
   const triggerNameError = (msg: string) => {
     setNameError(msg);
@@ -200,6 +236,28 @@ export default function Page() {
     prevScreen.current = screen;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [screen]);
+
+  // Auth screen — shown on first visit or when not logged in
+  if (screen === 'auth') {
+    return (
+      <>
+        <AuthScreen onDone={handleAuthDone} />
+        {pendingGoogleSession && (
+          <NicknameModal
+            defaultName={pendingGoogleSession.displayName}
+            photoUrl={pendingGoogleSession.photoUrl}
+            userId={pendingGoogleSession.userId}
+            onDone={(profile) => {
+              setPendingGoogleSession(null);
+              setAuthProfile(profile);
+              setName(profile.nickname);
+              setScreen('select');
+            }}
+          />
+        )}
+      </>
+    );
+  }
 
   if (screen === 'game') {
     return (
@@ -514,6 +572,27 @@ export default function Page() {
       </div>
 
       <button className="settings-btn" onClick={() => setShowSettings(true)} title={t.settings}>⚙️</button>
+      {authProfile && (
+        <div style={{
+          position: 'fixed', top: 12, left: 12, zIndex: 50,
+          display: 'flex', alignItems: 'center', gap: 8,
+          background: 'rgba(20,10,35,0.85)', border: '1px solid rgba(200,16,46,0.3)',
+          borderRadius: 20, padding: '4px 10px 4px 4px',
+        }}>
+          {authProfile.photo_url && (
+            <img src={authProfile.photo_url} alt="" style={{ width: 28, height: 28, borderRadius: '50%', border: '1px solid #c8102e' }} />
+          )}
+          <span style={{ fontFamily: "'VT323', monospace", fontSize: 16, color: '#c8a46e' }}>
+            {authProfile.nickname}
+          </span>
+          <button
+            type="button"
+            onClick={async () => { await supabase.auth.signOut(); setAuthProfile(null); setScreen('auth'); }}
+            style={{ background: 'none', border: 'none', color: '#5a4858', cursor: 'pointer', fontSize: 12, padding: 0 }}
+            title="Sair"
+          >✕</button>
+        </div>
+      )}
       {showSettings && (
         <SettingsModal settings={settings} onClose={() => setShowSettings(false)} onChange={setSettings} />
       )}

@@ -21,6 +21,7 @@
     "@capacitor/android": "^8.3.4",
     "@capacitor/cli": "^8.3.4",
     "@capacitor/core": "^8.3.4",
+    "@supabase/supabase-js": "^2.107.0",
     "next": "^15.0.0",
     "partysocket": "^1.0.2",
     "phaser": "^3.87.0",
