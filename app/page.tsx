@@ -8,8 +8,8 @@ import type { GameMode, RoomInfo } from '../shared/types';
 import { loadSettings, saveSettings, type Settings } from '../lib/settings';
 import { T } from '../shared/i18n';
 import { SettingsModal } from '../components/SettingsModal';
-import { AuthScreen, NicknameModal } from '../components/AuthScreen';
-import { supabase, getProfile, type UserProfile } from '../lib/supabase';
+import { AuthScreen } from '../components/AuthScreen';
+import { supabase, getProfile, upsertProfile, type UserProfile } from '../lib/supabase';
 
 // Tiny synth chime played whenever a gladiator is picked.
 function useSelectSfx(sfxVol: number) {
@@ -78,7 +78,6 @@ function generateRoomCode(): string {
 export default function Page() {
   const [screen, setScreen] = useState<'auth' | 'select' | 'browser' | 'game'>('auth');
   const [authProfile, setAuthProfile] = useState<UserProfile | null>(null);
-  const [pendingGoogleSession, setPendingGoogleSession] = useState<{ userId: string; photoUrl: string | null; displayName: string } | null>(null);
   const [name, setName] = useState('');
   const [character, setCharacter] = useState<CharacterKind>('blue_wizard');
   const [country, setCountry] = useState<string | undefined>(undefined);
@@ -118,8 +117,13 @@ export default function Page() {
         setName(profile.nickname);
         setScreen('select');
       } else {
-        // First Google login — need to pick a nickname
-        setPendingGoogleSession({ userId, photoUrl, displayName });
+        // First Google login — save name automatically, no modal
+        const nickname = (displayName || 'Player').slice(0, 20);
+        await upsertProfile(userId, nickname, photoUrl);
+        const newProfile: UserProfile = { id: userId, nickname, photo_url: photoUrl, created_at: '' };
+        setAuthProfile(newProfile);
+        setName(nickname);
+        setScreen('select');
       }
     });
   }, []);
@@ -239,24 +243,7 @@ export default function Page() {
 
   // Auth screen — shown on first visit or when not logged in
   if (screen === 'auth') {
-    return (
-      <>
-        <AuthScreen onDone={handleAuthDone} />
-        {pendingGoogleSession && (
-          <NicknameModal
-            defaultName={pendingGoogleSession.displayName}
-            photoUrl={pendingGoogleSession.photoUrl}
-            userId={pendingGoogleSession.userId}
-            onDone={(profile) => {
-              setPendingGoogleSession(null);
-              setAuthProfile(profile);
-              setName(profile.nickname);
-              setScreen('select');
-            }}
-          />
-        )}
-      </>
-    );
+    return <AuthScreen onDone={handleAuthDone} />;
   }
 
   if (screen === 'game') {
