@@ -1116,6 +1116,23 @@ export class ArenaScene extends Phaser.Scene {
           if (s) { s.setVisible(false).setActive(false); this.projPool.push(s); this.projSprites.delete(id); }
         }
       }
+      if (msg.effects) {
+        for (const fx of msg.effects) {
+          if (fx.kind === 'lightning') this.spawnLightningEffect(fx.x, fx.y);
+          else if (fx.kind === 'meteor') this.spawnMeteorEffect(fx.x, fx.y);
+          else if (fx.kind === 'frostNova') this.spawnFrostNovaEffect(fx.x, fx.y, fx.radius ?? 160);
+          else if (fx.kind === 'holySmite') this.spawnHolySmiteEffect(fx.x, fx.y);
+          else if (fx.kind === 'blackHole') this.spawnBlackHoleEffect(fx.x, fx.y, fx.durationMs ?? 3000);
+          else if (fx.kind === 'chainExplosion') this.spawnChainExplosionEffect(fx.x, fx.y);
+          else if (fx.kind === 'phoenixRevive') this.spawnPhoenixReviveEffect(fx.x, fx.y);
+          else if (fx.kind === 'earthquake') this.spawnEarthquakeEffect(fx.x, fx.y, fx.radius ?? 200);
+          else if (fx.kind === 'timeStop') this.spawnTimeStopEffect(fx.x, fx.y, fx.radius ?? 600);
+          else if (fx.kind === 'castleDestroyed') { this.cameras.main.shake(1200, 0.025); this.spawnCastleDestroyedEffect(fx.x, fx.y); this.bus.emit('castleDestroyed'); }
+          else if (fx.kind === 'towerShot') this.spawnTowerShotEffect(fx.x, fx.y, fx.tx ?? fx.x, fx.ty ?? fx.y, (fx.team ?? 'blue') as any);
+          else if (fx.kind === 'towerDestroyed') { this.cameras.main.shake(400, 0.01); this.spawnCastleDestroyedEffect(fx.x, fx.y); }
+          else if (fx.kind === 'crystalDestroyed') { this.cameras.main.shake(1500, 0.03); this.spawnCastleDestroyedEffect(fx.x, fx.y); this.bus.emit('crystalDestroyed', fx.team as any); }
+        }
+      }
       // reconcile predicted self toward server position
       if (this.selfId) {
         const self = msg.players.find((p) => p.id === this.selfId);

@@ -243,6 +243,18 @@ export type Snapshot = {
   bossMaxHp?: number;
   bossHp?: number;
   vsChests?: ChestState[];
+  effects?: SnapshotEffect[];
+};
+
+export type SnapshotEffect = {
+  kind: string;
+  x: number;
+  y: number;
+  tx?: number;
+  ty?: number;
+  team?: string;
+  radius?: number;
+  durationMs?: number;
 };
 
 export type LeaderboardEntry = {

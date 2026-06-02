@@ -19,7 +19,7 @@ import { CHARACTERS } from './constants';
 import { MONSTERS } from './constants';
 import type { Snapshot } from './types';
 
-export const SNAPSHOT_PROTOCOL_VERSION = 2;
+export const SNAPSHOT_PROTOCOL_VERSION = 3;
 // First byte of every binary snapshot frame. Lets the client distinguish a binary
 // snapshot from a (string) JSON message and reject unknown versions.
 export const SNAPSHOT_MAGIC = 0xa1;
@@ -40,6 +40,12 @@ const PICKUP_KINDS = ['health', 'speed', 'damage', 'shield', 'cooldown', 'berser
 const ARENA_ELEMENTS = ['normal', 'lava', 'ice', 'fog'] as const;
 const GAME_MODES = ['arena', 'castle', 'moba', 'aram', 'wizard_survivor'] as const;
 const TEAMS = ['blue', 'red'] as const;
+// Append-only — never reorder.
+const EFFECT_KINDS = [
+  'lightning', 'meteor', 'frostNova', 'holySmite', 'blackHole',
+  'chainExplosion', 'phoenixRevive', 'earthquake', 'timeStop',
+  'castleDestroyed', 'towerShot', 'towerDestroyed', 'crystalDestroyed',
+] as const;
 
 // ---- Field type descriptors ----
 // Primitive widths plus: 'str', {enum}, {arr}, {opt}. A schema is an ordered list
@@ -255,6 +261,15 @@ const BOSSPROJ_FIELDS: Field[] = [
   ['id', 'str'], ['x', 'i16'], ['y', 'i16'], ['vx', 'f32'], ['vy', 'f32'], ['radius', 'u16'], ['generation', 'u8'],
 ];
 
+const EFFECT_FIELDS: Field[] = [
+  ['kind', { enum: EFFECT_KINDS as unknown as readonly string[] }],
+  ['x', 'i16'], ['y', 'i16'],
+  ['tx', { opt: 'i16' }], ['ty', { opt: 'i16' }],
+  ['team', { opt: { enum: TEAMS } }],
+  ['radius', { opt: 'f32' }],
+  ['durationMs', { opt: 'u32' }],
+];
+
 const CHEST_FIELDS: Field[] = [
   ['id', 'str'], ['x', 'i16'], ['y', 'i16'], ['spawnedAt', 'f64'],
 ];
@@ -280,6 +295,7 @@ const F_MOBA = 1 << 7; // towers + crystals + roomWave
 const F_BOSS = 1 << 8; // activeBossId + bossHp + bossMaxHp
 const F_ROOMWAVE = 1 << 9;
 const F_VSCHESTS = 1 << 10; // Wizard Survivor chests
+const F_EFFECTS = 1 << 11;  // batched effect events
 
 export function encodeSnapshot(snap: Snapshot): ArrayBuffer {
   const w = new ByteWriter();
@@ -305,6 +321,7 @@ export function encodeSnapshot(snap: Snapshot): ArrayBuffer {
   if (snap.activeBossId) flags |= F_BOSS;
   if (snap.roomWave !== undefined) flags |= F_ROOMWAVE;
   if (snap.vsChests?.length) flags |= F_VSCHESTS;
+  if (snap.effects?.length) flags |= F_EFFECTS;
   w.u16(flags);
 
   // core arrays (always present)
@@ -332,6 +349,7 @@ export function encodeSnapshot(snap: Snapshot): ArrayBuffer {
   }
   if (flags & F_ROOMWAVE) w.u16(snap.roomWave!);
   if (flags & F_VSCHESTS) writeArray(w, CHEST_FIELDS, snap.vsChests);
+  if (flags & F_EFFECTS) writeArray(w, EFFECT_FIELDS, snap.effects);
 
   return w.finish();
 }
@@ -384,6 +402,7 @@ export function decodeSnapshot(buf: ArrayBuffer): Snapshot {
   }
   if (flags & F_ROOMWAVE) snap.roomWave = r.u16();
   if (flags & F_VSCHESTS) snap.vsChests = readArray(r, CHEST_FIELDS);
+  if (flags & F_EFFECTS) snap.effects = readArray(r, EFFECT_FIELDS);
 
   return snap as Snapshot;
 }

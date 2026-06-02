@@ -129,7 +129,7 @@ import {
   VS_CHEST_LIFETIME_MS, VS_BASE_WEAPONS, VS_CHOICE_LEVELUP, VS_CHOICE_ADD,
   VS_CHOICE_PASSIVE, VS_EVOLVED_TINTS, vsSpawnEntryAt, rollVsChoices,
 } from '../shared/vs-constants';
-import type { ChestState } from '../shared/types';
+import type { ChestState, SnapshotEffect } from '../shared/types';
 import { MOBA_ITEMS_MAP } from '../shared/items';
 import { isBlockedName } from '../shared/profanity';
 import { computeVsMetaBonuses } from '../lib/vs-meta';
@@ -378,7 +378,7 @@ class PerfMonitor {
     return Object.entries(this.buckets).map(([k, v]) => {
       const s = [...v].sort((a, b) => a - b);
       const avg = v.reduce((a, b) => a + b, 0) / v.length;
-      return `${k}: avg=${avg.toFixed(1)} p99=${s[Math.floor(s.length * 0.99)]?.toFixed(1)} max=${s[s.length - 1]?.toFixed(1)}ms`;
+      return `  ${k}: avg=${avg.toFixed(1)} p99=${s[Math.floor(s.length * 0.99)]?.toFixed(1)} max=${s[s.length - 1]?.toFixed(1)}ms`;
     }).join('\n');
   }
 }
@@ -450,6 +450,7 @@ export default class GameServer implements Party.Server {
     orbitRadius?: number; orbitAngle?: number; orbitSpinSpeed?: number;
   }> = [];
   pendingProjDestroys: string[] = [];
+  pendingEffects: SnapshotEffect[] = [];
   // Spatial hashes: rebuilt once per tick for O(n·k) collision/separation
   npcHash = new SpatialHash(64, ARENA_WIDTH);
   queryBuf: string[] = []; // reusable query result buffer (avoids per-query array allocation)
@@ -511,6 +512,21 @@ export default class GameServer implements Party.Server {
       'Access-Control-Allow-Methods': 'GET, DELETE, OPTIONS',
     };
     if (req.method === 'OPTIONS') return new Response(null, { headers });
+    const url = new URL(req.url);
+    // Perf stats endpoint — GET /parties/main/{id}?stats
+    if (req.method === 'GET' && url.searchParams.has('stats')) {
+      const conns = [...this.room.getConnections()].length;
+      return new Response(JSON.stringify({
+        room: this.room.id,
+        mode: this.gameMode,
+        players: this.players.size,
+        connections: conns,
+        projs: this.projectiles.size,
+        npcs: this.npcs.size,
+        ticking: this.tickHandle !== null,
+        perf: this.perf.report(),
+      }, null, 2), { status: 200, headers });
+    }
     // Admin: force-close a stuck room. DELETE /parties/main/{id}?admin=MADNESS_ADMIN_2026
     if (req.method === 'DELETE') {
       const url = new URL(req.url);
@@ -988,8 +1004,7 @@ export default class GameServer implements Party.Server {
 
       if (castle.hp <= 0) {
         this.castleDefeated = true;
-        const fx: ServerToClient = { type: 'effect', effect: 'castleDestroyed', x: castle.x, y: castle.y };
-        this.room.broadcast(JSON.stringify(fx));
+        this.pendingEffects.push({ kind: 'castleDestroyed', x: castle.x, y: castle.y });
         // Kill all players to trigger game-over flow
         for (const p of this.players.values()) {
           if (p.alive) this.killPlayer(p, '__castle__', p.hp <= 0 ? 0 : p.hp);
@@ -1142,8 +1157,7 @@ export default class GameServer implements Party.Server {
         closestMinion.hp -= dmg;
         tower.lastAttackAt = now;
         attacked = true;
-        const shotFx: ServerToClient = { type: 'effect', effect: 'towerShot', x: tower.x, y: tower.y, tx: closestMinion.x, ty: closestMinion.y, team: tower.team };
-        this.room.broadcast(JSON.stringify(shotFx));
+        this.pendingEffects.push({ kind: 'towerShot', x: tower.x, y: tower.y, tx: closestMinion.x, ty: closestMinion.y, team: tower.team });
         if (closestMinion.hp <= 0) {
           this.npcs.delete(closestMinionId);
           this.mobaMinionWaypoints.delete(closestMinionId);
@@ -1166,8 +1180,7 @@ export default class GameServer implements Party.Server {
       if (closestPlayer) {
         closestPlayer.hp -= attackDmg * damageMul;
         tower.lastAttackAt = now;
-        const shotFx: ServerToClient = { type: 'effect', effect: 'towerShot', x: tower.x, y: tower.y, tx: closestPlayer.x, ty: closestPlayer.y, team: tower.team };
-        this.room.broadcast(JSON.stringify(shotFx));
+        this.pendingEffects.push({ kind: 'towerShot', x: tower.x, y: tower.y, tx: closestPlayer.x, ty: closestPlayer.y, team: tower.team });
         if (closestPlayer.hp <= 0) this.killPlayer(closestPlayer, tower.id, attackDmg * damageMul);
       }
     }
@@ -1195,8 +1208,7 @@ export default class GameServer implements Party.Server {
           if (tower.hp <= 0) {
             tower.hp = 0;
             tower.alive = false;
-            const fx: ServerToClient = { type: 'effect', effect: 'towerDestroyed', x: tower.x, y: tower.y, team: tower.team };
-            this.room.broadcast(JSON.stringify(fx));
+            this.pendingEffects.push({ kind: 'towerDestroyed', x: tower.x, y: tower.y, team: tower.team });
             // Award gold to enemy team
             for (const p of this.players.values()) {
               if (p.mobaTeam === enemyTeam) {
@@ -1246,8 +1258,7 @@ export default class GameServer implements Party.Server {
     const loserTeam: MobaTeam = winner === 'blue' ? 'red' : 'blue';
     const loserCrystal = this.mobaCrystals.get(loserTeam);
     if (loserCrystal) {
-      const fx: ServerToClient = { type: 'effect', effect: 'crystalDestroyed', x: loserCrystal.x, y: loserCrystal.y, team: loserTeam };
-      this.room.broadcast(JSON.stringify(fx));
+      this.pendingEffects.push({ kind: 'crystalDestroyed', x: loserCrystal.x, y: loserCrystal.y, team: loserTeam });
     }
   }
 
@@ -2139,7 +2150,8 @@ export default class GameServer implements Party.Server {
       console.warn(`[PERF] Slow tick: ${tickTotal.toFixed(1)}ms (budget=${TICK_MS}ms) projs=${this.projectiles.size} npcs=${this.npcs.size}`);
     }
     if (this.tickCount % 1500 === 0) {
-      console.log('[PERF REPORT]\n' + this.perf.report());
+      const conns = this.players.size;
+      console.log(`[PERF REPORT] room=${this.room.id} mode=${this.gameMode} players=${conns} projs=${this.projectiles.size} npcs=${this.npcs.size}\n` + this.perf.report());
     }
   }
 
@@ -2254,8 +2266,7 @@ export default class GameServer implements Party.Server {
               if (n.hp <= 0) this.killNPC(n.id, p.id);
             }
           }
-          const fx: ServerToClient = { type: 'effect', effect: 'lightning', x: target.x, y: target.y };
-          this.room.broadcast(JSON.stringify(fx));
+          this.pendingEffects.push({ kind: 'lightning', x: target.x, y: target.y });
         }
         p.nextLightningAt = wallNow + 4000 * (p.lightningCooldownMul || 1);
       }
@@ -2277,8 +2288,7 @@ export default class GameServer implements Party.Server {
                 if (n.hp <= 0) this.killNPC(n.id, p.id);
               }
             }
-            const fx: ServerToClient = { type: 'effect', effect: 'meteor', x: target.x, y: target.y };
-            this.room.broadcast(JSON.stringify(fx));
+            this.pendingEffects.push({ kind: 'meteor', x: target.x, y: target.y });
           }, i * 220);
         }
         p.nextMeteorAt = wallNow + 8000;
@@ -2300,8 +2310,7 @@ export default class GameServer implements Party.Server {
             if (n.hp <= 0) this.killNPC(n.id, p.id);
           }
         }
-        const fx: ServerToClient = { type: 'effect', effect: 'frostNova', x: p.x, y: p.y, radius };
-        this.room.broadcast(JSON.stringify(fx));
+        this.pendingEffects.push({ kind: 'frostNova', x: p.x, y: p.y, radius });
         p.nextFrostNovaAt = wallNow + 6000;
       }
 
@@ -2313,8 +2322,7 @@ export default class GameServer implements Party.Server {
           target.hp -= baseDmg;
           this.applyVampire(p, baseDmg);
           if (target.hp <= 0) this.killNPC(target.id, p.id);
-          const fx: ServerToClient = { type: 'effect', effect: 'holySmite', x: target.x, y: target.y };
-          this.room.broadcast(JSON.stringify(fx));
+          this.pendingEffects.push({ kind: 'holySmite', x: target.x, y: target.y });
         }
         p.nextHolySmiteAt = wallNow + 5000;
       }
@@ -2338,8 +2346,7 @@ export default class GameServer implements Party.Server {
           damageRadius: 100,
           lastTickDamageAt: 0,
         });
-        const fx: ServerToClient = { type: 'effect', effect: 'blackHole', x: cx, y: cy, durationMs };
-        this.room.broadcast(JSON.stringify(fx));
+        this.pendingEffects.push({ kind: 'blackHole', x: cx, y: cy, durationMs });
         p.nextBlackHoleAt = wallNow + 18000;
       }
 
@@ -2384,8 +2391,7 @@ export default class GameServer implements Party.Server {
             n.freezeUntil = Math.max(n.freezeUntil, wallNow + 2000);
           }
         }
-        const fx: ServerToClient = { type: 'effect', effect: 'timeStop', x: p.x, y: p.y, radius: 600 };
-        this.room.broadcast(JSON.stringify(fx));
+        this.pendingEffects.push({ kind: 'timeStop', x: p.x, y: p.y, radius: 600 });
         p.nextTimeStopAt = wallNow + 25000;
       }
 
@@ -2439,8 +2445,7 @@ export default class GameServer implements Party.Server {
             if (n.hp <= 0) this.killNPC(n.id, p.id);
           }
         }
-        const fx: ServerToClient = { type: 'effect', effect: 'earthquake', x: p.x, y: p.y, radius };
-        this.room.broadcast(JSON.stringify(fx));
+        this.pendingEffects.push({ kind: 'earthquake', x: p.x, y: p.y, radius });
         p.nextEarthquakeAt = wallNow + 12000;
       }
 
@@ -4201,8 +4206,7 @@ export default class GameServer implements Party.Server {
         if (n.hp <= 0) this.killNPC(n.id, owner.id, false);
       }
     }
-    const fx: ServerToClient = { type: 'effect', effect: 'chainExplosion', x, y };
-    this.room.broadcast(JSON.stringify(fx));
+    this.pendingEffects.push({ kind: 'chainExplosion', x, y });
   }
 
   dropGem(x: number, y: number, value: number) {
@@ -4281,8 +4285,7 @@ export default class GameServer implements Party.Server {
           if (n.hp <= 0) this.killNPC(n.id, p.id);
         }
       }
-      const fx: ServerToClient = { type: 'effect', effect: 'phoenixRevive', x: p.x, y: p.y };
-      this.room.broadcast(JSON.stringify(fx));
+      this.pendingEffects.push({ kind: 'phoenixRevive', x: p.x, y: p.y });
       return;
     }
 
@@ -4570,9 +4573,10 @@ export default class GameServer implements Party.Server {
     }
     this.currentRoomWave = roomWave;
 
-    // Drain pending proj batches into this snapshot
+    // Drain pending batches into this snapshot
     const newProjs = this.pendingProjCreates.length ? this.pendingProjCreates.splice(0) : undefined;
     const deadProjs = this.pendingProjDestroys.length ? this.pendingProjDestroys.splice(0) : undefined;
+    const effects = this.pendingEffects.length ? this.pendingEffects.splice(0) : undefined;
 
     // VS chests
     const vsChests = this.gameMode === 'wizard_survivor' && this.vsChests.size > 0
@@ -4602,10 +4606,10 @@ export default class GameServer implements Party.Server {
       bossMaxHp: this.activeBossId ? (this.npcs.get(this.activeBossId) as any)?.baseHp ?? undefined : undefined,
       bossHp: this.activeBossId ? this.npcs.get(this.activeBossId)?.hp ?? undefined : undefined,
       vsChests,
+      effects,
     };
 
     const AOI_R2 = 900 * 900;
-    let logOnce = this.tickCount % 500 === 0;
     for (const conn of this.room.getConnections()) {
       const p = this.players.get(conn.id);
       // Build the per-connection snapshot object (AOI-culled), then pack it to a
@@ -4637,10 +4641,6 @@ export default class GameServer implements Party.Server {
         snapObj = { ...base, npcs: aoiNpcs, gems: aoiGems, bossProjectiles: aoiBossProjs } as Snapshot;
       }
       const buf = encodeSnapshot(snapObj);
-      if (logOnce) {
-        logOnce = false;
-        console.log(`[NET] snapshot=${buf.byteLength}B players=${snapObj.players.length} npcs=${snapObj.npcs.length} gems=${snapObj.gems.length} projs=${snapObj.projectiles.length}`);
-      }
       conn.send(buf);
     }
   }
@@ -4768,8 +4768,7 @@ export default class GameServer implements Party.Server {
             if (p.hp <= 0) this.killPlayer(p, '__hazard__', 35);
           }
         }
-        const fx: ServerToClient = { type: 'effect', effect: 'lightning', x: h.x, y: h.y };
-        this.room.broadcast(JSON.stringify(fx));
+        this.pendingEffects.push({ kind: 'lightning', x: h.x, y: h.y });
         h.activeUntilMs = now;
       } else if (h.kind === 'poison_cloud' && active) {
         if (now - h.lastDamageAt > 500) {
