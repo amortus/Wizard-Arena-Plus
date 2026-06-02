@@ -6,7 +6,6 @@ import { MOBA_ITEMS } from '../shared/items';
 import { dedupeBestByName } from '../shared/leaderboard';
 import { POWERUPS } from '../shared/powerups';
 import { T, POWERUP_PT, type Lang } from '../shared/i18n';
-import { addVsGold } from '../lib/vs-meta';
 import { getAdService } from '../lib/ads';
 
 function PowerupsPanel({ powerups }: { powerups: string[] }) {
@@ -52,130 +51,6 @@ function PowerupsPanel({ powerups }: { powerups: string[] }) {
   );
 }
 
-const VS_WEAPON_ICONS: Record<string, string> = {
-  shadow_bolt:'🌑', dagger:'🍃', fireball:'🔥', sword:'🪨',
-  lightning_bolt:'⚡', orb:'🔮', orbital_spark:'🌀', aura_shield:'🛡️',
-  holy_bolt:'✨', storm_daggers:'🌪️', death_vortex:'💀', hellfire:'☄️',
-  soul_drain:'🩸', thunder_storm:'🌩️', arcane_nova:'💫', eternal_orbit:'♾️',
-};
-
-function VsWeaponPanel({ weapons, vsWeaponLevels }: { weapons: string[]; vsWeaponLevels: number[] }) {
-  // WEAPONS_CODEC_ORDER — must match party/index.ts static field
-  const CODEC_ORDER = ['sword','orb','dagger','fireball','lightning_bolt','shadow_bolt','orbital_spark','aura_shield',
-    'holy_bolt','storm_daggers','death_vortex','hellfire','soul_drain','thunder_storm','arcane_nova','eternal_orbit'];
-  if (!weapons.length) return null;
-  return (
-    <div style={{
-      position: 'fixed', right: 13, top: '50%', transform: 'translateY(-50%)',
-      display: 'flex', flexDirection: 'column', gap: 4,
-      zIndex: 25, pointerEvents: 'none',
-    }}>
-      {weapons.map((w) => {
-        const idx = CODEC_ORDER.indexOf(w);
-        const lvl = idx >= 0 ? (vsWeaponLevels[idx] ?? 1) : 1;
-        const isEvolved = ['holy_bolt','storm_daggers','death_vortex','hellfire','soul_drain','thunder_storm','arcane_nova','eternal_orbit'].includes(w);
-        return (
-          <div key={w} style={{
-            width: 48, height: 48, background: 'rgba(20,10,40,0.9)',
-            border: `1px solid ${isEvolved ? '#FFD700' : 'rgba(255,204,68,0.35)'}`,
-            borderRadius: 6, display: 'flex', flexDirection: 'column',
-            alignItems: 'center', justifyContent: 'center', gap: 1,
-          }}>
-            <span style={{ fontSize: 20 }}>{VS_WEAPON_ICONS[w] ?? '⚔️'}</span>
-            <span style={{ fontSize: 9, color: isEvolved ? '#FFD700' : '#aaa', fontWeight: 700 }}>
-              {isEvolved ? 'MAX' : `Lv.${lvl}/8`}
-            </span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function VsPassivePanel({ passiveIds, passiveLvls }: { passiveIds: string[]; passiveLvls: number[] }) {
-  const VS_PASSIVE_ICONS: Record<string, string> = {
-    vs_spinach:'🌿', vs_tome:'📖', vs_candle:'🕯️', vs_bracer:'🎯',
-    vs_heart:'🫀', vs_pummarola:'🍅', vs_wings:'🪶', vs_duplicator:'✨',
-    vs_crown:'👑', vs_clover:'🍀',
-  };
-  if (!passiveIds.length) return null;
-  return (
-    <div style={{
-      position: 'fixed', left: 8, top: '50%', transform: 'translateY(-50%)',
-      display: 'flex', flexDirection: 'column', gap: 4,
-      zIndex: 25, pointerEvents: 'none',
-    }}>
-      {passiveIds.map((id, i) => (
-        <div key={id} style={{
-          width: 44, height: 44, background: 'rgba(20,10,40,0.9)',
-          border: '1px solid rgba(100,200,100,0.4)',
-          borderRadius: 6, display: 'flex', flexDirection: 'column',
-          alignItems: 'center', justifyContent: 'center', gap: 1,
-        }}>
-          <span style={{ fontSize: 18 }}>{VS_PASSIVE_ICONS[id] ?? '💎'}</span>
-          <span style={{ fontSize: 9, color: '#88ff88', fontWeight: 700 }}>Lv.{passiveLvls[i] ?? 1}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function VsTimer({ msLeft }: { msLeft: number }) {
-  const totalSec = Math.ceil(msLeft / 1000);
-  const min = Math.floor(totalSec / 60);
-  const sec = totalSec % 60;
-  const isUrgent = totalSec <= 60;
-  return (
-    <div style={{
-      position: 'fixed', top: 48, left: '50%', transform: 'translateX(-50%)',
-      background: 'rgba(10,5,20,0.88)', border: `2px solid ${isUrgent ? '#ff3333' : '#FFD700'}`,
-      borderRadius: 8, padding: '4px 16px', zIndex: 30, pointerEvents: 'none',
-      color: isUrgent ? '#ff5555' : '#FFD700', fontWeight: 700, fontSize: 20,
-      fontFamily: 'monospace', letterSpacing: 2,
-    }}>
-      {min}:{sec.toString().padStart(2, '0')}
-    </div>
-  );
-}
-
-function VsWinScreen({ gold }: { gold: number }) {
-  const savedRef = useRef(false);
-  useEffect(() => {
-    if (!savedRef.current && gold > 0) {
-      savedRef.current = true;
-      addVsGold(gold);
-    }
-  }, [gold]);
-
-  return (
-    <div style={{
-      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)',
-      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-      zIndex: 100, color: '#FFD700',
-    }}>
-      <div style={{ fontSize: 48, marginBottom: 8 }}>⚔️</div>
-      <h2 style={{ fontSize: 36, margin: 0, textShadow: '0 0 20px #FFD700' }}>YOU SURVIVED!</h2>
-      <p style={{ color: '#aaa', margin: '8px 0 24px' }}>30 minutes of carnage complete</p>
-      <div style={{ background: 'rgba(255,215,0,0.1)', border: '1px solid #FFD700', borderRadius: 8, padding: '12px 32px', marginBottom: 24 }}>
-        <span style={{ fontSize: 24, color: '#FFD700' }}>🪙 +{gold} gold saved</span>
-      </div>
-      <div style={{ display: 'flex', gap: 12 }}>
-        <button
-          style={{ background: '#4a2080', color: '#cc88ff', border: '2px solid #9944dd', borderRadius: 8, padding: '10px 24px', fontSize: 16, fontWeight: 700, cursor: 'pointer' }}
-          onClick={() => { if (typeof window !== 'undefined') window.location.href = '/?metashop=1'; }}
-        >
-          ⚗️ Invest Gold
-        </button>
-        <button
-          style={{ background: '#FFD700', color: '#1a0a30', border: 'none', borderRadius: 8, padding: '10px 24px', fontSize: 16, fontWeight: 700, cursor: 'pointer' }}
-          onClick={() => { if (typeof window !== 'undefined') window.location.href = '/'; }}
-        >
-          Back to Menu
-        </button>
-      </div>
-    </div>
-  );
-}
 
 type Props = {
   name: string;
@@ -777,21 +652,8 @@ export default function Game({ name, character, color, hue, room, country, roomN
         </div>
       )}
 
-      {hud.self && !dead && hud.gameMode !== 'wizard_survivor' && (
+      {hud.self && !dead && (
         <PowerupsPanel powerups={hud.self.collectedPowerups ?? []} />
-      )}
-
-      {hud.self && !dead && hud.gameMode === 'wizard_survivor' && (
-        <>
-          <VsWeaponPanel weapons={hud.self.weapons ?? []} vsWeaponLevels={hud.self.vsWeaponLevels ?? []} />
-          <VsPassivePanel passiveIds={hud.self.vsPassiveIds ?? []} passiveLvls={hud.self.vsPassiveLvls ?? []} />
-          {(hud.self.vsTimeRemainingMs ?? 0) > 0 && (
-            <VsTimer msLeft={hud.self.vsTimeRemainingMs!} />
-          )}
-          {hud.self.vsWon && (
-            <VsWinScreen gold={hud.self.vsGold ?? 0} />
-          )}
-        </>
       )}
     </div>
   );

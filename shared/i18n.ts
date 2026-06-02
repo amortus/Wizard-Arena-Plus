@@ -43,8 +43,8 @@ export const T = {
     modeArenaDesc: 'Survival · up to 4 players',
     modeCastle: 'CASTLE',
     modeCastleDesc: 'Defend the fortress · 4p',
-    modeMoba: 'CRYSTAL RUSH',
-    modeMobaDesc: '3v3 · 3 lanes · MOBA',
+    modeMoba: 'MOBA',
+    modeMobaDesc: '3v3 · 3 lanes',
     modeAram: 'A.R.A.M.',
     modeAramDesc: 'Random · center lane',
 
@@ -152,8 +152,8 @@ export const T = {
     modeArenaDesc: 'Sobrevivência · até 4 jogadores',
     modeCastle: 'CASTELO',
     modeCastleDesc: 'Defenda a fortaleza · 4j',
-    modeMoba: 'CRYSTAL RUSH',
-    modeMobaDesc: '3v3 · 3 rotas · MOBA',
+    modeMoba: 'MOBA',
+    modeMobaDesc: '3v3 · 3 rotas',
     modeAram: 'A.R.A.M.',
     modeAramDesc: 'Aleatório · rota central',
 
