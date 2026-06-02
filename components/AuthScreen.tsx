@@ -33,15 +33,12 @@ export function AuthScreen({ onDone }: Props) {
       display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
       gap: 0,
     }}>
-      {/* Title */}
-      <div style={{ textAlign: 'center', marginBottom: 40 }}>
-        <div style={{ fontFamily: "'Press Start 2P', monospace", fontSize: 22, color: '#c8102e', letterSpacing: 3, textShadow: '0 0 30px rgba(200,16,46,0.6)' }}>
-          MADNESS ARENA
-        </div>
-        <div style={{ fontFamily: "'VT323', monospace", fontSize: 18, color: '#9a7858', marginTop: 8, letterSpacing: 2 }}>
-          GLADIADORES EM ARENA
-        </div>
-      </div>
+      {/* Logo */}
+      <img
+        src="/wizard_arena_plus_logo.png"
+        alt="Wizard Arena Plus"
+        style={{ width: 320, maxWidth: '90vw', marginBottom: 32, imageRendering: 'pixelated' }}
+      />
 
       {/* Card */}
       <div style={{
