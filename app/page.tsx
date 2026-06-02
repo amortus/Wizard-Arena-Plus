@@ -221,10 +221,7 @@ export default function Page() {
   }
 
   const gameModes = [
-    { mode: 'arena'           as const, label: t.modeArena,  sub: t.modeArenaDesc,  glyph: '⚔',  clr: 'arena' },
-    { mode: 'castle'          as const, label: t.modeCastle, sub: t.modeCastleDesc, glyph: '🏰', clr: 'castle' },
-    { mode: 'moba'            as const, label: t.modeMoba,   sub: t.modeMobaDesc,   glyph: '💎', clr: 'moba' },
-    { mode: 'aram'            as const, label: t.modeAram,   sub: t.modeAramDesc,   glyph: '🎲', clr: 'aram' },
+    { mode: 'arena' as const, label: t.modeArena, sub: t.modeArenaDesc, glyph: '⚔', clr: 'arena' },
   ];
 
   if (screen === 'browser') {
@@ -264,16 +261,13 @@ export default function Page() {
                 ) : (
                   rooms.map((r) => {
                     const isFull = r.playerCount >= r.maxPlayers;
-                    const modeTitle = r.gameMode === 'castle' ? t.modeCastle
-                      : r.gameMode === 'moba' ? t.modeMoba
-                      : r.gameMode === 'aram' ? t.modeAram
-                      : t.modeArena;
+                    const modeTitle = t.modeArena;
                     return (
                       <tr key={r.id}>
                         <td className="room-row-lock">{r.hasPassword ? '🔒' : ''}</td>
                         <td className="room-row-name">
                           <span title={modeTitle} style={{ marginRight: 4 }}>
-                            {r.gameMode === 'castle' ? '🏰' : r.gameMode === 'moba' ? '🗡️' : r.gameMode === 'aram' ? '🎲' : '⚔️'}
+                            {'⚔️'}
                           </span>
                           {r.name}
                         </td>
