@@ -19,7 +19,7 @@ import { CHARACTERS } from './constants';
 import { MONSTERS } from './constants';
 import type { Snapshot } from './types';
 
-export const SNAPSHOT_PROTOCOL_VERSION = 3;
+export const SNAPSHOT_PROTOCOL_VERSION = 4;
 // First byte of every binary snapshot frame. Lets the client distinguish a binary
 // snapshot from a (string) JSON message and reject unknown versions.
 export const SNAPSHOT_MAGIC = 0xa1;
@@ -225,6 +225,7 @@ const NPC_FIELDS: Field[] = [
   // hp is u32: late-game bosses (death_titan etc) exceed the u16 range (65535).
   ['id', 'str'], ['kind', { enum: MONSTERS }], ['x', 'i16'], ['y', 'i16'], ['hp', 'u32'],
   ['ownerPlayerId', { opt: 'str' }],
+  ['vx', 'f32'], ['vy', 'f32'],
 ];
 
 // GemState on the wire drops `bornAt` (server-only; client never reads it).

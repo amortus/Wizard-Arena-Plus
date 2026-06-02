@@ -173,6 +173,8 @@ export type NPCState = {
   y: number;
   hp: number;
   ownerPlayerId?: string; // 'blue' | 'red' for MOBA/ARAM minions
+  vx?: number; // velocity x (px/s) — used for client-side dead reckoning
+  vy?: number; // velocity y (px/s)
 };
 
 export type GemState = {

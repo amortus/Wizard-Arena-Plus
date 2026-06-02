@@ -3868,6 +3868,7 @@ export default class GameServer implements Party.Server {
       }
 
       const target = this.targetForNpc(n, now);
+      const preX = n.x, preY = n.y; // saved for velocity calculation below
       // Freeze (Time Stop): hard-stop while > now. Slow + freeze are independent;
       // freeze takes precedence because it's a stronger effect.
       const frozen = now < n.freezeUntil;
@@ -3997,6 +3998,8 @@ export default class GameServer implements Party.Server {
           n.y += (bdy / bdist) * bh.pullStrength * dt;
         }
       }
+      // Velocity = total displacement / dt — captures all movement (chase, dash, pull).
+      if (dt > 0) { n.vx = (n.x - preX) / dt; n.vy = (n.y - preY) / dt; }
 
       // touch damage uses distance to the actual target (not the flank aim),
       // so flanking NPCs still apply damage when they reach the player.
@@ -4516,6 +4519,7 @@ export default class GameServer implements Party.Server {
       fullNpcs.push({
         id: n.id, kind: n.kind, x: Math.round(n.x), y: Math.round(n.y), hp: Math.round(n.hp),
         ...(n.ai === 'moba_march' ? { ownerPlayerId: n.ownerPlayerId } : {}),
+        vx: n.vx ?? 0, vy: n.vy ?? 0,
       });
     }
     const fullGems: GemState[] = [];
@@ -4625,7 +4629,8 @@ export default class GameServer implements Party.Server {
           const dx = n.x - cx, dy = n.y - cy;
           if (dx * dx + dy * dy <= AOI_R2) {
             aoiNpcs.push({ id: n.id, kind: n.kind, x: Math.round(n.x), y: Math.round(n.y), hp: Math.round(n.hp),
-              ...(n.ai === 'moba_march' ? { ownerPlayerId: n.ownerPlayerId } : {}) });
+              ...(n.ai === 'moba_march' ? { ownerPlayerId: n.ownerPlayerId } : {}),
+              vx: n.vx ?? 0, vy: n.vy ?? 0 });
           }
         }
         const aoiGems: GemState[] = [];

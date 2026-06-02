@@ -305,7 +305,7 @@ export class ArenaScene extends Phaser.Scene {
   // creating new Map/Set objects every render call.  Eliminates GC pressure
   // that manifests as periodic stutter even in single-player sessions.
   _prevPlayerById = new Map<string, PlayerState>();
-  _prevNpcById    = new Map<string, { id: string; kind: string; x: number; y: number; hp: number; ownerPlayerId?: string }>();
+  _prevNpcById    = new Map<string, { id: string; kind: string; x: number; y: number; hp: number; ownerPlayerId?: string; vx?: number; vy?: number }>();
   _seenPlayers    = new Set<string>();
   _seenNpcs       = new Set<string>();
   _seenGems       = new Set<string>();
@@ -2277,7 +2277,7 @@ export class ArenaScene extends Phaser.Scene {
   update(_time: number, delta: number) {
     this.handleInput(delta);
     this.updateClientProjs(delta);
-    this.renderSnapshot();
+    this.renderSnapshot(delta);
   }
 
   updateClientProjs(dt: number) {
@@ -2398,7 +2398,7 @@ export class ArenaScene extends Phaser.Scene {
     }
   }
 
-  renderSnapshot() {
+  renderSnapshot(delta: number = 16.67) {
     if (!this.latestSnapshot) return;
     // Render-in-the-past. Find the snapshot pair (A, B) such that A.t <= target < B.t,
     // where target = now - INTERP_DELAY_MS. Lerp between A and B by t = (target-A.t)/(B.t-A.t).
@@ -2407,6 +2407,7 @@ export class ArenaScene extends Phaser.Scene {
     let snap: Snapshot;
     let prev: Snapshot | undefined;
     let interp: number;
+    let snapGapSec = 0.05; // default 50ms — used for hermite NPC interpolation
     const q = this.snapshotQueue;
     if (q.length >= 2) {
       // Walk from newest backward to find the first pair that brackets renderAt.
@@ -2425,6 +2426,7 @@ export class ArenaScene extends Phaser.Scene {
         prev = a.snap;
         snap = b.snap;
         const gap = Math.max(16, b.t - a.t);
+        snapGapSec = gap / 1000;
         interp = Math.min(1, Math.max(0, (renderAt - a.t) / gap));
       }
     } else {
@@ -2432,6 +2434,7 @@ export class ArenaScene extends Phaser.Scene {
       prev = this.prevSnapshot;
       interp = 1;
     }
+    void delta; // available for future use
 
     // Build per-id Maps from the previous snapshot once, so subsequent lookups
     // inside the per-entity render loops are O(1) instead of O(n) per find().
@@ -2730,13 +2733,26 @@ export class ArenaScene extends Phaser.Scene {
         this.npcSprites.set(n.id, s);
       }
       const prevN = prevNpcById.get(n.id);
-      // Capture immediately: lerpEntity returns a shared scratch object, so read its
-      // values now rather than holding the reference across the rest of the loop body.
-      const interpPos = lerpEntity(prevN, n, interp);
-      const npcRenderX = interpPos.x, npcRenderY = interpPos.y;
-      const moving = prevN
-        ? (Math.abs(n.x - prevN.x) + Math.abs(n.y - prevN.y)) > 0.5
-        : false;
+      // NPC position interpolation: use cubic Hermite when velocity is available
+      // (added in protocol v4). Hermite matches velocity at both endpoints, so
+      // freeze→normal and slow→fast transitions look smooth instead of lurching.
+      // Falls back to linear lerp for NPCs without velocity data.
+      let npcRenderX: number, npcRenderY: number;
+      if (prevN && n.vx !== undefined && prevN.vx !== undefined) {
+        const t = interp, t2 = t * t, t3 = t2 * t;
+        const h00 = 2*t3 - 3*t2 + 1, h10 = t3 - 2*t2 + t;
+        const h01 = -2*t3 + 3*t2,    h11 = t3 - t2;
+        npcRenderX = h00*prevN.x + h10*(prevN.vx)*snapGapSec + h01*n.x + h11*(n.vx)*snapGapSec;
+        npcRenderY = h00*prevN.y + h10*(prevN.vy??0)*snapGapSec + h01*n.y + h11*(n.vy??0)*snapGapSec;
+      } else {
+        const ip = lerpEntity(prevN, n, interp);
+        npcRenderX = ip.x; npcRenderY = ip.y;
+      }
+      // Use velocity magnitude for movement detection when available (more reliable
+      // than position delta which shows 0 during freeze even when about to move).
+      const moving = n.vx !== undefined
+        ? Math.hypot(n.vx, n.vy ?? 0) > 5
+        : (prevN ? (Math.abs(n.x - prevN.x) + Math.abs(n.y - prevN.y)) > 0.5 : false);
       let facing: Facing = this.npcFacing.get(n.id) ?? 'south';
       if (prevN && moving) {
         const rawDx = n.x - prevN.x;
