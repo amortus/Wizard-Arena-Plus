@@ -2238,6 +2238,12 @@ export class ArenaScene extends Phaser.Scene {
     this.bus.emit('respawned');
   }
 
+  revive() {
+    const m: ClientToServer = { type: 'revive' };
+    this.socket?.send(JSON.stringify(m));
+    this.bus.emit('respawned');
+  }
+
   buyItem(itemId: string) {
     const m: ClientToServer = { type: 'buyItem', itemId };
     this.socket?.send(JSON.stringify(m));

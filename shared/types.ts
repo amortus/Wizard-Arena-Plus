@@ -287,6 +287,7 @@ export type ClientToServer =
   | { type: 'pickPowerup'; choiceIdx: number }
   | { type: 'buyItem'; itemId: string }
   | { type: 'respawn' }
+  | { type: 'revive' }
   | { type: 'ping' };
 
 export type ServerToClient =

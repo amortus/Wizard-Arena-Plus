@@ -208,7 +208,7 @@ export default function Game({ name, character, color, hue, room, country, roomN
     setAdLoading(false);
     if (rewarded) {
       setAdWatched(true);
-      respawn();
+      sceneRef.current?.revive();
     }
   };
   const buyItem = (itemId: string) => { sceneRef.current?.buyItem(itemId); };

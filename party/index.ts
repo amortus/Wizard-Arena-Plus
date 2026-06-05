@@ -1644,6 +1644,11 @@ export default class GameServer implements Party.Server {
       if (p && !p.alive && this.gameMode !== 'moba' && this.gameMode !== 'aram') {
         this.respawnPlayer(p);
       }
+    } else if (msg.type === 'revive') {
+      const p = this.players.get(sender.id);
+      if (p && !p.alive && this.gameMode !== 'moba' && this.gameMode !== 'aram') {
+        this.revivePlayer(p);
+      }
     } else if (msg.type === 'buyItem') {
       const p = this.players.get(sender.id);
       if (
@@ -1855,6 +1860,19 @@ export default class GameServer implements Party.Server {
     p.pendingChoices = [];
     p.pendingLevelUps = 0;
     p.collectedPowerups = [];
+    p.x = ARENA_WIDTH / 2 + (Math.random() - 0.5) * 200;
+    p.y = ARENA_HEIGHT / 2 + (Math.random() - 0.5) * 200;
+  }
+
+  // Ad revive: keeps all level/xp/powerups/weapons, just restores HP and grants 10s shield.
+  revivePlayer(p: ServerPlayer) {
+    p.alive = true;
+    p.hp = p.maxHp;
+    p.invulnerableUntil = Date.now() + 10_000;
+    p.damageImmuneUntil = Date.now() + 10_000; // shows 🛡 badge in HUD with countdown
+    p.speedBoostUntil = 0;
+    p.damageBoostUntil = 0;
+    p.berserkerUntil = 0;
     p.x = ARENA_WIDTH / 2 + (Math.random() - 0.5) * 200;
     p.y = ARENA_HEIGHT / 2 + (Math.random() - 0.5) * 200;
   }
