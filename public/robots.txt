@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://wizard-arena-plus.vercel.app/sitemap.xml

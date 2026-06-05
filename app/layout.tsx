@@ -3,10 +3,7 @@ import type { Metadata } from 'next';
 import Script from 'next/script';
 
 export const metadata: Metadata = {
-  metadataBase: new URL(
-    process.env.NEXT_PUBLIC_SITE_URL ??
-      (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000'),
-  ),
+  metadataBase: new URL('https://wizard-arena-plus.vercel.app'),
   title: 'Wizard Arena Plus',
   description: 'Free multiplayer arena survivors game. Pick a wizard, dodge hordes, stack powerups, top the leaderboard.',
   openGraph: {
@@ -27,6 +24,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <head>
+        {/* AdSense verification metatag — must be in <head> for Google crawler */}
+        <meta name="google-adsense-account" content="ca-pub-2926713394150469" />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
         <link
