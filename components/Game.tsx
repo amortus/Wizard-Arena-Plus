@@ -117,7 +117,8 @@ export default function Game({ name, character, color, hue, room, country, roomN
   const [shopOpen, setShopOpen] = useState(false);
   const [shopTab, setShopTab] = useState<string>('damage');
   const [dead, setDead] = useState(false);
-  const [adWatched, setAdWatched] = useState(false);
+  const adReviveUsedRef = useRef(false); // persists across deaths — 1 per room session
+  const [adReviveUsed, setAdReviveUsed] = useState(false);
   const [adLoading, setAdLoading] = useState(false);
   const [deathStats, setDeathStats] = useState<{ level: number; wave: number; score: number; killerName: string; killerIcon: string; finalDamage: number } | null>(null);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
@@ -164,7 +165,6 @@ export default function Game({ name, character, color, hue, room, country, roomN
           });
         }
         setDead(true);
-        setAdWatched(false);
         setAdLoading(false);
       });
       result.scene.bus.on('respawned', () => {
@@ -207,7 +207,8 @@ export default function Game({ name, character, color, hue, room, country, roomN
     const rewarded = await getAdService().showRewarded();
     setAdLoading(false);
     if (rewarded) {
-      setAdWatched(true);
+      adReviveUsedRef.current = true;
+      setAdReviveUsed(true);
       sceneRef.current?.revive();
     }
   };
@@ -633,7 +634,7 @@ export default function Game({ name, character, color, hue, room, country, roomN
               </div>
             );
           })()}
-          {!adWatched && (
+          {!adReviveUsed && (
             <button
               className="start-btn"
               style={{ maxWidth: 240, background: 'linear-gradient(180deg,#7a3a00,#4a2000)', borderColor: '#ffa040', color: '#ffd080', marginBottom: 6, opacity: adLoading ? 0.6 : 1 }}

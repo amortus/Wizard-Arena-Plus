@@ -218,6 +218,8 @@ type ServerPlayer = PlayerState & {
   // Wizard Survivor: gold earned this run (multiplied by vsGoldMul)
   vsRunGold: number;
   vsGoldMul: number;
+  // Ad revive: limited to 1 per player per room session.
+  adReviveUsed: boolean;
 };
 
 type ServerProjectile = ProjectileState & {
@@ -1646,7 +1648,7 @@ export default class GameServer implements Party.Server {
       }
     } else if (msg.type === 'revive') {
       const p = this.players.get(sender.id);
-      if (p && !p.alive && this.gameMode !== 'moba' && this.gameMode !== 'aram') {
+      if (p && !p.alive && !p.adReviveUsed && this.gameMode !== 'moba' && this.gameMode !== 'aram') {
         this.revivePlayer(p);
       }
     } else if (msg.type === 'buyItem') {
@@ -1775,6 +1777,7 @@ export default class GameServer implements Party.Server {
       vsPassiveItems: [],
       vsRunGold: 0,
       vsGoldMul: 1,
+      adReviveUsed: false,
     };
     // Wizard Survivor: initialize weapon levels map with starting weapon
     if (this.gameMode === 'wizard_survivor') {
@@ -1866,6 +1869,7 @@ export default class GameServer implements Party.Server {
 
   // Ad revive: keeps all level/xp/powerups/weapons, just restores HP and grants 10s shield.
   revivePlayer(p: ServerPlayer) {
+    p.adReviveUsed = true;
     p.alive = true;
     p.hp = p.maxHp;
     p.invulnerableUntil = Date.now() + 10_000;
