@@ -644,40 +644,31 @@ export default function Game({ name, character, color, hue, room, country, roomN
       {dead && hud.gameMode !== 'moba' && hud.gameMode !== 'aram' && (
         <div className="death-overlay">
           <h2>{t.youDied}</h2>
-          {deathStats && (() => {
-            const ranked = dedupeBestByName(leaderboard);
-            // Count how many unique entries scored strictly higher than this death
-            const ahead = ranked.filter(e => e.score > deathStats.score).length;
-            const myRank = ahead + 1; // 1-based rank
-            const inTop = leaderboard.some(e => e.name === name && e.score >= deathStats.score);
-            return (
-              <div className="death-stats">
-                <div className="death-stat-row">
-                  <span className="death-stat-label">{t.level}</span>
-                  <span className="death-stat-value">{deathStats.level}</span>
-                </div>
-                <div className="death-stat-row">
-                  <span className="death-stat-label">{t.waveLabel}</span>
-                  <span className="death-stat-value">{deathStats.wave}</span>
-                </div>
-                <div className="death-stat-row">
-                  <span className="death-stat-label">{t.score}</span>
-                  <span className="death-stat-value">{deathStats.score}</span>
-                </div>
-                <div className="death-stat-row">
-                  <span className="death-stat-label">{t.killedBy}</span>
-                  <span className="death-stat-value">{deathStats.killerIcon} {deathStats.killerName}</span>
-                </div>
-                <div className="death-stat-row">
-                  <span className="death-stat-label">{t.finalBlow}</span>
-                  <span className="death-stat-value">{Math.round(deathStats.finalDamage)} {t.dmg}</span>
-                </div>
-                <div className="death-rank">
-                  {inTop ? t.rankSuccess(myRank) : t.rankFail}
-                </div>
+          {deathStats && (
+            <div className="death-stats">
+              <div className="death-stat-row">
+                <span className="death-stat-label">{t.level}</span>
+                <span className="death-stat-value">{deathStats.level}</span>
               </div>
-            );
-          })()}
+              <div className="death-stat-row">
+                <span className="death-stat-label">{t.waveLabel}</span>
+                <span className="death-stat-value">{deathStats.wave}</span>
+              </div>
+              <div className="death-stat-row">
+                <span className="death-stat-label">{t.score}</span>
+                <span className="death-stat-value">{deathStats.score}</span>
+              </div>
+              <div className="death-stat-row">
+                <span className="death-stat-label">{t.killedBy}</span>
+                <span className="death-stat-value">{deathStats.killerIcon} {deathStats.killerName}</span>
+              </div>
+              <div className="death-stat-row">
+                <span className="death-stat-label">{t.finalBlow}</span>
+                <span className="death-stat-value">{Math.round(deathStats.finalDamage)} {t.dmg}</span>
+              </div>
+              <div className="death-rank">{t.checkLeaderboard}</div>
+            </div>
+          )}
           {!adReviveUsed && (
             <button
               className="start-btn"
