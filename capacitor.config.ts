@@ -16,6 +16,13 @@ const config: CapacitorConfig = {
     // url: 'http://192.168.x.x:3000',
     // cleartext: true,
   },
+  plugins: {
+    GoogleAuth: {
+      scopes: ['profile', 'email'],
+      serverClientId: '699333109354-mtcb9sheb8krv4kod17cvfl0qrp0l46g.apps.googleusercontent.com',
+      forceCodeForRefreshToken: true,
+    },
+  },
 };
 
 export default config;

@@ -98,11 +98,14 @@ export default function Page() {
   const [showSettings, setShowSettings] = useState(false);
   const [settings, setSettings] = useState<Settings>({ lang: 'en', musicVol: 0.5, sfxVol: 0.5 });
   useEffect(() => { setSettings(loadSettings()); }, []);
+  const sessionHandledRef = useRef(false);
 
   const t = T[settings.lang];
   const playSelectSfx = useSelectSfx(settings.sfxVol);
 
-  async function handleSession(session: { user: { id: string; user_metadata: Record<string, unknown> } }) {
+  async function handleSession(session: { user: { id: string; user_metadata: Record<string, unknown> } }, fromEvent = false) {
+    if (fromEvent && sessionHandledRef.current) return;
+    sessionHandledRef.current = true;
     const meta = session.user.user_metadata;
     const userId = session.user.id;
     const photoUrl = (meta?.avatar_url as string) ?? null;
@@ -128,6 +131,14 @@ export default function Page() {
       if (!session) { setScreen('auth'); return; }
       await handleSession(session);
     });
+
+    // Listen for session changes — covers native Google Sign-In (signInWithIdToken)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_IN' && session) {
+        await handleSession(session, true);
+      }
+    });
+    return () => subscription.unsubscribe();
   }, []);
 
   // Handle deep link callback from native Google OAuth (com.madnessarena.game://auth/callback?code=...)

@@ -22,21 +22,30 @@ export function AuthScreen({ onDone, lang = 'en' }: Props) {
   async function handleGoogle() {
     setLoading(true);
     if (isNativePlatform()) {
-      // Native: use custom URL scheme so Android returns to the app after OAuth.
-      const { data, error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: {
-          redirectTo: 'com.madnessarena.game://auth/callback',
-          skipBrowserRedirect: true,
-          queryParams: { access_type: 'offline', prompt: 'consent' },
-        },
-      });
-      if (error || !data.url) { setLoading(false); alert(t.googleError); return; }
-      const { Browser } = await import('@capacitor/browser');
-      await Browser.open({ url: data.url });
-      setLoading(false);
+      // Native Android: use native Google Sign-In SDK — no browser opens at all.
+      try {
+        const { GoogleAuth } = await import('@codetrix-studio/capacitor-google-auth');
+        await GoogleAuth.initialize({
+          clientId: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? '',
+          scopes: ['profile', 'email'],
+          grantOfflineAccess: true,
+        });
+        const googleUser = await GoogleAuth.signIn();
+        const idToken = googleUser.authentication?.idToken;
+        if (!idToken) throw new Error('no-id-token');
+        const { data, error } = await supabase.auth.signInWithIdToken({
+          provider: 'google',
+          token: idToken,
+        });
+        if (error || !data.session) throw new Error('supabase-error');
+        // Auth handled by onAuthStateChange in page.tsx — just reset loading.
+        setLoading(false);
+      } catch {
+        setLoading(false);
+        alert(t.googleError);
+      }
     } else {
-      // Web: standard redirect flow.
+      // Web: standard OAuth redirect flow.
       const origin = process.env.NEXT_PUBLIC_SITE_URL ?? window.location.origin;
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
