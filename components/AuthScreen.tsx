@@ -1,14 +1,9 @@
 'use client';
 import { useState } from 'react';
-import { Capacitor, registerPlugin } from '@capacitor/core';
+import { Capacitor } from '@capacitor/core';
 import { supabase, getProfile, upsertProfile, type UserProfile } from '../lib/supabase';
 import { T } from '../shared/i18n';
 import type { Lang } from '../shared/i18n';
-
-interface NativeGoogleSignInPlugin {
-  signIn(options: { serverClientId: string }): Promise<{ idToken: string; email?: string; displayName?: string; photoUrl?: string }>;
-}
-const NativeGoogleSignIn = registerPlugin<NativeGoogleSignInPlugin>('NativeGoogleSignIn');
 
 type AuthResult =
   | { kind: 'guest'; name: string }
@@ -31,47 +26,33 @@ export function AuthScreen({ onDone, lang = 'en' }: Props) {
   async function handleGoogle() {
     setLoading(true);
     if (isNativePlatform()) {
-      // Tier 1: plugin nativo customizado (sem browser nenhum)
-      let tier1Ok = false;
-      let tier1Err = '';
+      // Native: usa @capgo/capacitor-social-login (Credential Manager — bottom sheet nativo, sem browser)
       try {
-        const result = await NativeGoogleSignIn.signIn({
-          serverClientId: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? '',
-        });
-        if (!result.idToken) throw new Error('no-id-token');
-        const { data, error } = await supabase.auth.signInWithIdToken({
-          provider: 'google',
-          token: result.idToken,
-        });
-        if (error || !data.session) throw new Error('supabase-signIn-failed');
-        tier1Ok = true;
-        setLoading(false);
-      } catch (e: unknown) {
-        tier1Err = e instanceof Error ? e.message : String(e);
-      }
-
-      if (tier1Ok) return;
-
-      // Tier 2: Chrome Custom Tab → HTTPS App Link interceptado pelo Android
-      // (custom schemes são bloqueados pelo Chrome no Custom Tab)
-      try {
-        const redirectTo = 'https://wizard-arena-plus.vercel.app/auth/callback';
-        const { data, error } = await supabase.auth.signInWithOAuth({
-          provider: 'google',
-          options: {
-            redirectTo,
-            skipBrowserRedirect: true,
-            queryParams: { access_type: 'offline', prompt: 'consent' },
+        const { SocialLogin } = await import('@capgo/capacitor-social-login');
+        await SocialLogin.initialize({
+          google: {
+            webClientId: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? '',
           },
         });
-        if (error || !data.url) throw new Error(error?.message ?? 'no-url');
-        const { Browser } = await import('@capacitor/browser');
-        await Browser.open({ url: data.url });
+        const loginResult = await SocialLogin.login({
+          provider: 'google',
+          options: { scopes: ['email', 'profile'] },
+        });
+        if (loginResult.provider !== 'google' || loginResult.result.responseType !== 'online') {
+          throw new Error('unexpected-response-type');
+        }
+        const idToken = loginResult.result.idToken;
+        if (!idToken) throw new Error('no-id-token');
+        const { data, error } = await supabase.auth.signInWithIdToken({
+          provider: 'google',
+          token: idToken,
+        });
+        if (error || !data.session) throw new Error(error?.message ?? 'supabase-error');
         setLoading(false);
       } catch (err: unknown) {
         setLoading(false);
         const msg = err instanceof Error ? err.message : String(err);
-        alert(`Erro: ${tier1Err || msg}`);
+        alert(`${t.googleError} (${msg})`);
       }
     } else {
       // Web: standard OAuth redirect flow.
