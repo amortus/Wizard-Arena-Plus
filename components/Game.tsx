@@ -646,7 +646,10 @@ export default function Game({ name, character, color, hue, room, country, roomN
           <h2>{t.youDied}</h2>
           {deathStats && (() => {
             const ranked = dedupeBestByName(leaderboard);
-            const myRank = ranked.findIndex((e) => e.name === name);
+            // Count how many unique entries scored strictly higher than this death
+            const ahead = ranked.filter(e => e.score > deathStats.score).length;
+            const myRank = ahead + 1; // 1-based rank
+            const inTop = leaderboard.some(e => e.name === name && e.score >= deathStats.score);
             return (
               <div className="death-stats">
                 <div className="death-stat-row">
@@ -670,7 +673,7 @@ export default function Game({ name, character, color, hue, room, country, roomN
                   <span className="death-stat-value">{Math.round(deathStats.finalDamage)} {t.dmg}</span>
                 </div>
                 <div className="death-rank">
-                  {myRank >= 0 ? t.rankSuccess(myRank + 1) : t.rankFail}
+                  {inTop ? t.rankSuccess(myRank) : t.rankFail}
                 </div>
               </div>
             );
