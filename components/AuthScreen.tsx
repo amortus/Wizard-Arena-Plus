@@ -10,12 +10,9 @@ type AuthResult =
 
 type Props = { onDone: (result: AuthResult) => void; lang?: Lang };
 
-function getAppOrigin(): string {
-  // Capacitor native serves from http://localhost — OAuth redirect must use production URL.
-  const isNative = !!(window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } })
+function isNativePlatform(): boolean {
+  return !!(window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } })
     .Capacitor?.isNativePlatform?.();
-  if (isNative) return process.env.NEXT_PUBLIC_SITE_URL ?? 'https://wizard-arena-plus.vercel.app';
-  return window.location.origin;
 }
 
 export function AuthScreen({ onDone, lang = 'en' }: Props) {
@@ -24,14 +21,32 @@ export function AuthScreen({ onDone, lang = 'en' }: Props) {
 
   async function handleGoogle() {
     setLoading(true);
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: `${getAppOrigin()}/auth/callback`,
-        queryParams: { access_type: 'offline', prompt: 'consent' },
-      },
-    });
-    if (error) { setLoading(false); alert(t.googleError); }
+    if (isNativePlatform()) {
+      // Native: use custom URL scheme so Android returns to the app after OAuth.
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: 'com.madnessarena.game://auth/callback',
+          skipBrowserRedirect: true,
+          queryParams: { access_type: 'offline', prompt: 'consent' },
+        },
+      });
+      if (error || !data.url) { setLoading(false); alert(t.googleError); return; }
+      const { Browser } = await import('@capacitor/browser');
+      await Browser.open({ url: data.url });
+      setLoading(false);
+    } else {
+      // Web: standard redirect flow.
+      const origin = process.env.NEXT_PUBLIC_SITE_URL ?? window.location.origin;
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: `${origin}/auth/callback`,
+          queryParams: { access_type: 'offline', prompt: 'consent' },
+        },
+      });
+      if (error) { setLoading(false); alert(t.googleError); }
+    }
   }
 
 

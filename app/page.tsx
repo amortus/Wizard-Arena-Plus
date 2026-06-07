@@ -102,29 +102,54 @@ export default function Page() {
   const t = T[settings.lang];
   const playSelectSfx = useSelectSfx(settings.sfxVol);
 
+  async function handleSession(session: { user: { id: string; user_metadata: Record<string, unknown> } }) {
+    const meta = session.user.user_metadata;
+    const userId = session.user.id;
+    const photoUrl = (meta?.avatar_url as string) ?? null;
+    const displayName = (meta?.full_name as string) ?? (meta?.name as string) ?? '';
+    const profile = await getProfile(userId);
+    if (profile) {
+      setAuthProfile(profile);
+      setName(profile.nickname);
+      setScreen('select');
+    } else {
+      const nickname = (displayName || 'Player').slice(0, 20);
+      await upsertProfile(userId, nickname, photoUrl);
+      const newProfile: UserProfile = { id: userId, nickname, photo_url: photoUrl, created_at: '' };
+      setAuthProfile(newProfile);
+      setName(nickname);
+      setScreen('select');
+    }
+  }
+
   // Check for existing Supabase session (covers redirect-back-from-OAuth and returning users)
   useEffect(() => {
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (!session) { setScreen('auth'); return; }
-      const meta = session.user.user_metadata;
-      const userId = session.user.id;
-      const photoUrl = (meta?.avatar_url as string) ?? null;
-      const displayName = (meta?.full_name as string) ?? (meta?.name as string) ?? '';
-      const profile = await getProfile(userId);
-      if (profile) {
-        setAuthProfile(profile);
-        setName(profile.nickname);
-        setScreen('select');
-      } else {
-        // First Google login — save name automatically, no modal
-        const nickname = (displayName || 'Player').slice(0, 20);
-        await upsertProfile(userId, nickname, photoUrl);
-        const newProfile: UserProfile = { id: userId, nickname, photo_url: photoUrl, created_at: '' };
-        setAuthProfile(newProfile);
-        setName(nickname);
-        setScreen('select');
-      }
+      await handleSession(session);
     });
+  }, []);
+
+  // Handle deep link callback from native Google OAuth (com.madnessarena.game://auth/callback?code=...)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const isNative = !!(window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } })
+      .Capacitor?.isNativePlatform?.();
+    if (!isNative) return;
+    let handle: { remove: () => void } | null = null;
+    import('@capacitor/app').then(({ App }) => {
+      App.addListener('appUrlOpen', async ({ url }) => {
+        try {
+          const code = new URL(url).searchParams.get('code');
+          if (!code) return;
+          const { data: { session }, error } = await supabase.auth.exchangeCodeForSession(code);
+          if (error || !session) return;
+          import('@capacitor/browser').then(({ Browser }) => Browser.close().catch(() => {}));
+          await handleSession(session);
+        } catch { /* ignore malformed URLs */ }
+      }).then(h => { handle = h; });
+    });
+    return () => { handle?.remove(); };
   }, []);
 
 
