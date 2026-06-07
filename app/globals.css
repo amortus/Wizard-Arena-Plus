@@ -1924,6 +1924,21 @@ button {
 }
 .settings-btn:hover { opacity: 1; }
 
+.ingame-settings-btn {
+  pointer-events: auto;
+  background: transparent;
+  border: none;
+  font-size: 22px;
+  cursor: pointer;
+  opacity: 0.7;
+  line-height: 1;
+  padding: 4px 6px;
+  margin-left: auto;
+  transition: opacity 0.15s, transform 0.15s;
+  flex-shrink: 0;
+}
+.ingame-settings-btn:hover { opacity: 1; transform: rotate(30deg); }
+
 .settings-overlay {
   position: fixed;
   inset: 0;

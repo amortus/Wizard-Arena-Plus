@@ -128,6 +128,9 @@ export default function Game({ name, character, color, hue, room, country, roomN
   const [inSmoke, setInSmoke] = useState(false);
   const [novaFlash, setNovaFlash] = useState(false);
   const lastSelfRef = useRef<{ level: number; wave: number; bossKills: number } | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
+  const [localMusicVol, setLocalMusicVol] = useState(musicVol);
+  const [localSfxVol, setLocalSfxVol] = useState(sfxVol);
 
   useEffect(() => {
     let game: any;
@@ -344,7 +347,45 @@ export default function Game({ name, character, color, hue, room, country, roomN
             <div className="top-bar-wave-time">{Math.ceil(hud.waveTimeLeftMs / 1000)}s</div>
           )}
         </div>
+        <button className="ingame-settings-btn" onClick={() => setShowSettings(true)} title="Settings">⚙</button>
       </div>}
+
+      {showSettings && (
+        <div className="settings-overlay" onClick={() => setShowSettings(false)}>
+          <div className="settings-card" onClick={(e) => e.stopPropagation()}>
+            <h2>⚙ {t.settings}</h2>
+            <div className="settings-row">
+              <label>🎵 {t.musicVol}</label>
+              <input type="range" min={0} max={1} step={0.05} value={localMusicVol}
+                onChange={(e) => {
+                  const v = parseFloat(e.target.value);
+                  setLocalMusicVol(v);
+                  sceneRef.current?.setMusicVolume(v);
+                }} />
+              <span>{Math.round(localMusicVol * 100)}%</span>
+            </div>
+            <div className="settings-row">
+              <label>🔊 {t.sfxVol}</label>
+              <input type="range" min={0} max={1} step={0.05} value={localSfxVol}
+                onChange={(e) => {
+                  const v = parseFloat(e.target.value);
+                  setLocalSfxVol(v);
+                  sceneRef.current?.setSfxVolume(v);
+                }} />
+              <span>{Math.round(localSfxVol * 100)}%</span>
+            </div>
+            <div className="settings-row" style={{ justifyContent: 'space-between', marginTop: 8 }}>
+              <button className="leaderboard-btn" style={{ flex: 1, marginRight: 8 }}
+                onClick={() => { if (typeof window !== 'undefined') window.location.href = '/'; }}>
+                🏠 {t.backMenu ?? 'Menu'}
+              </button>
+              <button className="start-btn" style={{ flex: 1 }} onClick={() => setShowSettings(false)}>
+                ✓ {t.close}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {hud.castle && hud.gameMode === 'castle' && (
         <div className="castle-hp-bar-wrap">
