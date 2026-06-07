@@ -237,7 +237,7 @@ export default function Page() {
   }
 
   if (screen === 'auth') {
-    return <AuthScreen onDone={handleAuthDone} />;
+    return <AuthScreen onDone={handleAuthDone} lang={settings.lang} />;
   }
 
   if (screen === 'game') {

@@ -5,7 +5,7 @@ import type { CastleState, GameMode, LeaderboardEntry, MobaCrystalState, MobaTea
 import { MOBA_ITEMS } from '../shared/items';
 import { dedupeBestByName } from '../shared/leaderboard';
 import { POWERUPS } from '../shared/powerups';
-import { T, POWERUP_PT, type Lang } from '../shared/i18n';
+import { T, POWERUP_TRANSLATIONS, type Lang } from '../shared/i18n';
 import { getAdService } from '../lib/ads';
 
 function PowerupsPanel({ powerups }: { powerups: string[] }) {
@@ -319,7 +319,7 @@ export default function Game({ name, character, color, hue, room, country, roomN
 
       {bossAlert && (
         <div className="boss-alert-overlay">
-          <div className="boss-alert-text">⚠ {bossAlert.toUpperCase()} APPROACHES ⚠</div>
+          <div className="boss-alert-text">{t.bossApproaches(bossAlert.toUpperCase())}</div>
         </div>
       )}
 
@@ -586,8 +586,8 @@ export default function Game({ name, character, color, hue, room, country, roomN
                     <div className="choice-icon">
                       {sprite ? <img src={sprite} alt="" className="choice-sprite" /> : (c as any).icon ?? ''}
                     </div>
-                    <div className="name">{lang === 'pt' ? (POWERUP_PT[c.id]?.name ?? c.name) : c.name}</div>
-                    <div className="desc">{lang === 'pt' ? (POWERUP_PT[c.id]?.desc ?? c.description) : c.description}</div>
+                    <div className="name">{POWERUP_TRANSLATIONS[lang]?.[c.id]?.name ?? c.name}</div>
+                    <div className="desc">{POWERUP_TRANSLATIONS[lang]?.[c.id]?.desc ?? c.description}</div>
                   </button>
                 );
               })}
@@ -676,7 +676,7 @@ export default function Game({ name, character, color, hue, room, country, roomN
               onClick={handleWatchAd}
               disabled={adLoading}
             >
-              {adLoading ? '...' : '📺 Watch Ad → Revive'}
+              {adLoading ? '...' : t.watchAdRevive}
             </button>
           )}
           <button className="leaderboard-btn" style={{ maxWidth: 200, marginTop: 8, fontSize: 8 }} onClick={() => { if (typeof window !== 'undefined') window.location.href = '/'; }}>

@@ -1,6 +1,7 @@
 'use client';
 import { Settings, saveSettings } from '../lib/settings';
 import { T } from '../shared/i18n';
+import type { Lang } from '../shared/i18n';
 
 export function SettingsModal({ settings, onClose, onChange }: {
   settings: Settings;
@@ -15,6 +16,16 @@ export function SettingsModal({ settings, onClose, onChange }: {
     onChange(next);
   };
 
+  const langs: { code: Lang; label: string }[] = [
+    { code: 'pt', label: 'PT-BR' },
+    { code: 'en', label: 'EN' },
+    { code: 'es', label: 'ES' },
+    { code: 'de', label: 'DE' },
+    { code: 'fr', label: 'FR' },
+    { code: 'ja', label: 'JA' },
+    { code: 'ko', label: 'KO' },
+  ];
+
   return (
     <div className="settings-overlay" onClick={onClose}>
       <div className="settings-card" onClick={e => e.stopPropagation()}>
@@ -23,8 +34,15 @@ export function SettingsModal({ settings, onClose, onChange }: {
         <div className="settings-row">
           <label>{t.language}</label>
           <div className="lang-toggle">
-            <button className={settings.lang === 'pt' ? 'active' : ''} onClick={() => update({ lang: 'pt' })}>PT-BR</button>
-            <button className={settings.lang === 'en' ? 'active' : ''} onClick={() => update({ lang: 'en' })}>EN</button>
+            {langs.map(({ code, label }) => (
+              <button
+                key={code}
+                className={settings.lang === code ? 'active' : ''}
+                onClick={() => update({ lang: code })}
+              >
+                {label}
+              </button>
+            ))}
           </div>
         </div>
 

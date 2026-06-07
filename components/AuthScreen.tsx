@@ -1,17 +1,19 @@
 'use client';
 import { useState } from 'react';
 import { supabase, getProfile, upsertProfile, type UserProfile } from '../lib/supabase';
+import { T } from '../shared/i18n';
+import type { Lang } from '../shared/i18n';
 
 type AuthResult =
   | { kind: 'guest'; name: string }
   | { kind: 'google'; profile: UserProfile };
 
-type Props = { onDone: (result: AuthResult) => void };
+type Props = { onDone: (result: AuthResult) => void; lang?: Lang };
 
-export function AuthScreen({ onDone }: Props) {
+export function AuthScreen({ onDone, lang = 'en' }: Props) {
   const [loading, setLoading] = useState(false);
+  const t = T[lang];
 
-  // ---------- Google login ----------
   async function handleGoogle() {
     setLoading(true);
     const { error } = await supabase.auth.signInWithOAuth({
@@ -21,8 +23,7 @@ export function AuthScreen({ onDone }: Props) {
         queryParams: { access_type: 'offline', prompt: 'consent' },
       },
     });
-    if (error) { setLoading(false); alert('Erro ao conectar com Google. Tente novamente.'); }
-    // on success the browser redirects — nothing else to do here
+    if (error) { setLoading(false); alert(t.googleError); }
   }
 
 
@@ -68,12 +69,12 @@ export function AuthScreen({ onDone }: Props) {
               }}
             >
               <GoogleIcon />
-              {loading ? 'Conectando...' : 'Entrar com Google'}
+              {loading ? t.connecting : t.signInGoogle}
             </button>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '2px 0' }}>
               <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.1)' }} />
-              <span style={{ fontFamily: "'VT323', monospace", fontSize: 14, color: '#5a4a5a' }}>ou</span>
+              <span style={{ fontFamily: "'VT323', monospace", fontSize: 14, color: '#5a4a5a' }}>{t.or}</span>
               <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.1)' }} />
             </div>
 
@@ -90,11 +91,11 @@ export function AuthScreen({ onDone }: Props) {
                 letterSpacing: 1, cursor: 'pointer',
               }}
             >
-              JOGAR COMO CONVIDADO
+              {t.playAsGuest}
             </button>
 
             <p style={{ fontFamily: "'VT323', monospace", fontSize: 13, color: '#5a4858', textAlign: 'center', margin: 0, lineHeight: 1.4 }}>
-              Com Google seu nick e foto aparecem no ranking.
+              {t.googleRankingHint}
             </p>
           </>
       </div>
@@ -108,18 +109,20 @@ type NicknameModalProps = {
   photoUrl: string | null;
   userId: string;
   onDone: (profile: UserProfile) => void;
+  lang?: Lang;
 };
 
-export function NicknameModal({ defaultName, photoUrl, userId, onDone }: NicknameModalProps) {
+export function NicknameModal({ defaultName, photoUrl, userId, onDone, lang = 'en' }: NicknameModalProps) {
   const [nickname, setNickname] = useState(defaultName.slice(0, 20));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const t = T[lang];
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
     const name = nickname.trim();
-    if (name.length < 2) { setError('Mínimo 2 caracteres'); return; }
-    if (name.length > 20) { setError('Máximo 20 caracteres'); return; }
+    if (name.length < 2) { setError(t.minChars); return; }
+    if (name.length > 20) { setError(t.maxChars); return; }
     setSaving(true);
     await upsertProfile(userId, name, photoUrl);
     onDone({ id: userId, nickname: name, photo_url: photoUrl, created_at: '' });
@@ -141,7 +144,7 @@ export function NicknameModal({ defaultName, photoUrl, userId, onDone }: Nicknam
           <img src={photoUrl} alt="" style={{ width: 64, height: 64, borderRadius: '50%', border: '2px solid #c8102e' }} />
         )}
         <div style={{ fontFamily: "'Press Start 2P', monospace", fontSize: 9, color: '#c8a46e', letterSpacing: 1 }}>
-          ESCOLHA SEU NICK
+          {t.chooseNick}
         </div>
         <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: 10, width: '100%' }}>
           <input
@@ -168,7 +171,7 @@ export function NicknameModal({ defaultName, photoUrl, userId, onDone }: Nicknam
               cursor: saving ? 'not-allowed' : 'pointer', opacity: saving ? 0.7 : 1,
             }}
           >
-            {saving ? 'SALVANDO...' : 'CONFIRMAR'}
+            {saving ? t.saving : t.confirm}
           </button>
         </form>
       </div>

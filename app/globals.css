@@ -23,13 +23,13 @@ html, body {
   padding: 0;
   background: var(--bg);
   color: var(--cream);
-  font-family: 'VT323', ui-monospace, 'SF Mono', monospace;
+  font-family: 'VT323', 'Noto Sans JP', 'Noto Sans KR', ui-monospace, 'SF Mono', monospace;
   font-size: 18px;
   overflow: hidden;
   height: 100%;
 }
 button {
-  font-family: 'Cinzel', serif;
+  font-family: 'Cinzel', 'Noto Sans JP', 'Noto Sans KR', serif;
   cursor: pointer;
   background: transparent;
   border: 2px solid var(--gold);

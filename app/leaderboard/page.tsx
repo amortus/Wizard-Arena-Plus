@@ -3,6 +3,8 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import type { LeaderboardEntry } from '../../shared/types';
 import { dedupeBestByName } from '../../shared/leaderboard';
+import { T } from '../../shared/i18n';
+import { loadSettings } from '../../lib/settings';
 
 function countryFlag(code?: string): string {
   if (!code || code.length !== 2) return '';
@@ -23,6 +25,7 @@ function partyKitHost(): string {
 export default function LeaderboardPage() {
   const [entries, setEntries] = useState<LeaderboardEntry[] | null>(null);
   const [loading, setLoading] = useState(true);
+  const t = T[loadSettings().lang];
 
   useEffect(() => {
     let cancelled = false;
@@ -50,24 +53,24 @@ export default function LeaderboardPage() {
       <div className="menu-card lb-page-card">
         <img
           src="/wizard_arena_plus_logo.png"
-          alt="Madness Arena"
+          alt="Wizard Arena"
           className="menu-logo"
         />
-        <h1 className="lb-page-title">Arena Leaderboard</h1>
-        <p className="sub">Top survivors of the arena · best score per wizard</p>
+        <h1 className="lb-page-title">{t.arenaLeaderboardTitle}</h1>
+        <p className="sub">{t.arenaLeaderboardSub}</p>
 
         {loading ? (
-          <div className="lb-empty">Loading...</div>
+          <div className="lb-empty">{t.loading}</div>
         ) : !entries || entries.length === 0 ? (
-          <div className="lb-empty">No survivors yet — be the first.</div>
+          <div className="lb-empty">{t.noSurvivors}</div>
         ) : (
           <div className="lb-table">
             <div className="lb-table-head">
               <span>#</span>
-              <span>Wizard</span>
-              <span>Level</span>
-              <span>Wave</span>
-              <span>Score</span>
+              <span>{t.wizard}</span>
+              <span>{t.level}</span>
+              <span>{t.waveLabel}</span>
+              <span>{t.score}</span>
             </div>
             {entries.map((e, i) => (
               <div key={`${e.name}-${i}`} className="lb-table-row">
@@ -97,7 +100,7 @@ export default function LeaderboardPage() {
           </div>
         )}
 
-        <Link href="/" className="start-btn lb-back">← Back to Arena</Link>
+        <Link href="/" className="start-btn lb-back">{t.backMenu}</Link>
       </div>
     </div>
   );
