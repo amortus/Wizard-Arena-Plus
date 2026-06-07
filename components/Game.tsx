@@ -685,9 +685,6 @@ export default function Game({ name, character, color, hue, room, country, roomN
               {adLoading ? '...' : '📺 Watch Ad → Revive'}
             </button>
           )}
-          <button className="start-btn" style={{ maxWidth: 240 }} onClick={respawn}>
-            {t.respawn}
-          </button>
           <button className="leaderboard-btn" style={{ maxWidth: 200, marginTop: 8, fontSize: 8 }} onClick={() => { if (typeof window !== 'undefined') window.location.href = '/'; }}>
             {t.backMenu}
           </button>
