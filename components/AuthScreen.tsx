@@ -28,6 +28,7 @@ export function AuthScreen({ onDone, lang = 'en' }: Props) {
     if (isNativePlatform()) {
       // Tier 1: native Google Sign-In SDK (no browser at all)
       let tier1Ok = false;
+      let tier1Err = '';
       try {
         const { GoogleAuth } = await import('@codetrix-studio/capacitor-google-auth');
         await GoogleAuth.initialize({
@@ -45,16 +46,20 @@ export function AuthScreen({ onDone, lang = 'en' }: Props) {
         if (error || !data.session) throw new Error('supabase-signIn-failed');
         tier1Ok = true;
         setLoading(false);
-      } catch { /* fall through to Tier 2 */ }
+      } catch (e: unknown) {
+        tier1Err = e instanceof Error ? e.message : String(e);
+      }
 
       if (tier1Ok) return;
 
-      // Tier 2: Chrome Custom Tab with custom-scheme deep link
+      // Tier 2: Chrome Custom Tab → HTTPS App Link interceptado pelo Android
+      // (custom schemes são bloqueados pelo Chrome no Custom Tab)
       try {
+        const redirectTo = 'https://wizard-arena-plus.vercel.app/auth/callback';
         const { data, error } = await supabase.auth.signInWithOAuth({
           provider: 'google',
           options: {
-            redirectTo: 'com.madnessarena.game://auth/callback',
+            redirectTo,
             skipBrowserRedirect: true,
             queryParams: { access_type: 'offline', prompt: 'consent' },
           },
@@ -65,7 +70,8 @@ export function AuthScreen({ onDone, lang = 'en' }: Props) {
         setLoading(false);
       } catch (err: unknown) {
         setLoading(false);
-        alert(t.googleError);
+        const msg = err instanceof Error ? err.message : String(err);
+        alert(`Erro: ${tier1Err || msg}`);
       }
     } else {
       // Web: standard OAuth redirect flow.

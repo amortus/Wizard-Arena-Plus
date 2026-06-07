@@ -156,7 +156,7 @@ export default function Page() {
           const { data: { session }, error } = await supabase.auth.exchangeCodeForSession(code);
           if (error || !session) return;
           import('@capacitor/browser').then(({ Browser }) => Browser.close().catch(() => {}));
-          await handleSession(session);
+          await handleSession(session, true);
         } catch { /* ignore malformed URLs */ }
       }).then(h => { handle = h; });
     });
