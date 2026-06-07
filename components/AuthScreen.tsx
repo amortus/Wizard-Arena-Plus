@@ -1,6 +1,5 @@
 'use client';
 import { useState } from 'react';
-import { Capacitor } from '@capacitor/core';
 import { supabase, getProfile, upsertProfile, type UserProfile } from '../lib/supabase';
 import { T } from '../shared/i18n';
 import type { Lang } from '../shared/i18n';
@@ -11,20 +10,33 @@ type AuthResult =
 
 type Props = { onDone: (result: AuthResult) => void; lang?: Lang };
 
+// Lê window.Capacitor em RUNTIME (sem módulo cacheado pelo SSR do Next.js).
+function getNativePlatform(): string {
+  if (typeof window === 'undefined') return 'ssr';
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const cap = (window as unknown as Record<string, unknown>)['Capacitor'] as Record<string, unknown> | undefined;
+  if (!cap) return 'web-no-cap';
+  const fn = cap['getPlatform'];
+  if (typeof fn === 'function') return (fn as () => string)();
+  const p = cap['platform'];
+  if (typeof p === 'string') return p;
+  return 'web-unknown';
+}
+
 function isNativePlatform(): boolean {
-  try {
-    return Capacitor.getPlatform() === 'android' || Capacitor.getPlatform() === 'ios';
-  } catch {
-    return false;
-  }
+  const p = getNativePlatform();
+  return p === 'android' || p === 'ios';
 }
 
 export function AuthScreen({ onDone, lang = 'en' }: Props) {
   const [loading, setLoading] = useState(false);
+  const [debugMsg, setDebugMsg] = useState('');
   const t = T[lang];
 
   async function handleGoogle() {
     setLoading(true);
+    const platform = getNativePlatform();
+    setDebugMsg(`plat=${platform}`);
     if (isNativePlatform()) {
       // Native: usa @capgo/capacitor-social-login (Credential Manager — bottom sheet nativo, sem browser)
       try {
@@ -52,7 +64,8 @@ export function AuthScreen({ onDone, lang = 'en' }: Props) {
       } catch (err: unknown) {
         setLoading(false);
         const msg = err instanceof Error ? err.message : String(err);
-        alert(`${t.googleError} (${msg})`);
+        setDebugMsg(`plat=${platform} err=${msg}`);
+        alert(`Google Sign-In: ${msg}`);
       }
     } else {
       // Web: standard OAuth redirect flow.
@@ -139,6 +152,12 @@ export function AuthScreen({ onDone, lang = 'en' }: Props) {
             <p style={{ fontFamily: "'VT323', monospace", fontSize: 13, color: '#5a4858', textAlign: 'center', margin: 0, lineHeight: 1.4 }}>
               {t.googleRankingHint}
             </p>
+
+            {debugMsg ? (
+              <p style={{ fontFamily: 'monospace', fontSize: 10, color: '#ff0', textAlign: 'center', margin: 0 }}>
+                {debugMsg}
+              </p>
+            ) : null}
           </>
       </div>
     </div>
