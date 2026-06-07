@@ -10,6 +10,14 @@ type AuthResult =
 
 type Props = { onDone: (result: AuthResult) => void; lang?: Lang };
 
+function getAppOrigin(): string {
+  // Capacitor native serves from http://localhost — OAuth redirect must use production URL.
+  const isNative = !!(window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } })
+    .Capacitor?.isNativePlatform?.();
+  if (isNative) return process.env.NEXT_PUBLIC_SITE_URL ?? 'https://wizard-arena-plus.vercel.app';
+  return window.location.origin;
+}
+
 export function AuthScreen({ onDone, lang = 'en' }: Props) {
   const [loading, setLoading] = useState(false);
   const t = T[lang];
@@ -19,7 +27,7 @@ export function AuthScreen({ onDone, lang = 'en' }: Props) {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
+        redirectTo: `${getAppOrigin()}/auth/callback`,
         queryParams: { access_type: 'offline', prompt: 'consent' },
       },
     });
