@@ -676,7 +676,7 @@ export default function Game({ name, character, color, hue, room, country, roomN
               onClick={handleWatchAd}
               disabled={adLoading}
             >
-              {adLoading ? '...' : t.watchAdRevive}
+              {adLoading ? t.loading : t.watchAdRevive}
             </button>
           )}
           <button className="leaderboard-btn" style={{ maxWidth: 200, marginTop: 8, fontSize: 8 }} onClick={() => { if (typeof window !== 'undefined') window.location.href = '/'; }}>
