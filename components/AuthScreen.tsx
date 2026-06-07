@@ -1,9 +1,14 @@
 'use client';
 import { useState } from 'react';
-import { Capacitor } from '@capacitor/core';
+import { Capacitor, registerPlugin } from '@capacitor/core';
 import { supabase, getProfile, upsertProfile, type UserProfile } from '../lib/supabase';
 import { T } from '../shared/i18n';
 import type { Lang } from '../shared/i18n';
+
+interface NativeGoogleSignInPlugin {
+  signIn(options: { serverClientId: string }): Promise<{ idToken: string; email?: string; displayName?: string; photoUrl?: string }>;
+}
+const NativeGoogleSignIn = registerPlugin<NativeGoogleSignInPlugin>('NativeGoogleSignIn');
 
 type AuthResult =
   | { kind: 'guest'; name: string }
@@ -26,22 +31,17 @@ export function AuthScreen({ onDone, lang = 'en' }: Props) {
   async function handleGoogle() {
     setLoading(true);
     if (isNativePlatform()) {
-      // Tier 1: native Google Sign-In SDK (no browser at all)
+      // Tier 1: plugin nativo customizado (sem browser nenhum)
       let tier1Ok = false;
       let tier1Err = '';
       try {
-        const { GoogleAuth } = await import('@codetrix-studio/capacitor-google-auth');
-        await GoogleAuth.initialize({
-          clientId: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? '',
-          scopes: ['profile', 'email'],
-          grantOfflineAccess: true,
+        const result = await NativeGoogleSignIn.signIn({
+          serverClientId: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? '',
         });
-        const googleUser = await GoogleAuth.signIn();
-        const idToken = googleUser.authentication?.idToken;
-        if (!idToken) throw new Error('no-id-token');
+        if (!result.idToken) throw new Error('no-id-token');
         const { data, error } = await supabase.auth.signInWithIdToken({
           provider: 'google',
-          token: idToken,
+          token: result.idToken,
         });
         if (error || !data.session) throw new Error('supabase-signIn-failed');
         tier1Ok = true;
