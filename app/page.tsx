@@ -529,6 +529,9 @@ export default function Page() {
           <Link href="/leaderboard" className="leaderboard-btn lb-link-btn">
             {t.leaderboard}
           </Link>
+          <Link href="/about" className="leaderboard-btn lb-link-btn" style={{ opacity: 0.7 }}>
+            About
+          </Link>
         </div>
       </div>
 
