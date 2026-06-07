@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">Madness Arena</string>
-    <string name="title_activity_main">Madness Arena</string>
+    <string name="app_name">Wizard Arena</string>
+    <string name="title_activity_main">Wizard Arena</string>
     <string name="package_name">com.madnessarena.game</string>
     <string name="custom_url_scheme">com.madnessarena.game</string>
 </resources>

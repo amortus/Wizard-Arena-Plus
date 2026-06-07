@@ -2,7 +2,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
   appId: 'com.madnessarena.game',
-  appName: 'Madness Arena',
+  appName: 'Wizard Arena',
   webDir: 'out',
   android: {
     buildOptions: {
