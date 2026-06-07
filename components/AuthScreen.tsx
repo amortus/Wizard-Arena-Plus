@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase, getProfile, upsertProfile, type UserProfile } from '../lib/supabase';
 import { T } from '../shared/i18n';
 import type { Lang } from '../shared/i18n';
@@ -32,6 +32,13 @@ export function AuthScreen({ onDone, lang = 'en' }: Props) {
   const [loading, setLoading] = useState(false);
   const [debugMsg, setDebugMsg] = useState('');
   const t = T[lang];
+
+  useEffect(() => {
+    const p = getNativePlatform();
+    const msg = `plat=${p}`;
+    setDebugMsg(msg);
+    try { localStorage.setItem('__cap_plat__', msg); } catch { /* noop */ }
+  }, []);
 
   async function handleGoogle() {
     setLoading(true);
