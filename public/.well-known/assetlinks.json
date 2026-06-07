@@ -1,0 +1,10 @@
+[{
+  "relation": ["delegate_permission/common.handle_all_urls"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "com.madnessarena.game",
+    "sha256_cert_fingerprints": [
+      "9B:8C:31:54:80:77:DD:6D:01:1F:18:64:99:68:BB:F5:2E:B4:74:A8:B0:76:9A:CF:4F:08:86:71:05:B3:0D:40"
+    ]
+  }
+}]

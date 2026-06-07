@@ -1,5 +1,6 @@
 'use client';
 import { useState } from 'react';
+import { Capacitor } from '@capacitor/core';
 import { supabase, getProfile, upsertProfile, type UserProfile } from '../lib/supabase';
 import { T } from '../shared/i18n';
 import type { Lang } from '../shared/i18n';
@@ -11,8 +12,11 @@ type AuthResult =
 type Props = { onDone: (result: AuthResult) => void; lang?: Lang };
 
 function isNativePlatform(): boolean {
-  return !!(window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } })
-    .Capacitor?.isNativePlatform?.();
+  try {
+    return Capacitor.getPlatform() === 'android' || Capacitor.getPlatform() === 'ios';
+  } catch {
+    return false;
+  }
 }
 
 export function AuthScreen({ onDone, lang = 'en' }: Props) {
@@ -22,7 +26,8 @@ export function AuthScreen({ onDone, lang = 'en' }: Props) {
   async function handleGoogle() {
     setLoading(true);
     if (isNativePlatform()) {
-      // Native Android: use native Google Sign-In SDK — no browser opens at all.
+      // Tier 1: native Google Sign-In SDK (no browser at all)
+      let tier1Ok = false;
       try {
         const { GoogleAuth } = await import('@codetrix-studio/capacitor-google-auth');
         await GoogleAuth.initialize({
@@ -37,10 +42,28 @@ export function AuthScreen({ onDone, lang = 'en' }: Props) {
           provider: 'google',
           token: idToken,
         });
-        if (error || !data.session) throw new Error('supabase-error');
-        // Auth handled by onAuthStateChange in page.tsx — just reset loading.
+        if (error || !data.session) throw new Error('supabase-signIn-failed');
+        tier1Ok = true;
         setLoading(false);
-      } catch {
+      } catch { /* fall through to Tier 2 */ }
+
+      if (tier1Ok) return;
+
+      // Tier 2: Chrome Custom Tab with custom-scheme deep link
+      try {
+        const { data, error } = await supabase.auth.signInWithOAuth({
+          provider: 'google',
+          options: {
+            redirectTo: 'com.madnessarena.game://auth/callback',
+            skipBrowserRedirect: true,
+            queryParams: { access_type: 'offline', prompt: 'consent' },
+          },
+        });
+        if (error || !data.url) throw new Error(error?.message ?? 'no-url');
+        const { Browser } = await import('@capacitor/browser');
+        await Browser.open({ url: data.url });
+        setLoading(false);
+      } catch (err: unknown) {
         setLoading(false);
         alert(t.googleError);
       }

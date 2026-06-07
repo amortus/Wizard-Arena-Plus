@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
+import { Capacitor } from '@capacitor/core';
 import type { CharacterKind } from '../shared/constants';
 import { isBlockedName } from '../shared/profanity';
 import type { GameMode, RoomInfo } from '../shared/types';
@@ -144,8 +145,7 @@ export default function Page() {
   // Handle deep link callback from native Google OAuth (com.madnessarena.game://auth/callback?code=...)
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const isNative = !!(window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } })
-      .Capacitor?.isNativePlatform?.();
+    const isNative = Capacitor.getPlatform() === 'android' || Capacitor.getPlatform() === 'ios';
     if (!isNative) return;
     let handle: { remove: () => void } | null = null;
     import('@capacitor/app').then(({ App }) => {
