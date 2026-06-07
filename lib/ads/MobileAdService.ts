@@ -77,7 +77,10 @@ export class MobileAdService implements AdService {
       await this.preloadRewarded();
     }
     try {
-      const reward = await AdMob.showRewardVideoAd();
+      const timeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('admob-timeout')), 30_000)
+      );
+      const reward = await Promise.race([AdMob.showRewardVideoAd(), timeout]);
       void this.preloadRewarded();
       return !!reward;
     } catch {
