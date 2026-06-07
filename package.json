@@ -7,7 +7,7 @@
     "dev:next": "next dev",
     "dev:party": "partykit dev",
     "build": "next build",
-    "build:android": "cross-env NEXT_OUTPUT_MODE=export next build",
+    "build:android": "cross-env NEXT_PUBLIC_PLATFORM=android NEXT_OUTPUT_MODE=export next build",
     "sync:android": "npm run build:android && npx cap sync android",
     "start": "next start",
     "deploy:party": "partykit deploy",

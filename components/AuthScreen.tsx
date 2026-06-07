@@ -1,8 +1,12 @@
 'use client';
-import { useState, useEffect } from 'react';
-import { supabase, getProfile, upsertProfile, type UserProfile } from '../lib/supabase';
+import { useState } from 'react';
+import { supabase, upsertProfile, type UserProfile } from '../lib/supabase';
 import { T } from '../shared/i18n';
 import type { Lang } from '../shared/i18n';
+
+// Definido em BUILD TIME pelo script build:android (NEXT_PUBLIC_PLATFORM=android).
+// Na build web (Vercel) esse valor é undefined → usa OAuth redirect normal.
+const IS_ANDROID = process.env.NEXT_PUBLIC_PLATFORM === 'android';
 
 type AuthResult =
   | { kind: 'guest'; name: string }
@@ -10,72 +14,46 @@ type AuthResult =
 
 type Props = { onDone: (result: AuthResult) => void; lang?: Lang };
 
-// Lê window.Capacitor em RUNTIME (sem módulo cacheado pelo SSR do Next.js).
-function getNativePlatform(): string {
-  if (typeof window === 'undefined') return 'ssr';
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const cap = (window as unknown as Record<string, unknown>)['Capacitor'] as Record<string, unknown> | undefined;
-  if (!cap) return 'web-no-cap';
-  const fn = cap['getPlatform'];
-  if (typeof fn === 'function') return (fn as () => string)();
-  const p = cap['platform'];
-  if (typeof p === 'string') return p;
-  return 'web-unknown';
-}
-
-function isNativePlatform(): boolean {
-  const p = getNativePlatform();
-  return p === 'android' || p === 'ios';
-}
-
 export function AuthScreen({ onDone, lang = 'en' }: Props) {
   const [loading, setLoading] = useState(false);
-  const [debugMsg, setDebugMsg] = useState('');
   const t = T[lang];
-
-  useEffect(() => {
-    const p = getNativePlatform();
-    const msg = `plat=${p}`;
-    setDebugMsg(msg);
-    try { localStorage.setItem('__cap_plat__', msg); } catch { /* noop */ }
-  }, []);
 
   async function handleGoogle() {
     setLoading(true);
-    const platform = getNativePlatform();
-    setDebugMsg(`plat=${platform}`);
-    if (isNativePlatform()) {
-      // Native: usa @capgo/capacitor-social-login (Credential Manager — bottom sheet nativo, sem browser)
+
+    if (IS_ANDROID) {
+      // ── Build Android ─────────────────────────────────────────────────────
+      // @capgo/capacitor-social-login usa o Credential Manager do Android.
+      // Abre o seletor de conta nativo — zero browser.
       try {
         const { SocialLogin } = await import('@capgo/capacitor-social-login');
         await SocialLogin.initialize({
-          google: {
-            webClientId: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? '',
-          },
+          google: { webClientId: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? '' },
         });
-        const loginResult = await SocialLogin.login({
+        const res = await SocialLogin.login({
           provider: 'google',
-          options: { scopes: ['email', 'profile'] },
+          options: {},
         });
-        if (loginResult.provider !== 'google' || loginResult.result.responseType !== 'online') {
+        if (res.provider !== 'google' || res.result.responseType !== 'online') {
           throw new Error('unexpected-response-type');
         }
-        const idToken = loginResult.result.idToken;
+        const idToken = res.result.idToken;
         if (!idToken) throw new Error('no-id-token');
         const { data, error } = await supabase.auth.signInWithIdToken({
           provider: 'google',
           token: idToken,
         });
         if (error || !data.session) throw new Error(error?.message ?? 'supabase-error');
+        // onAuthStateChange em page.tsx cuida do resto
         setLoading(false);
       } catch (err: unknown) {
         setLoading(false);
         const msg = err instanceof Error ? err.message : String(err);
-        setDebugMsg(`plat=${platform} err=${msg}`);
-        alert(`Google Sign-In: ${msg}`);
+        alert(`Login falhou: ${msg}`);
       }
     } else {
-      // Web: standard OAuth redirect flow.
+      // ── Build Web (Vercel) ─────────────────────────────────────────────────
+      // OAuth redirect padrão do Supabase.
       const origin = process.env.NEXT_PUBLIC_SITE_URL ?? window.location.origin;
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
@@ -88,22 +66,18 @@ export function AuthScreen({ onDone, lang = 'en' }: Props) {
     }
   }
 
-
   return (
     <div style={{
       position: 'fixed', inset: 0, zIndex: 999,
       background: 'radial-gradient(ellipse at center, #1a0a2e 0%, #0a050f 100%)',
       display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-      gap: 0,
     }}>
-      {/* Logo */}
       <img
         src="/wizard_arena_plus_logo.png"
         alt="Wizard Arena Plus"
         style={{ width: 320, maxWidth: '90vw', marginBottom: 32, imageRendering: 'pixelated' }}
       />
 
-      {/* Card */}
       <div style={{
         background: 'rgba(20, 10, 35, 0.95)',
         border: '2px solid rgba(200,16,46,0.4)',
@@ -113,65 +87,56 @@ export function AuthScreen({ onDone, lang = 'en' }: Props) {
         boxShadow: '0 8px 40px rgba(0,0,0,0.8), 0 0 60px rgba(200,16,46,0.08)',
         display: 'flex', flexDirection: 'column', gap: 12,
       }}>
-          <>
-            <button
-              type="button"
-              onClick={handleGoogle}
-              disabled={loading}
-              style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
-                padding: '13px 20px',
-                background: loading ? '#1a1a2e' : '#fff',
-                color: '#1a1a2e',
-                border: 'none', borderRadius: 6,
-                fontFamily: 'sans-serif', fontWeight: 700, fontSize: 15,
-                cursor: loading ? 'not-allowed' : 'pointer',
-                transition: 'opacity .15s',
-                opacity: loading ? 0.7 : 1,
-              }}
-            >
-              <GoogleIcon />
-              {loading ? t.connecting : t.signInGoogle}
-            </button>
+        <button
+          type="button"
+          onClick={handleGoogle}
+          disabled={loading}
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+            padding: '13px 20px',
+            background: loading ? '#1a1a2e' : '#fff',
+            color: '#1a1a2e',
+            border: 'none', borderRadius: 6,
+            fontFamily: 'sans-serif', fontWeight: 700, fontSize: 15,
+            cursor: loading ? 'not-allowed' : 'pointer',
+            opacity: loading ? 0.7 : 1,
+          }}
+        >
+          <GoogleIcon />
+          {loading ? t.connecting : t.signInGoogle}
+        </button>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '2px 0' }}>
-              <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.1)' }} />
-              <span style={{ fontFamily: "'VT323', monospace", fontSize: 14, color: '#5a4a5a' }}>{t.or}</span>
-              <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.1)' }} />
-            </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '2px 0' }}>
+          <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.1)' }} />
+          <span style={{ fontFamily: "'VT323', monospace", fontSize: 14, color: '#5a4a5a' }}>{t.or}</span>
+          <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.1)' }} />
+        </div>
 
-            <button
-              type="button"
-              onClick={() => onDone({ kind: 'guest', name: '' })}
-              style={{
-                padding: '12px 20px',
-                background: 'transparent',
-                color: '#c8a46e',
-                border: '1px solid rgba(200,164,110,0.35)',
-                borderRadius: 6,
-                fontFamily: "'Press Start 2P', monospace", fontSize: 9,
-                letterSpacing: 1, cursor: 'pointer',
-              }}
-            >
-              {t.playAsGuest}
-            </button>
+        <button
+          type="button"
+          onClick={() => onDone({ kind: 'guest', name: '' })}
+          style={{
+            padding: '12px 20px',
+            background: 'transparent',
+            color: '#c8a46e',
+            border: '1px solid rgba(200,164,110,0.35)',
+            borderRadius: 6,
+            fontFamily: "'Press Start 2P', monospace", fontSize: 9,
+            letterSpacing: 1, cursor: 'pointer',
+          }}
+        >
+          {t.playAsGuest}
+        </button>
 
-            <p style={{ fontFamily: "'VT323', monospace", fontSize: 13, color: '#5a4858', textAlign: 'center', margin: 0, lineHeight: 1.4 }}>
-              {t.googleRankingHint}
-            </p>
-
-            {debugMsg ? (
-              <p style={{ fontFamily: 'monospace', fontSize: 10, color: '#ff0', textAlign: 'center', margin: 0 }}>
-                {debugMsg}
-              </p>
-            ) : null}
-          </>
+        <p style={{ fontFamily: "'VT323', monospace", fontSize: 13, color: '#5a4858', textAlign: 'center', margin: 0, lineHeight: 1.4 }}>
+          {t.googleRankingHint}
+        </p>
       </div>
     </div>
   );
 }
 
-// Modal shown after Google login when user has no nickname yet
+// Modal de nickname (após login Google sem perfil)
 type NicknameModalProps = {
   defaultName: string;
   photoUrl: string | null;
