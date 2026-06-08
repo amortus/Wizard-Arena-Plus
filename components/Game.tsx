@@ -23,55 +23,52 @@ function PowerupsPanel({ powerups }: { powerups: string[] }) {
       position: 'fixed', right: 0, top: '50%', transform: 'translateY(-50%)',
       zIndex: 25, display: 'flex', alignItems: 'center',
     }}>
-      {/* Aba de toggle — sempre visível */}
+      {/* Seta de toggle — discreta, sem fundo visível */}
       <button
         onClick={() => setHidden(h => !h)}
         style={{
-          width: 18, height: 56,
-          background: 'rgba(20,10,40,0.85)',
-          border: '1px solid rgba(255,204,68,0.35)',
-          borderRight: 'none',
-          borderRadius: '6px 0 0 6px',
-          color: '#ffd700', fontSize: 11,
+          width: 12, height: 44,
+          background: 'transparent',
+          border: 'none',
+          color: 'rgba(255,204,68,0.45)',
+          fontSize: 12,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           cursor: 'pointer', padding: 0,
           flexShrink: 0,
           touchAction: 'manipulation',
         }}
-        title={hidden ? 'Mostrar poderes' : 'Esconder poderes'}
       >
         {hidden ? '‹' : '›'}
       </button>
 
-      {/* Painel de ícones */}
+      {/* Ícones sem fundo — flutuam direto sobre o jogo */}
       {!hidden && (
         <div style={{
-          display: 'grid', gridTemplateColumns: 'repeat(2, 34px)', gap: 4,
+          display: 'grid', gridTemplateColumns: 'repeat(2, 30px)', gap: 3,
           maxHeight: '80vh', overflow: 'hidden',
-          padding: '4px 8px 4px 4px',
-          background: 'rgba(20,10,40,0.75)',
-          borderRadius: '0 4px 4px 0',
+          padding: '0 6px 0 0',
+          background: 'transparent',
           pointerEvents: 'none',
         }}>
           {entries.map(([id, count]) => {
             const pu = dataMap[id];
             return (
               <div key={id} style={{
-                position: 'relative', width: 34, height: 34,
-                background: 'rgba(20,10,40,0.85)',
-                border: '1px solid rgba(255,204,68,0.35)',
-                borderRadius: 6,
+                position: 'relative', width: 30, height: 30,
+                background: 'rgba(0,0,0,0.45)',
+                border: '1px solid rgba(255,204,68,0.25)',
+                borderRadius: 5,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
               }}>
                 {pu?.iconSprite
-                  ? <img src={pu.iconSprite} alt="" style={{ width: 26, height: 26, imageRendering: 'pixelated', display: 'block', filter: 'drop-shadow(0 0 3px rgba(255,204,68,0.45))' }} />
-                  : <span style={{ fontSize: 18 }}>{pu?.icon ?? '✨'}</span>
+                  ? <img src={pu.iconSprite} alt="" style={{ width: 22, height: 22, imageRendering: 'pixelated', display: 'block', filter: 'drop-shadow(0 0 2px rgba(255,204,68,0.4))' }} />
+                  : <span style={{ fontSize: 15 }}>{pu?.icon ?? '✨'}</span>
                 }
                 {count > 1 && (
                   <span style={{
                     position: 'absolute', bottom: -3, right: -4,
                     background: '#1a0a30', border: '1px solid #ffd700',
-                    color: '#ffd700', fontWeight: 700, fontSize: 9, lineHeight: 1,
+                    color: '#ffd700', fontWeight: 700, fontSize: 8, lineHeight: 1,
                     borderRadius: 3, padding: '1px 2px',
                   }}>×{count}</span>
                 )}
