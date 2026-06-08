@@ -168,6 +168,7 @@ export default function Game({ name, character, color, hue, room, country, roomN
   useEffect(() => {
     let game: any;
     let cancelled = false;
+    let removeVisibilityListener: (() => void) | null = null;
 
     (async () => {
       const { createGame } = await import('../game/scene');
@@ -176,6 +177,22 @@ export default function Game({ name, character, color, hue, room, country, roomN
       const result = createGame(containerRef.current, { name, character, color, hue, room, country, roomName, roomPassword, gameMode, musicVol, sfxVol });
       sceneRef.current = result.scene;
       game = result.game;
+
+      // Reconexão automática ao voltar do background (alt-tab no Android)
+      const handleVisibilityChange = () => {
+        if (document.visibilityState !== 'visible') return;
+        const socket = result.scene.socket;
+        if (!socket) return;
+        if (socket.readyState === WebSocket.OPEN) {
+          // Testa se a conexão não é "zumbi" (TCP morto mas WS parece aberto)
+          try { socket.send(JSON.stringify({ type: 'ping' })); } catch { socket.reconnect(); }
+        } else if (socket.readyState === WebSocket.CLOSED) {
+          // Forçar reconexão imediata sem esperar o retry automático
+          socket.reconnect();
+        }
+      };
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+      removeVisibilityListener = () => document.removeEventListener('visibilitychange', handleVisibilityChange);
 
       result.scene.bus.on('hud', (h: any) => {
         setHud(h);
@@ -226,6 +243,7 @@ export default function Game({ name, character, color, hue, room, country, roomN
 
     return () => {
       cancelled = true;
+      removeVisibilityListener?.();
       if (game) game.destroy(true);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

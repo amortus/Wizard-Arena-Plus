@@ -1234,7 +1234,9 @@ export class ArenaScene extends Phaser.Scene {
     } else if (msg.type === 'bossAlert') {
       this.bossAlertUntil = performance.now() + 3500;
       this.bossAlertName = msg.bossName;
-      this.cameras.main.shake(300, 0.008);
+      if (process.env.NEXT_PUBLIC_PLATFORM !== 'android') {
+        this.cameras.main.shake(300, 0.008);
+      }
       this.bus.emit('bossAlert', msg.bossName);
     } else if (msg.type === 'nova') {
       this.bus.emit('nova');
