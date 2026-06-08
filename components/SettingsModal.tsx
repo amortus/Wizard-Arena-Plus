@@ -31,7 +31,7 @@ export function SettingsModal({ settings, onClose, onChange }: {
       <div className="settings-card" onClick={e => e.stopPropagation()}>
         <h2>⚙️ {t.settings}</h2>
 
-        <div className="settings-row">
+        <div className="settings-row lang-row">
           <label>{t.language}</label>
           <div className="lang-toggle">
             {langs.map(({ code, label }) => (

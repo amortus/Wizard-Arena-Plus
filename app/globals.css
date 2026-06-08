@@ -384,6 +384,8 @@ button {
   border-radius: 3px;
   padding: 8px 10px;
   margin-bottom: 18px;
+  width: 100%;
+  box-sizing: border-box;
 }
 .lb-table-head, .lb-table-row {
   display: grid;
@@ -432,6 +434,34 @@ button {
 }
 .lb-close {
   margin-top: 8px;
+}
+
+/* Mobile: remove coluna de nível, reduz colunas fixas */
+@media (max-width: 520px) {
+  .lb-table-head, .lb-table-row {
+    grid-template-columns: 30px 1fr 44px 62px;
+    gap: 5px;
+  }
+  .lb-level { display: none; }
+  .lb-table-head {
+    font-size: 7px;
+    letter-spacing: 0.5px;
+  }
+  .lb-table-row .lb-rank {
+    font-size: 9px;
+  }
+  .lb-table-row .lb-stats {
+    font-size: 8px;
+    letter-spacing: 0;
+  }
+  .lb-table-row .lb-score {
+    font-size: 9px;
+    letter-spacing: 0;
+  }
+  .lb-character {
+    width: 18px;
+    height: 18px;
+  }
 }
 
 /* ---------- Game ---------- */
@@ -1953,35 +1983,44 @@ button {
   background: #1a0808;
   border: 2px solid #8b1a1a;
   border-radius: 12px;
-  padding: 28px 32px;
-  min-width: 320px;
+  padding: 20px 20px;
+  width: min(380px, calc(100vw - 24px));
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 16px;
 }
 
 .settings-card h2 {
   color: var(--cream);
   font-family: 'Cinzel', serif;
   margin: 0;
-  font-size: 18px;
+  font-size: 16px;
 }
 
+/* Linha de idioma: empilha label acima dos botões */
 .settings-row {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
+}
+
+.settings-row.lang-row {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
 }
 
 .settings-row label {
   color: var(--cream-dim);
-  min-width: 130px;
   font-size: 14px;
   font-family: 'VT323', monospace;
+  white-space: nowrap;
 }
 
 .settings-row input[type='range'] {
   flex: 1;
+  min-width: 0;
   accent-color: #8b1a1a;
   cursor: pointer;
 }
@@ -1989,26 +2028,29 @@ button {
 .settings-row span {
   color: var(--cream);
   font-size: 14px;
-  min-width: 38px;
+  min-width: 36px;
   text-align: right;
   font-family: 'VT323', monospace;
 }
 
 .lang-toggle {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
+  width: 100%;
 }
 
 .lang-toggle button {
-  padding: 4px 14px;
+  padding: 5px 10px;
   border: 1px solid #8b1a1a;
   background: transparent;
   color: var(--cream-dim);
   border-radius: 6px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 12px;
   font-family: 'Cinzel', serif;
   transition: background 0.15s, color 0.15s;
+  touch-action: manipulation;
 }
 
 .lang-toggle button.active {

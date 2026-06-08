@@ -68,8 +68,8 @@ export default function LeaderboardPage() {
             <div className="lb-table-head">
               <span>#</span>
               <span>{t.wizard}</span>
-              <span>{t.level}</span>
-              <span>{t.waveLabel}</span>
+              <span className="lb-level">{t.level}</span>
+              <span>W</span>
               <span>{t.score}</span>
             </div>
             {entries.map((e, i) => (
@@ -92,7 +92,7 @@ export default function LeaderboardPage() {
                   )}
                   {e.name}
                 </span>
-                <span className="lb-stats">L{e.level}</span>
+                <span className="lb-stats lb-level">L{e.level}</span>
                 <span className="lb-stats">W{e.wave}</span>
                 <span className="lb-score">{e.score}</span>
               </div>
