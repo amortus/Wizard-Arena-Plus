@@ -66,7 +66,7 @@ export function SettingsModal({ settings, onClose, onChange }: {
           <span>{Math.round(settings.sfxVol * 100)}%</span>
         </div>
 
-        <button className="start-btn" style={{ maxWidth: 160, marginTop: 8 }} onClick={onClose}>
+        <button className="start-btn" style={{ marginTop: 8, width: '100%' }} onClick={onClose}>
           {t.close}
         </button>
       </div>
