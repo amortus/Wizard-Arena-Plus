@@ -66,9 +66,9 @@ function PowerupsPanel({ powerups }: { powerups: string[] }) {
                 }
                 {count > 1 && (
                   <span style={{
-                    position: 'absolute', bottom: -3, right: -4,
-                    background: '#1a0a30', border: '1px solid #ffd700',
-                    color: '#ffd700', fontWeight: 700, fontSize: 8, lineHeight: 1,
+                    position: 'absolute', bottom: 1, right: 1,
+                    background: 'rgba(10,0,20,0.9)', border: '1px solid #ffd700',
+                    color: '#ffd700', fontWeight: 700, fontSize: 7, lineHeight: 1,
                     borderRadius: 3, padding: '1px 2px',
                   }}>×{count}</span>
                 )}
