@@ -7,14 +7,14 @@ if (keystorePropertiesFile.exists()) {
 }
 
 android {
-    namespace = "com.madnessarena.game"
+    namespace = "com.amortus.wizardarena"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "com.madnessarena.game"
+        applicationId "com.amortus.wizardarena"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode 7
+        versionName "1.6"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'

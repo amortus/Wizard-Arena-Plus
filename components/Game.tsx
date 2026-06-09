@@ -162,6 +162,8 @@ export default function Game({ name, character, color, hue, room, country, roomN
   const [localMusicVol, setLocalMusicVol] = useState(musicVol);
   const [localSfxVol, setLocalSfxVol] = useState(sfxVol);
 
+  useEffect(() => { getAdService().warmup(); }, []);
+
   useEffect(() => {
     let game: any;
     let cancelled = false;
@@ -175,9 +177,13 @@ export default function Game({ name, character, color, hue, room, country, roomN
       sceneRef.current = result.scene;
       game = result.game;
 
-      // Reconexão automática ao voltar do background (alt-tab no Android)
+      // Reconexão automática + pausa de música ao voltar/sair do background
       const handleVisibilityChange = () => {
-        if (document.visibilityState !== 'visible') return;
+        if (document.hidden) {
+          result.scene.pauseAllBgm();
+          return;
+        }
+        result.scene.resumeBgm();
         const socket = result.scene.socket;
         if (!socket) return;
         if (socket.readyState === WebSocket.OPEN) {
@@ -199,6 +205,7 @@ export default function Game({ name, character, color, hue, room, country, roomN
       });
       result.scene.bus.on('levelUp', (data: LevelUpData) => {
         result.scene.clearMovement();
+        result.scene.scene.pause();
         setLevelUp(data);
         setLevelUpFocus(0);
       });
@@ -247,6 +254,7 @@ export default function Game({ name, character, color, hue, room, country, roomN
   }, []);
 
   const pickChoice = (idx: number) => {
+    sceneRef.current?.scene.resume();
     sceneRef.current?.pickPowerup(idx);
     setLevelUp(null);
   };

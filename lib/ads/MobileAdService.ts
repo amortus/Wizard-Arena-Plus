@@ -34,6 +34,10 @@ export class MobileAdService implements AdService {
   private initialised = false;
   private rewardedLoaded = false;
 
+  warmup(): void {
+    void this.init();
+  }
+
   private async init(): Promise<void> {
     if (this.initialised) return;
     this.initialised = true;
@@ -80,9 +84,9 @@ export class MobileAdService implements AdService {
       const timeout = new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error('admob-timeout')), 30_000)
       );
-      const reward = await Promise.race([AdMob.showRewardVideoAd(), timeout]);
+      await Promise.race([AdMob.showRewardVideoAd(), timeout]);
       void this.preloadRewarded();
-      return !!reward;
+      return true;
     } catch {
       return false;
     }

@@ -283,6 +283,7 @@ export class ArenaScene extends Phaser.Scene {
   bossAlertUntil = 0;
   bossAlertName = '';
   lastArenaElement: string = 'normal';
+  _lastHudEmitMs = 0;
   // Castle Defender graphics
   castleGraphic: Phaser.GameObjects.Image | null = null;
   castleHpBar: Phaser.GameObjects.Graphics | null = null;
@@ -2218,6 +2219,17 @@ export class ArenaScene extends Phaser.Scene {
     }
   }
 
+  pauseAllBgm() {
+    const cur = this.bgmTracks[this.bgmIdx];
+    if (cur && (cur as Phaser.Sound.WebAudioSound).isPlaying) cur.pause();
+  }
+
+  resumeBgm() {
+    if (this.musicMuted) return;
+    const cur = this.bgmTracks[this.bgmIdx];
+    if (cur && !(cur as Phaser.Sound.WebAudioSound).isPlaying) cur.resume();
+  }
+
   setMusicVolume(v: number) {
     this.musicVol = v;
     for (const track of this.bgmTracks) {
@@ -3153,24 +3165,28 @@ export class ArenaScene extends Phaser.Scene {
       this.updateMobaGraphics(snap);
     }
 
-    // emit HUD update — top-bar wave is the room's global wave; survivalWave tracks this player's personal progression
-    this.bus.emit('hud', {
-      self,
-      players: snap.players,
-      wave: snap.wave,
-      waveName: snap.waveName,
-      waveTimeLeftMs: snap.waveTimeLeftMs,
-      survivalWave: self?.waveNumber ?? 0,
-      npcs: snap.npcs.length,
-      gems: snap.gems.length,
-      castle: snap.castle,
-      gameMode: snap.gameMode,
-      towers: snap.towers,
-      mobaCrystals: snap.mobaCrystals,
-      activeBossId: snap.activeBossId,
-      bossMaxHp: snap.bossMaxHp,
-      bossHp: snap.bossHp,
-    });
+    // emit HUD update at 10 Hz max — React re-renders are expensive on mobile
+    const _hudNow = performance.now();
+    if (_hudNow - this._lastHudEmitMs >= 100) {
+      this._lastHudEmitMs = _hudNow;
+      this.bus.emit('hud', {
+        self,
+        players: snap.players,
+        wave: snap.wave,
+        waveName: snap.waveName,
+        waveTimeLeftMs: snap.waveTimeLeftMs,
+        survivalWave: self?.waveNumber ?? 0,
+        npcs: snap.npcs.length,
+        gems: snap.gems.length,
+        castle: snap.castle,
+        gameMode: snap.gameMode,
+        towers: snap.towers,
+        mobaCrystals: snap.mobaCrystals,
+        activeBossId: snap.activeBossId,
+        bossMaxHp: snap.bossMaxHp,
+        bossHp: snap.bossHp,
+      });
+    }
 
     this.renderWaveAlerts(performance.now());
   }
@@ -3711,6 +3727,9 @@ function clamp(v: number, lo: number, hi: number) {
 
 export function createGame(parent: HTMLElement, init: SceneInit) {
   const scene = new ArenaScene(init);
+  const isMobileDevice =
+    ('ontouchstart' in window && navigator.maxTouchPoints > 0) ||
+    /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
   const game = new Phaser.Game({
     type: Phaser.AUTO,
     parent,
@@ -3720,6 +3739,10 @@ export function createGame(parent: HTMLElement, init: SceneInit) {
       mode: Phaser.Scale.RESIZE,
       width: '100%',
       height: '100%',
+    },
+    fps: {
+      target: isMobileDevice ? 30 : 60,
+      forceSetTimeOut: false,
     },
     physics: { default: 'arcade' },
     scene,
