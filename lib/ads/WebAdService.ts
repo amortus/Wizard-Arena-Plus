@@ -39,6 +39,7 @@ function showCountdownOverlay(): Promise<boolean> {
 }
 
 export class WebAdService implements AdService {
+  warmup(): void {}
   // AdSense auto ads places banners automatically — nothing to do here.
   showBanner(): void {}
   hideBanner(): void {}
