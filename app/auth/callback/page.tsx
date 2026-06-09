@@ -2,6 +2,8 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../../../lib/supabase';
 
+export const dynamic = 'force-dynamic';
+
 export default function AuthCallback() {
   const [errMsg, setErrMsg] = useState('');
 
