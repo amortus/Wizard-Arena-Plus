@@ -284,6 +284,7 @@ export class ArenaScene extends Phaser.Scene {
   bossAlertName = '';
   lastArenaElement: string = 'normal';
   _lastHudEmitMs = 0;
+  _borderWarning?: Phaser.GameObjects.Graphics;
   // Castle Defender graphics
   castleGraphic: Phaser.GameObjects.Image | null = null;
   castleHpBar: Phaser.GameObjects.Graphics | null = null;
@@ -588,6 +589,8 @@ export class ArenaScene extends Phaser.Scene {
     this.cameras.main.setZoom(1.2); // matches the "browser at 80%" feel — more visible arena
     this.cameras.main.setBackgroundColor('#1a1a2e');
     this.cameras.main.setRoundPixels(false); // sub-pixel positioning = smoother camera
+
+    this._borderWarning = this.add.graphics().setScrollFactor(0).setDepth(190);
 
     this.connect();
 
@@ -2298,6 +2301,44 @@ export class ArenaScene extends Phaser.Scene {
     this.handleInput(delta);
     this.updateClientProjs(delta);
     this.renderSnapshot(delta);
+    this.updateBorderWarning(_time);
+  }
+
+  updateBorderWarning(time: number) {
+    const g = this._borderWarning;
+    if (!g || !this.predictedSelf) { g?.clear(); return; }
+    g.clear();
+
+    const { x, y } = this.predictedSelf;
+    const WARN = 300; // warning zone width in world units
+    const dLeft   = x;
+    const dRight  = ARENA_WIDTH  - x;
+    const dTop    = y;
+    const dBottom = ARENA_HEIGHT - y;
+
+    const sw = this.scale.width;
+    const sh = this.scale.height;
+    const STRIP = Math.round(Math.min(sw, sh) * 0.2); // screen-edge strip width
+
+    // Gentle pulse: 0.85–1.0 multiplier
+    const pulse = 0.875 + 0.125 * Math.sin(time * 0.006);
+
+    const drawEdge = (dist: number, side: 'left' | 'right' | 'top' | 'bottom') => {
+      if (dist >= WARN) return;
+      const alpha = Math.max(0, (1 - dist / WARN) ** 1.5) * 0.55 * pulse;
+      g.fillStyle(0xff2200, alpha);
+      switch (side) {
+        case 'left':   g.fillRect(0,        0,        STRIP, sh); break;
+        case 'right':  g.fillRect(sw-STRIP, 0,        STRIP, sh); break;
+        case 'top':    g.fillRect(0,        0,        sw, STRIP); break;
+        case 'bottom': g.fillRect(0,        sh-STRIP, sw, STRIP); break;
+      }
+    };
+
+    drawEdge(dLeft,   'left');
+    drawEdge(dRight,  'right');
+    drawEdge(dTop,    'top');
+    drawEdge(dBottom, 'bottom');
   }
 
   updateClientProjs(dt: number) {
