@@ -1,10 +1,27 @@
-[{
-  "relation": ["delegate_permission/common.handle_all_urls"],
-  "target": {
-    "namespace": "android_app",
-    "package_name": "com.madnessarena.game",
-    "sha256_cert_fingerprints": [
-      "9B:8C:31:54:80:77:DD:6D:01:1F:18:64:99:68:BB:F5:2E:B4:74:A8:B0:76:9A:CF:4F:08:86:71:05:B3:0D:40"
-    ]
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.madnessarena.game",
+      "sha256_cert_fingerprints": [
+        "9B:8C:31:54:80:77:DD:6D:01:1F:18:64:99:68:BB:F5:2E:B4:74:A8:B0:76:9A:CF:4F:08:86:71:05:B3:0D:40"
+      ]
+    }
+  },
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls",
+      "delegate_permission/common.get_login_creds"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.amortus.wizardarena",
+      "sha256_cert_fingerprints": [
+        "B5:94:6B:23:85:E8:36:38:77:5E:7B:8D:9B:35:33:43:2C:FD:42:D7:C8:09:17:78:07:5F:71:E3:20:2A:D0:DC"
+      ]
+    }
   }
-}]
+]
