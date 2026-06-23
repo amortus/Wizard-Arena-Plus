@@ -1,4 +1,4 @@
-package com.madnessarena.game;
+package com.amortus.wizardarena;
 
 import android.app.Activity;
 import android.content.Intent;
