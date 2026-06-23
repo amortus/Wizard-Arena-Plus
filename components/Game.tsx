@@ -150,6 +150,7 @@ export default function Game({ name, character, color, hue, room, country, roomN
   const adReviveUsedRef = useRef(false); // persists across deaths — 1 per room session
   const [adReviveUsed, setAdReviveUsed] = useState(false);
   const [adLoading, setAdLoading] = useState(false);
+  const [adWatched, setAdWatched] = useState(false);
   const [deathStats, setDeathStats] = useState<{ level: number; wave: number; score: number; killerName: string; killerIcon: string; finalDamage: number } | null>(null);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [roomFull, setRoomFull] = useState(false);
@@ -223,6 +224,7 @@ export default function Game({ name, character, color, hue, room, country, roomN
         }
         setDead(true);
         setAdLoading(false);
+        setAdWatched(false);
       });
       result.scene.bus.on('respawned', () => {
         setDead(false);
@@ -266,10 +268,15 @@ export default function Game({ name, character, color, hue, room, country, roomN
     const rewarded = await getAdService().showRewarded();
     setAdLoading(false);
     if (rewarded) {
-      adReviveUsedRef.current = true;
-      setAdReviveUsed(true);
-      sceneRef.current?.revive();
+      setAdWatched(true);
     }
+  };
+
+  const handleConfirmRevive = () => {
+    adReviveUsedRef.current = true;
+    setAdReviveUsed(true);
+    setAdWatched(false);
+    sceneRef.current?.revive();
   };
   const buyItem = (itemId: string) => { sceneRef.current?.buyItem(itemId); };
 
@@ -725,14 +732,23 @@ export default function Game({ name, character, color, hue, room, country, roomN
               <div className="death-rank">{t.checkLeaderboard}</div>
             </div>
           )}
-          {!adReviveUsed && (
+          {!adReviveUsed && !adWatched && (
             <button
               className="start-btn"
-              style={{ maxWidth: 240, background: 'linear-gradient(180deg,#7a3a00,#4a2000)', borderColor: '#ffa040', color: '#ffd080', marginBottom: 6, opacity: adLoading ? 0.6 : 1 }}
+              style={{ maxWidth: 240, background: adLoading ? 'linear-gradient(180deg,#1a4a1a,#0d2a0d)' : 'linear-gradient(180deg,#1a8a2a,#0d5a1a)', borderColor: '#44dd66', color: '#ffffff', marginBottom: 6, opacity: adLoading ? 0.6 : 1 }}
               onClick={handleWatchAd}
               disabled={adLoading}
             >
-              {adLoading ? t.loading : t.watchAdRevive}
+              {adLoading ? '⏳ Assistindo...' : '❤️ Reviver'}
+            </button>
+          )}
+          {adWatched && (
+            <button
+              className="start-btn"
+              style={{ maxWidth: 240, background: 'linear-gradient(180deg,#22cc44,#116622)', borderColor: '#88ffaa', color: '#ffffff', marginBottom: 6, animation: 'revivePulse 0.7s ease-in-out infinite alternate' }}
+              onClick={handleConfirmRevive}
+            >
+              ❤️ Reviver!
             </button>
           )}
           <button className="leaderboard-btn" style={{ maxWidth: 200, marginTop: 8, fontSize: 8 }} onClick={() => { if (typeof window !== 'undefined') window.location.href = '/'; }}>

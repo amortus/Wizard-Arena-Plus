@@ -914,6 +914,10 @@ button {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.85; transform: scale(1.02); }
 }
+@keyframes revivePulse {
+  from { box-shadow: 0 0 8px #44ff88, 0 0 16px #22cc44; transform: scale(1); }
+  to   { box-shadow: 0 0 18px #88ffaa, 0 0 32px #44ff88; transform: scale(1.04); }
+}
 .death-overlay div {
   font-family: 'VT323', monospace;
   font-size: 22px;
